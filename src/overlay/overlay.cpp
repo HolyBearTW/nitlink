@@ -1,0 +1,882 @@
+#include "overlay.h"
+#include "../ui/theme.h"
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+#include <cmath>
+#include <debugapi.h>
+
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
+
+namespace NitLink {
+
+static void OvLog(const std::wstring& msg) {
+    OutputDebugStringW((L"[NitLink/Overlay] " + msg + L"\n").c_str());
+}
+
+bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
+                         IDXGISwapChain1* swapChain, HWND hwnd)
+{
+    m_device    = device;
+    m_context   = context;
+    m_swapChain = swapChain;
+    m_hwnd      = hwnd;
+
+    // D2D factory: single-threaded since it's only used from the render thread.
+    D2D1_FACTORY_OPTIONS opts{};
+#ifdef _DEBUG
+    opts.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
+#endif
+    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+        __uuidof(ID2D1Factory1), &opts, (void**)m_d2dFactory.GetAddressOf());
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"D2D1CreateFactory failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+        return false;
+    }
+
+    // Bridge the D3D11 device to D2D via DXGI -- requires D3D11_CREATE_DEVICE_BGRA_SUPPORT
+    ComPtr<IDXGIDevice> dxgiDevice;
+    hr = device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"QueryInterface(IDXGIDevice) failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+        return false;
+    }
+
+    hr = m_d2dFactory->CreateDevice(dxgiDevice.Get(), &m_d2dDevice);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"ID2D1Factory1::CreateDevice failed: 0x" << std::hex << hr
+           << L" (likely missing D3D11_CREATE_DEVICE_BGRA_SUPPORT flag)";
+        OvLog(ss.str());
+        return false;
+    }
+
+    hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_d2dContext);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"CreateDeviceContext failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+        return false;
+    }
+
+    // DirectWrite factory for text
+    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
+        __uuidof(IDWriteFactory), (IUnknown**)m_dwriteFactory.GetAddressOf());
+    if (FAILED(hr)) return false;
+
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        GetTheme().overlayFontSize, L"en-us", &m_textFormat);
+    if (FAILED(hr)) return false;
+
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        11.0f, L"en-us", &m_smallTextFormat);
+    if (FAILED(hr)) return false;
+
+    // Big primary number (FPS value, latency value): 24pt bold.
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        24.0f, L"en-us", &m_textFormatBig);
+    if (FAILED(hr)) return false;
+
+    // Small caps-style label above primary numbers ("FRAME RATE").
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        8.5f, L"en-us", &m_textFormatLabel);
+    if (FAILED(hr)) return false;
+
+    // Unit suffix (FPS, MS): small, sits next to the big number.
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        10.0f, L"en-us", &m_textFormatUnit);
+    if (FAILED(hr)) return false;
+
+    if (!CreateD2DResources()) {
+        OvLog(L"CreateD2DResources failed during init");
+        return false;
+    }
+
+    m_initialized = true;
+    OvLog(L"Initialized successfully");
+    return true;
+}
+
+bool Overlay::CreateD2DResources()
+{
+    ComPtr<ID3D11Texture2D> backBuffer;
+    HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+    if (FAILED(hr)) return false;
+
+    D3D11_TEXTURE2D_DESC bbDesc;
+    backBuffer->GetDesc(&bbDesc);
+
+    // HDR path: D2D cannot draw directly to the HDR swap-chain format
+    // (R10G10B10A2 + DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, HDR10 PQ
+    // in BT.2020 primaries). Render the UI into a BGRA8 offscreen texture
+    // at the swap-chain dimensions, wrap THAT with D2D, and expose the
+    // offscreen's SRV so the renderer's UI compositor shader can convert
+    // the SDR-authored overlay into the HDR10 swap-chain path.
+    if (bbDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        OvLog(L"CreateD2DResources: HDR backbuffer, using BGRA8 offscreen");
+        if (m_d2dContext) m_d2dContext->SetTarget(nullptr);
+        m_d2dTargetBitmap.Reset();
+
+        if (!CreateOffscreenTarget(bbDesc.Width, bbDesc.Height)) {
+            OvLog(L"CreateD2DResources: CreateOffscreenTarget failed");
+            return false;
+        }
+        m_offscreenInUse = true;
+
+        // Brushes are needed regardless of which target is used.
+        const Theme& th = GetTheme();
+        m_d2dContext->CreateSolidColorBrush(th.text,      &m_brushText);
+        m_d2dContext->CreateSolidColorBrush(th.accent,    &m_brushAccent);
+        m_d2dContext->CreateSolidColorBrush(th.overlayBg, &m_brushBg);
+        m_d2dContext->CreateSolidColorBrush(th.good,      &m_brushGood);
+        m_d2dContext->CreateSolidColorBrush(th.warn,      &m_brushWarn);
+        // Critical and dim brushes: not yet in theme, hardcoded for now.
+        m_d2dContext->CreateSolidColorBrush(
+            D2D1::ColorF(1.00f, 0.20f, 0.40f, 1.0f), &m_brushCrit);
+        m_d2dContext->CreateSolidColorBrush(
+            D2D1::ColorF(0.60f, 0.62f, 0.68f, 0.60f), &m_brushDim);
+        return true;
+    }
+
+    // SDR path - create D2D target normally
+    m_offscreenInUse = false;
+    m_offscreenTex.Reset();
+    m_offscreenSRV.Reset();
+
+    ComPtr<IDXGISurface> dxgiBackBuffer;
+    hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&dxgiBackBuffer));
+    if (FAILED(hr)) return false;
+
+    D2D1_BITMAP_PROPERTIES1 bmpProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96, 96
+    );
+
+    hr = m_d2dContext->CreateBitmapFromDxgiSurface(
+        dxgiBackBuffer.Get(), &bmpProps, &m_d2dTargetBitmap);
+    if (FAILED(hr)) return false;
+
+    m_d2dContext->SetTarget(m_d2dTargetBitmap.Get());
+
+    // Brushes come from the shared theme so colors stay centralized.
+    const Theme& th = GetTheme();
+    m_d2dContext->CreateSolidColorBrush(th.text,      &m_brushText);
+    m_d2dContext->CreateSolidColorBrush(th.accent,    &m_brushAccent);
+    m_d2dContext->CreateSolidColorBrush(th.overlayBg, &m_brushBg);
+    m_d2dContext->CreateSolidColorBrush(th.good,      &m_brushGood);
+    m_d2dContext->CreateSolidColorBrush(th.warn,      &m_brushWarn);
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(1.00f, 0.20f, 0.40f, 1.0f), &m_brushCrit);
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(0.60f, 0.62f, 0.68f, 0.60f), &m_brushDim);
+
+    return true;
+}
+
+bool Overlay::CreateOffscreenTarget(uint32_t width, uint32_t height)
+{
+    // Create a BGRA8 texture that's both an RTV (for D2D to render into)
+    // and a shader resource (for the renderer's compositor pass).
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width            = width;
+    td.Height           = height;
+    td.MipLevels        = 1;
+    td.ArraySize        = 1;
+    td.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage            = D3D11_USAGE_DEFAULT;
+    td.BindFlags        = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+    HRESULT hr = m_device->CreateTexture2D(&td, nullptr, &m_offscreenTex);
+    if (FAILED(hr)) return false;
+
+    // SRV for the compositor.
+    hr = m_device->CreateShaderResourceView(m_offscreenTex.Get(), nullptr, &m_offscreenSRV);
+    if (FAILED(hr)) return false;
+
+    // Wrap with D2D so Render() can paint into it via the existing D2D calls.
+    ComPtr<IDXGISurface> dxgiSurface;
+    hr = m_offscreenTex.As(&dxgiSurface);
+    if (FAILED(hr)) return false;
+
+    D2D1_BITMAP_PROPERTIES1 bmpProps = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96, 96
+    );
+    hr = m_d2dContext->CreateBitmapFromDxgiSurface(
+        dxgiSurface.Get(), &bmpProps, &m_d2dTargetBitmap);
+    if (FAILED(hr)) return false;
+
+    m_d2dContext->SetTarget(m_d2dTargetBitmap.Get());
+    m_offscreenW = width;
+    m_offscreenH = height;
+    return true;
+}
+
+void Overlay::ReleaseD2DResources()
+{
+    if (m_d2dContext) m_d2dContext->SetTarget(nullptr);
+    m_d2dTargetBitmap.Reset();
+    // Offscreen texture + SRV go too: they're sized to the backbuffer
+    // and a resize/HDR-toggle invalidates the old dimensions.
+    m_offscreenTex.Reset();
+    m_offscreenSRV.Reset();
+    m_offscreenInUse = false;
+    m_brushText.Reset();
+    m_brushAccent.Reset();
+    m_brushBg.Reset();
+    m_brushGood.Reset();
+    m_brushWarn.Reset();
+    m_brushCrit.Reset();
+    m_brushDim.Reset();
+}
+
+void Overlay::OnResizeBegin()
+{
+    // D2D bitmap holds a reference to the swap chain's backbuffer. It MUST
+    // be released before the renderer calls ResizeBuffers, otherwise that
+    // call hangs (DXGI waits for all references to clear).
+    OvLog(L"OnResizeBegin: releasing D2D resources");
+    ReleaseD2DResources();
+}
+
+void Overlay::OnResizeEnd()
+{
+    OvLog(L"OnResizeEnd: recreating D2D resources");
+    if (!CreateD2DResources()) {
+        OvLog(L"OnResizeEnd: CreateD2DResources failed");
+    }
+}
+
+void Overlay::Shutdown()
+{
+    ReleaseD2DResources();
+    m_d2dContext.Reset();
+    m_d2dDevice.Reset();
+    m_d2dFactory.Reset();
+    m_textFormat.Reset();
+    m_smallTextFormat.Reset();
+    m_dwriteFactory.Reset();
+    m_initialized = false;
+}
+
+void Overlay::Render(const Stats& stats)
+{
+    if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap ||
+        !m_brushText || !m_brushAccent || !m_brushBg) {
+        return;
+    }
+
+    // Push 0 when there's no signal so the sparkline drops to the floor.
+    m_fpsHistory.push_back(stats.signalActive ? (float)stats.fps : 0.0f);
+    if (m_fpsHistory.size() > kHistorySize) m_fpsHistory.pop_front();
+
+    float totalLatency = (float)(stats.captureLatencyMs + stats.renderLatencyMs);
+    m_latencyHistory.push_back(stats.signalActive ? totalLatency : 0.0f);
+    if (m_latencyHistory.size() > kHistorySize) m_latencyHistory.pop_front();
+
+    // HUD layout.
+    // Panel: 280×156, soft near-black 85% alpha, 4px corners, subtle border.
+    // Top 24px: status header (signal dot, resolution, "NL // HUD" brand).
+    // Next 60px: two primary metric columns (FPS left, latency right).
+    // Sub-row: GPU upload time (one line).
+    // Then 40px: two split sparklines (FPS history, latency history).
+    // Bottom 16px: pipeline status strip (HDR / NIS / COLOR badges).
+    const float panelW = 280.0f;
+    const float panelH = 156.0f;
+    const float margin = 16.0f;
+    const float pad    = 12.0f;
+
+    D2D1_RECT_F panel = D2D1::RectF(margin, margin, margin + panelW, margin + panelH);
+
+    m_d2dContext->BeginDraw();
+
+    // In HDR offscreen mode, clear the target to fully transparent first
+    // so the previous frame's text doesn't accumulate. (In SDR the draw
+    // goes directly to the backbuffer, which is already cleared by the
+    // renderer's BeginFrame; the overlay just paints on top.)
+    if (m_offscreenInUse) {
+        m_d2dContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+    }
+
+    const bool sig = stats.signalActive;
+
+    // ---- 1. Background panel + border --------------------------------------
+    // Aligned with the F1 menu's --bg-soft (#131418) at 85% opacity so the
+    // HUD reads as the same surface as the settings card / no-signal card
+    // when game content is showing through. Border + divider use --rule.
+    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, dividerBrush;
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(0.075f, 0.078f, 0.094f, 0.85f), &bgBrush);     // #131418 @ 85%
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &borderBrush);        // --rule (subtle)
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f), &dividerBrush);       // --rule (lighter)
+
+    D2D1_ROUNDED_RECT roundRect = { panel, 4.0f, 4.0f };
+    m_d2dContext->FillRoundedRectangle(roundRect, bgBrush.Get());
+    m_d2dContext->DrawRoundedRectangle(roundRect, borderBrush.Get(), 1.0f);
+
+    // ---- 2. Status header (top 24px) ---------------------------------------
+    // Signal dot: green if active, red if no signal. 6px diameter.
+    {
+        D2D1_ELLIPSE dot = D2D1::Ellipse(
+            D2D1::Point2F(panel.left + pad + 4.0f, panel.top + 12.0f),
+            3.0f, 3.0f);
+        ID2D1SolidColorBrush* dotBrush = sig ? m_brushGood.Get() : m_brushCrit.Get();
+        m_d2dContext->FillEllipse(dot, dotBrush);
+
+        // Subtle 2px glow ring (just a larger transparent fill).
+        ComPtr<ID2D1SolidColorBrush> glow;
+        D2D1_COLOR_F gcol = sig
+            ? D2D1::ColorF(0.0f, 1.0f, 0.53f, 0.35f)
+            : D2D1::ColorF(1.0f, 0.20f, 0.40f, 0.35f);
+        m_d2dContext->CreateSolidColorBrush(gcol, &glow);
+        D2D1_ELLIPSE glowDot = D2D1::Ellipse(
+            D2D1::Point2F(panel.left + pad + 4.0f, panel.top + 12.0f),
+            5.0f, 5.0f);
+        m_d2dContext->FillEllipse(glowDot, glow.Get());
+    }
+
+    // Resolution text: to the right of the dot.
+    {
+        std::wstringstream ss;
+        if (sig) ss << stats.captureWidth << L"\u00d7" << stats.captureHeight;
+        else     ss << L"NO SIGNAL";
+        std::wstring s = ss.str();
+        D2D1_RECT_F r = D2D1::RectF(panel.left + pad + 14.0f, panel.top + 4.0f,
+                                     panel.left + 160.0f,      panel.top + 22.0f);
+        m_d2dContext->DrawText(s.c_str(), (UINT32)s.size(),
+            m_textFormatUnit.Get(), r,
+            sig ? m_brushText.Get() : m_brushCrit.Get());
+    }
+
+    // Brand tag "NL // HUD": right side, dim.
+    {
+        const std::wstring brand = L"NL // HUD";
+        D2D1_RECT_F r = D2D1::RectF(panel.right - 110.0f, panel.top + 5.0f,
+                                     panel.right - pad,      panel.top + 22.0f);
+        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        m_d2dContext->DrawText(brand.c_str(), (UINT32)brand.size(),
+            m_textFormatLabel.Get(), r, m_brushDim.Get());
+        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+
+    // Header divider: 1px line under header bar.
+    m_d2dContext->DrawLine(
+        D2D1::Point2F(panel.left + pad,   panel.top + 24.0f),
+        D2D1::Point2F(panel.right - pad,  panel.top + 24.0f),
+        dividerBrush.Get(), 1.0f);
+
+    // ---- 3. Primary metrics: two columns ----------------------------------
+    // Column geometry: split panel into halves, with a tiny gap.
+    const float colMid = panel.left + panelW * 0.5f;
+    const float metricY = panel.top + 32.0f;    // labels start here
+
+    // Helper to pick brush by threshold.
+    auto fpsBrush = [&]() -> ID2D1SolidColorBrush* {
+        if (!sig) return m_brushText.Get();
+        if (stats.fps >= 58)     return m_brushGood.Get();
+        if (stats.fps >= 31)     return m_brushWarn.Get();
+        return m_brushCrit.Get();
+    };
+
+    // Estimated end-to-end latency:
+    //   ~16ms = MF pipeline buffering
+    //   ~8ms  = HDMI + card encode + PCIe
+    //   +GPU upload time
+    //   ~8ms  = present + scanout
+    // totalLatency was declared earlier (used to push into m_latencyHistory).
+    // Reuse it here for the latency display + thresholds.
+    float estTotalLat  = sig ? (16.0f + 8.0f + totalLatency + 8.0f) : 0.0f;
+
+    auto e2eBrush = [&]() -> ID2D1SolidColorBrush* {
+        if (!sig) return m_brushText.Get();
+        if (estTotalLat <  45.0f) return m_brushGood.Get();
+        if (estTotalLat <= 80.0f) return m_brushWarn.Get();
+        return m_brushCrit.Get();
+    };
+
+    // LEFT column: FRAME RATE
+    {
+        D2D1_RECT_F lr = D2D1::RectF(panel.left + pad, metricY,
+                                       colMid - 4.0f,    metricY + 12.0f);
+        std::wstring lbl = L"FRAME RATE";
+        m_d2dContext->DrawText(lbl.c_str(), (UINT32)lbl.size(),
+            m_textFormatLabel.Get(), lr, m_brushDim.Get());
+
+        std::wstring v = sig ? std::to_wstring(stats.fps) : L"--";
+        D2D1_RECT_F vr = D2D1::RectF(panel.left + pad, metricY + 12.0f,
+                                       colMid - 30.0f,    metricY + 48.0f);
+        m_d2dContext->DrawText(v.c_str(), (UINT32)v.size(),
+            m_textFormatBig.Get(), vr, fpsBrush());
+
+        // Unit "FPS": bottom-aligned with the big number.
+        D2D1_RECT_F ur = D2D1::RectF(panel.left + pad + 36.0f, metricY + 32.0f,
+                                       colMid - 4.0f,             metricY + 48.0f);
+        std::wstring u = L"FPS";
+        m_d2dContext->DrawText(u.c_str(), (UINT32)u.size(),
+            m_textFormatUnit.Get(), ur, m_brushDim.Get());
+    }
+
+    // RIGHT column: TOTAL LATENCY
+    {
+        D2D1_RECT_F lr = D2D1::RectF(colMid + 4.0f,   metricY,
+                                       panel.right - pad, metricY + 12.0f);
+        std::wstring lbl = L"TOTAL LATENCY";
+        m_d2dContext->DrawText(lbl.c_str(), (UINT32)lbl.size(),
+            m_textFormatLabel.Get(), lr, m_brushDim.Get());
+
+        std::wstring v;
+        if (sig) {
+            std::wstringstream ss;
+            ss << std::fixed << std::setprecision(0) << estTotalLat;
+            v = ss.str();
+        } else {
+            v = L"--";
+        }
+        D2D1_RECT_F vr = D2D1::RectF(colMid + 4.0f,   metricY + 12.0f,
+                                       panel.right - 38.0f, metricY + 48.0f);
+        m_d2dContext->DrawText(v.c_str(), (UINT32)v.size(),
+            m_textFormatBig.Get(), vr, e2eBrush());
+
+        D2D1_RECT_F ur = D2D1::RectF(colMid + 48.0f,    metricY + 32.0f,
+                                       panel.right - pad, metricY + 48.0f);
+        std::wstring u = L"MS";
+        m_d2dContext->DrawText(u.c_str(), (UINT32)u.size(),
+            m_textFormatUnit.Get(), ur, m_brushDim.Get());
+    }
+
+    // ---- 4. Sub-metric: GPU upload time ------------------------------------
+    {
+        std::wstringstream ss;
+        if (sig) ss << L"GPU " << std::fixed << std::setprecision(1) << totalLatency << L" ms";
+        else     ss << L"GPU --";
+        std::wstring s = ss.str();
+        D2D1_RECT_F r = D2D1::RectF(panel.left + pad, panel.top + 82.0f,
+                                     panel.right - pad, panel.top + 96.0f);
+
+        // Threshold color for GPU.
+        ID2D1SolidColorBrush* gpuBrush = m_brushText.Get();
+        if (sig) {
+            if      (totalLatency <  5.0f)  gpuBrush = m_brushGood.Get();
+            else if (totalLatency <= 12.0f) gpuBrush = m_brushWarn.Get();
+            else                              gpuBrush = m_brushCrit.Get();
+        }
+        m_d2dContext->DrawText(s.c_str(), (UINT32)s.size(),
+            m_smallTextFormat.Get(), r, gpuBrush);
+    }
+
+    // ---- 5. Bottom: dual sparklines (FPS left, latency right) --------------
+    {
+        // Sparkline area lives between the GPU sub-metric row and the
+        // pipeline status strip. With panelH=156, the strip occupies the
+        // bottom ~16px so sparklines bottom out at panel.top + 138 to
+        // leave clearance for the strip + a 2px breather.
+        const float sparkTop    = panel.top + 100.0f;
+        const float sparkBottom = panel.top + 138.0f;
+        const float sparkLeftL  = panel.left + pad;
+        const float sparkRightL = colMid - 4.0f;
+        const float sparkLeftR  = colMid + 4.0f;
+        const float sparkRightR = panel.right - pad;
+
+        auto drawSparkline = [&](float left, float right,
+                                  const std::deque<float>& hist,
+                                  float maxExpected,
+                                  ID2D1SolidColorBrush* stroke) {
+            if (hist.size() < 2) return;
+            const float w = right - left;
+            const float h = sparkBottom - sparkTop;
+
+            // Build a path geometry from samples. The geometry forms a closed
+            // polygon (top edge follows the data, bottom edge is the floor)
+            // so it can be filled with a gradient for the "filled area" look.
+            ComPtr<ID2D1PathGeometry> geom;
+            m_d2dFactory->CreatePathGeometry(&geom);
+            ComPtr<ID2D1GeometrySink> sink;
+            geom->Open(&sink);
+
+            auto sampleY = [&](float v) {
+                float y = sparkBottom - (v / maxExpected) * h;
+                return std::clamp(y, sparkTop, sparkBottom);
+            };
+
+            sink->BeginFigure(
+                D2D1::Point2F(left, sparkBottom),
+                D2D1_FIGURE_BEGIN_FILLED);
+            for (size_t i = 0; i < hist.size(); ++i) {
+                float x = left + (i / (float)(kHistorySize - 1)) * w;
+                sink->AddLine(D2D1::Point2F(x, sampleY(hist[i])));
+            }
+            sink->AddLine(D2D1::Point2F(right, sparkBottom));
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            sink->Close();
+
+            // Gradient fill under the line: same color as stroke, fades to
+            // transparent toward the floor.
+            D2D1_COLOR_F strokeCol = stroke->GetColor();
+            D2D1_GRADIENT_STOP stops[2] = {
+                { 0.0f, D2D1::ColorF(strokeCol.r, strokeCol.g, strokeCol.b, 0.45f) },
+                { 1.0f, D2D1::ColorF(strokeCol.r, strokeCol.g, strokeCol.b, 0.00f) },
+            };
+            ComPtr<ID2D1GradientStopCollection> stopColl;
+            m_d2dContext->CreateGradientStopCollection(stops, 2, &stopColl);
+            ComPtr<ID2D1LinearGradientBrush> gradBrush;
+            m_d2dContext->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(left, sparkTop),
+                    D2D1::Point2F(left, sparkBottom)),
+                stopColl.Get(), &gradBrush);
+            m_d2dContext->FillGeometry(geom.Get(), gradBrush.Get());
+
+            // Stroke on top: solid line tracing the data.
+            // Need a separate geometry for the stroke (open path, no floor).
+            ComPtr<ID2D1PathGeometry> strokeGeom;
+            m_d2dFactory->CreatePathGeometry(&strokeGeom);
+            ComPtr<ID2D1GeometrySink> strokeSink;
+            strokeGeom->Open(&strokeSink);
+            strokeSink->BeginFigure(
+                D2D1::Point2F(left, sampleY(hist[0])),
+                D2D1_FIGURE_BEGIN_HOLLOW);
+            for (size_t i = 1; i < hist.size(); ++i) {
+                float x = left + (i / (float)(kHistorySize - 1)) * w;
+                strokeSink->AddLine(D2D1::Point2F(x, sampleY(hist[i])));
+            }
+            strokeSink->EndFigure(D2D1_FIGURE_END_OPEN);
+            strokeSink->Close();
+            m_d2dContext->DrawGeometry(strokeGeom.Get(), stroke, 1.5f);
+        };
+
+        // FPS sparkline: left half. Stroke color reflects current FPS.
+        drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory, 70.0f, fpsBrush());
+
+        // Latency sparkline: right half. Build it dynamically from history.
+        // Stroke color reflects current end-to-end latency.
+        drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, e2eBrush());
+    }
+
+    // ---- 6. Pipeline status strip (bottom 16px) ----------------------------
+    // Feature badges so the HUD shows what's active without opening F1.
+    // Active = accent color, inactive = dim.
+    {
+        const float stripY = panel.top + 142.0f;
+        const float stripH = 14.0f;
+
+        // Subtle separator above the strip, matching the header divider.
+        m_d2dContext->DrawLine(
+            D2D1::Point2F(panel.left + pad,  stripY - 2.0f),
+            D2D1::Point2F(panel.right - pad, stripY - 2.0f),
+            dividerBrush.Get(), 1.0f);
+
+        // Four badges, equally spaced across the strip. Each is just text;
+        // the brush is colored per-badge instead of mixing colors in one run.
+        // Order matches pipeline execution: scale -> HDR -> NIS -> color.
+        struct Badge { const wchar_t* label; bool active; };
+        Badge badges[4] = {
+            { L"CR",    true                  }, // Catmull-Rom always on (only scaler today)
+            { L"HDR",   stats.hdrActive       },
+            { L"NIS",   stats.nisActive       },
+            { L"COLOR", stats.colorExpansion  },
+        };
+
+        const float stripLeft  = panel.left + pad;
+        const float stripRight = panel.right - pad;
+        const float stripW     = stripRight - stripLeft;
+        const float slotW      = stripW / 4.0f;
+
+        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        for (int i = 0; i < 4; ++i) {
+            D2D1_RECT_F r = D2D1::RectF(
+                stripLeft + slotW * i,       stripY,
+                stripLeft + slotW * (i + 1), stripY + stripH);
+            ID2D1SolidColorBrush* b = badges[i].active
+                ? m_brushAccent.Get()
+                : m_brushDim.Get();
+            m_d2dContext->DrawText(
+                badges[i].label, (UINT32)wcslen(badges[i].label),
+                m_textFormatLabel.Get(), r, b);
+        }
+        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    }
+
+    HRESULT hr = m_d2dContext->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET) {
+        ReleaseD2DResources();
+        CreateD2DResources();
+    }
+}
+
+void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
+{
+    if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap) {
+        return;
+    }
+
+    const float w = (float)windowW;
+    const float h = (float)windowH;
+
+    // Reference design canvas is 1920x1080. Scale by min so the centered
+    // card fits cleanly on any window size without stretching weird.
+    const float scale = std::min(w / 1920.0f, h / 1080.0f);
+    auto S = [&](float v) { return v * scale; };
+
+    // Palette mirrors nitlink-menu.html (--bg / --bg-soft / --rule /
+    // --accent / --fg* tokens). Kept local so this screen is self-contained
+    // and can be tuned without touching the rest of the overlay.
+    const D2D1_COLOR_F COL_BG       = D2D1::ColorF(0.047f, 0.051f, 0.059f, 1.0f); // #0C0D0F  (--bg)
+    const D2D1_COLOR_F COL_CARD_BG  = D2D1::ColorF(0.075f, 0.078f, 0.094f, 1.0f); // #131418  (--bg-soft)
+    const D2D1_COLOR_F COL_RULE     = D2D1::ColorF(1.0f,  1.0f,  1.0f,  0.06f);    // (--rule)
+    const D2D1_COLOR_F COL_FG       = D2D1::ColorF(0.910f, 0.918f, 0.929f, 1.0f); // #E8EAED (--fg)
+    const D2D1_COLOR_F COL_FG_DIM   = D2D1::ColorF(0.604f, 0.627f, 0.659f, 1.0f); // #9AA0A8 (--fg-mid)
+    const D2D1_COLOR_F COL_FG_MUTED = D2D1::ColorF(0.290f, 0.310f, 0.341f, 1.0f); // #4A4F57 (--fg-muted)
+    const D2D1_COLOR_F COL_ACCENT   = D2D1::ColorF(0.357f, 0.553f, 0.937f, 1.0f); // #5B8DEF (--accent)
+
+    m_d2dContext->BeginDraw();
+
+    // Flat near-black background: the F1 menu uses a single tone rather
+    // than a gradient, so the prior radial fill is dropped here.
+    {
+        ComPtr<ID2D1SolidColorBrush> bBg;
+        m_d2dContext->CreateSolidColorBrush(COL_BG, &bBg);
+        m_d2dContext->FillRectangle(D2D1::RectF(0, 0, w, h), bBg.Get());
+    }
+
+    // Brushes used throughout.
+    ComPtr<ID2D1SolidColorBrush> bCard, bRule, bFg, bFgDim, bFgMuted, bAccent, bAccentSoft;
+    m_d2dContext->CreateSolidColorBrush(COL_CARD_BG, &bCard);
+    m_d2dContext->CreateSolidColorBrush(COL_RULE,    &bRule);
+    m_d2dContext->CreateSolidColorBrush(COL_FG,      &bFg);
+    m_d2dContext->CreateSolidColorBrush(COL_FG_DIM,  &bFgDim);
+    m_d2dContext->CreateSolidColorBrush(COL_FG_MUTED,&bFgMuted);
+    m_d2dContext->CreateSolidColorBrush(COL_ACCENT,  &bAccent);
+    // --accent-soft equivalent for the status dot halo (rgba 91,141,239 / 0.16).
+    m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(0.357f, 0.553f, 0.937f, 0.16f), &bAccentSoft);
+
+    // Type. Segoe UI is the closest stock-Windows analogue to Inter; paired
+    // with Cascadia Mono for the version tag / brand sub-label so it matches
+    // the F1 menu's Inter + JetBrains Mono pairing.
+    auto MakeFormat = [&](float pt, DWRITE_FONT_WEIGHT weight, const wchar_t* family) {
+        ComPtr<IDWriteTextFormat> f;
+        m_dwriteFactory->CreateTextFormat(
+            family, nullptr, weight,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+            S(pt), L"en-us", &f);
+        return f;
+    };
+
+    auto fBrandLogo = MakeFormat(15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, L"Segoe UI");
+    auto fBrandTag  = MakeFormat(11.0f, DWRITE_FONT_WEIGHT_NORMAL,    L"Cascadia Mono");
+    auto fSectLabel = MakeFormat(10.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, L"Segoe UI");
+    auto fHeadline  = MakeFormat(24.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, L"Segoe UI");
+    auto fSubMsg    = MakeFormat(13.0f, DWRITE_FONT_WEIGHT_NORMAL,    L"Segoe UI");
+    auto fHint      = MakeFormat(12.0f, DWRITE_FONT_WEIGHT_NORMAL,    L"Segoe UI");
+
+    // ─── Centered card ───────────────────────────────────────────────────
+    // Width caps at 520px so it stays readable on ultrawides; height is
+    // intrinsic-ish (layout is top-down and trusts the design fits inside
+    // the drawn rect).
+    const float cardW = std::min(S(520.0f), w - S(48.0f));
+    const float cardH = S(280.0f);
+    const float cardX = (w - cardW) * 0.5f;
+    const float cardY = (h - cardH) * 0.5f;
+    D2D1_RECT_F card = D2D1::RectF(cardX, cardY, cardX + cardW, cardY + cardH);
+    D2D1_ROUNDED_RECT cardRound = { card, S(12.0f), S(12.0f) };
+
+    m_d2dContext->FillRoundedRectangle(cardRound, bCard.Get());
+    m_d2dContext->DrawRoundedRectangle(cardRound, bRule.Get(), 1.0f);
+
+    // Inner padding around all card content.
+    const float ipx = S(32.0f);
+    const float ipy = S(28.0f);
+
+    // ─── Card row 1: brand block ────────────────────────────────────────
+    // "NitLink" set in the foreground colour with a quiet monospaced
+    // version tag to its right: mirrors the F1 menu's .brand-block layout.
+    const float brandY = cardY + ipy;
+    {
+        D2D1_RECT_F rLogo = D2D1::RectF(
+            cardX + ipx, brandY,
+            cardX + ipx + S(120.0f), brandY + S(22.0f));
+        fBrandLogo->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* logo = L"NitLink";
+        m_d2dContext->DrawText(logo, (UINT32)wcslen(logo),
+            fBrandLogo.Get(), rLogo, bFg.Get());
+
+        D2D1_RECT_F rTag = D2D1::RectF(
+            cardX + ipx + S(64.0f), brandY + S(5.0f),
+            cardX + ipx + S(180.0f), brandY + S(22.0f));
+        fBrandTag->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* tag = L"v1.0.0-rc1";
+        m_d2dContext->DrawText(tag, (UINT32)wcslen(tag),
+            fBrandTag.Get(), rTag, bFgMuted.Get());
+    }
+
+    // Status row, right-aligned in the same band: a small accent dot with
+    // the section-label-style "WAITING FOR SOURCE" caption.
+    {
+        // Soft halo + core dot. No pulse animation: the F1 menu's
+        // language is quiet, not attention-grabbing.
+        const float dotX = cardX + cardW - ipx - S(150.0f);
+        const float dotY = brandY + S(11.0f);
+        D2D1_ELLIPSE halo = D2D1::Ellipse(D2D1::Point2F(dotX, dotY), S(7.0f), S(7.0f));
+        m_d2dContext->FillEllipse(halo, bAccentSoft.Get());
+        D2D1_ELLIPSE core = D2D1::Ellipse(D2D1::Point2F(dotX, dotY), S(3.5f), S(3.5f));
+        m_d2dContext->FillEllipse(core, bAccent.Get());
+
+        D2D1_RECT_F rLab = D2D1::RectF(
+            dotX + S(12.0f), brandY + S(4.0f),
+            cardX + cardW - ipx, brandY + S(20.0f));
+        fSectLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* lab = L"WAITING FOR SOURCE";
+        m_d2dContext->DrawText(lab, (UINT32)wcslen(lab),
+            fSectLabel.Get(), rLab, bFgDim.Get());
+    }
+
+    // Thin rule under the brand row.
+    m_d2dContext->DrawLine(
+        D2D1::Point2F(cardX + ipx,           cardY + S(64.0f)),
+        D2D1::Point2F(cardX + cardW - ipx,   cardY + S(64.0f)),
+        bRule.Get(), 1.0f);
+
+    // ─── Card row 2: headline + sub message ─────────────────────────────
+    {
+        D2D1_RECT_F rH = D2D1::RectF(
+            cardX + ipx, cardY + S(96.0f),
+            cardX + cardW - ipx, cardY + S(128.0f));
+        fHeadline->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* hd = L"Input signal lost";
+        m_d2dContext->DrawText(hd, (UINT32)wcslen(hd),
+            fHeadline.Get(), rH, bFg.Get());
+    }
+    {
+        D2D1_RECT_F rS = D2D1::RectF(
+            cardX + ipx, cardY + S(134.0f),
+            cardX + cardW - ipx, cardY + S(176.0f));
+        fSubMsg->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* sub = L"Waiting for HDMI source…";
+        m_d2dContext->DrawText(sub, (UINT32)wcslen(sub),
+            fSubMsg.Get(), rS, bFgDim.Get());
+    }
+
+    // ─── Card row 3: quiet hint ─────────────────────────────────────────
+    // One soft line of recovery guidance, matching the F1 menu's
+    // dynamic-desc-box tone. No bulleted list, no scary error wording.
+    m_d2dContext->DrawLine(
+        D2D1::Point2F(cardX + ipx,           cardY + S(196.0f)),
+        D2D1::Point2F(cardX + cardW - ipx,   cardY + S(196.0f)),
+        bRule.Get(), 1.0f);
+    {
+        D2D1_RECT_F rHint = D2D1::RectF(
+            cardX + ipx, cardY + S(214.0f),
+            cardX + cardW - ipx, cardY + cardH - ipy);
+        fHint->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        const wchar_t* hint =
+            L"Make sure your source is powered on and the HDMI cable is "
+            L"seated at both ends.";
+        m_d2dContext->DrawText(hint, (UINT32)wcslen(hint),
+            fHint.Get(), rHint, bFgMuted.Get());
+    }
+
+    HRESULT hr = m_d2dContext->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET) {
+        ReleaseD2DResources();
+        CreateD2DResources();
+    }
+}
+
+void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
+                         const wchar_t* text, float alpha)
+{
+    if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap) return;
+    if (!text || alpha <= 0.0f) return;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    const float w = (float)windowW;
+    const float h = (float)windowH;
+    const float scale = std::min(w / 1920.0f, h / 1080.0f);
+    auto S = [&](float v) { return v * scale; };
+
+    m_d2dContext->BeginDraw();
+    if (m_offscreenInUse) {
+        m_d2dContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+    }
+
+    // Palette mirrors the demo card / no-signal / F1 menu, but scaled by
+    // the caller-supplied alpha so the whole card fades together.
+    const D2D1_COLOR_F COL_CARD_BG = D2D1::ColorF(0.075f, 0.078f, 0.094f, 0.92f * alpha);
+    const D2D1_COLOR_F COL_RULE    = D2D1::ColorF(1.0f,   1.0f,   1.0f,   0.06f * alpha);
+    const D2D1_COLOR_F COL_FG      = D2D1::ColorF(0.910f, 0.918f, 0.929f, alpha);
+    const D2D1_COLOR_F COL_ACCENT  = D2D1::ColorF(0.357f, 0.553f, 0.937f, alpha);
+
+    // Card sizing: text-width approximation by character count. Good enough
+    // for short toast strings; if the text doesn't fit, DrawText clips it
+    // (acceptable for rc1 rather than spinning up a DWRITE measure).
+    const size_t   textLen   = wcslen(text);
+    const float    estCharPx = S(7.5f);                       // ~7.5 px/char at 13pt Segoe UI
+    const float    minCardW  = S(280.0f);
+    const float    maxCardW  = std::min(S(640.0f), w - S(48.0f));
+    float          cardW     = S(56.0f) + estCharPx * static_cast<float>(textLen);
+    if (cardW < minCardW) cardW = minCardW;
+    if (cardW > maxCardW) cardW = maxCardW;
+    const float    cardH     = S(48.0f);
+    const float    cardX     = (w - cardW) * 0.5f;
+    const float    cardY     = S(40.0f);
+
+    D2D1_RECT_F card = D2D1::RectF(cardX, cardY, cardX + cardW, cardY + cardH);
+    D2D1_ROUNDED_RECT cardRound = { card, S(10.0f), S(10.0f) };
+
+    ComPtr<ID2D1SolidColorBrush> bCard, bRule, bFg, bAccent;
+    m_d2dContext->CreateSolidColorBrush(COL_CARD_BG, &bCard);
+    m_d2dContext->CreateSolidColorBrush(COL_RULE,    &bRule);
+    m_d2dContext->CreateSolidColorBrush(COL_FG,      &bFg);
+    m_d2dContext->CreateSolidColorBrush(COL_ACCENT,  &bAccent);
+
+    m_d2dContext->FillRoundedRectangle(cardRound, bCard.Get());
+    m_d2dContext->DrawRoundedRectangle(cardRound, bRule.Get(), 1.0f);
+
+    // Accent dot at the leading edge, vertically centered.
+    D2D1_ELLIPSE dot = D2D1::Ellipse(
+        D2D1::Point2F(cardX + S(20.0f), cardY + cardH * 0.5f),
+        S(3.5f), S(3.5f));
+    m_d2dContext->FillEllipse(dot, bAccent.Get());
+
+    // Single-line text, vertically centered.
+    ComPtr<IDWriteTextFormat> fText;
+    m_dwriteFactory->CreateTextFormat(
+        L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        S(13.0f), L"en-us", &fText);
+    fText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    D2D1_RECT_F rText = D2D1::RectF(
+        cardX + S(36.0f), cardY,
+        cardX + cardW - S(16.0f), cardY + cardH);
+    m_d2dContext->DrawText(text, static_cast<UINT32>(textLen),
+        fText.Get(), rText, bFg.Get());
+
+    HRESULT hr = m_d2dContext->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET) {
+        ReleaseD2DResources();
+        CreateD2DResources();
+    }
+}
+
+} // namespace NitLink

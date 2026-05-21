@@ -1,0 +1,466 @@
+#include "window.h"
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+
+namespace NitLink {
+
+Window::Window() = default;
+
+Window::~Window()
+{
+    if (m_hwnd) {
+        DestroyWindow(m_hwnd);
+        m_hwnd = nullptr;
+    }
+}
+
+bool Window::Create(HINSTANCE hInstance, const Desc& desc)
+{
+    m_hInstance = hInstance;
+
+    // Register window class
+    WNDCLASSEXW wc{};
+    wc.cbSize        = sizeof(wc);
+    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = hInstance;
+    wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.lpszClassName = L"NitLinkWindowClass";
+    // Load the icon embedded in the .exe via app.rc → IDI_APP_ICON.
+    // MAKEINTRESOURCEW(101) matches the IDI_APP_ICON #define in resource.h
+    // (the 101 is hardcoded here to avoid pulling resource.h into this file).
+    // If the resource is missing for any reason, fall back gracefully to
+    // the generic IDI_APPLICATION icon so the app still launches.
+    wc.hIcon         = LoadIconW(hInstance, MAKEINTRESOURCEW(101));
+    if (!wc.hIcon) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIconSm       = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(101),
+                                            IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+    if (!wc.hIconSm) wc.hIconSm = LoadIconW(nullptr, IDI_APPLICATION);
+    
+    if (!RegisterClassExW(&wc)) {
+        return false;
+    }
+
+    // Calculate window size for desired client area
+    RECT rc = {0, 0, (LONG)desc.width, (LONG)desc.height};
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    AdjustWindowRect(&rc, style, FALSE);
+
+    m_hwnd = CreateWindowExW(
+        0,
+        L"NitLinkWindowClass",
+        desc.title.c_str(),
+        style,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        rc.right - rc.left, rc.bottom - rc.top,
+        nullptr, nullptr, hInstance, this
+    );
+
+    if (!m_hwnd) return false;
+
+    // Enable dark title bar (Windows 11+)
+    if (desc.darkMode) {
+        BOOL darkMode = TRUE;
+        DwmSetWindowAttribute(m_hwnd, 
+            20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, 
+            &darkMode, sizeof(darkMode));
+    }
+
+    // Set rounded corners (Windows 11)
+    auto cornerPref = 2; // DWMWCP_ROUNDSMALL
+    DwmSetWindowAttribute(m_hwnd, 
+        33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, 
+        &cornerPref, sizeof(cornerPref));
+
+    m_windowedStyle = style;
+    GetWindowRect(m_hwnd, &m_windowedRect);
+
+    return true;
+}
+
+void Window::Show(int nCmdShow)
+{
+    ShowWindow(m_hwnd, nCmdShow);
+    UpdateWindow(m_hwnd);
+}
+
+void Window::SetTitle(const std::wstring& title)
+{
+    SetWindowTextW(m_hwnd, title.c_str());
+}
+
+void Window::SetIcon(const std::wstring& iconPath)
+{
+    HICON hIcon = (HICON)LoadImageW(
+        nullptr, iconPath.c_str(), IMAGE_ICON,
+        0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+    );
+    
+    if (hIcon) {
+        SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+        SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+    }
+}
+
+void Window::SetFullscreen(bool fullscreen)
+{
+    if (fullscreen == m_isFullscreen) return;
+    m_isFullscreen = fullscreen;
+
+    if (fullscreen) {
+        // Save current windowed position
+        m_windowedStyle = GetWindowLongW(m_hwnd, GWL_STYLE);
+        GetWindowRect(m_hwnd, &m_windowedRect);
+
+        // Remove window chrome entirely
+        SetWindowLongW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+
+        // Win11: opt out of rounded corners and shadow when fullscreen.
+        // DWMWA_WINDOW_CORNER_PREFERENCE was added in build 22000.
+        // 1 = DONOTROUND.
+        DWORD cornerPref = 1; // DWMWCP_DONOTROUND
+        DwmSetWindowAttribute(m_hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
+                              &cornerPref, sizeof(cornerPref));
+
+        HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        GetMonitorInfoW(monitor, &mi);
+
+        // Use rcMonitor (full monitor including taskbar area) for borderless
+        // fullscreen, covering the screen edge-to-edge.
+        SetWindowPos(m_hwnd, HWND_TOP,
+            mi.rcMonitor.left, mi.rcMonitor.top,
+            mi.rcMonitor.right - mi.rcMonitor.left,
+            mi.rcMonitor.bottom - mi.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    } else {
+        // Restore rounded corners (Win11 default)
+        DWORD cornerPref = 0; // DWMWCP_DEFAULT
+        DwmSetWindowAttribute(m_hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/,
+                              &cornerPref, sizeof(cornerPref));
+
+        SetWindowLongW(m_hwnd, GWL_STYLE, m_windowedStyle);
+        SetWindowPos(m_hwnd, HWND_NOTOPMOST,
+            m_windowedRect.left, m_windowedRect.top,
+            m_windowedRect.right - m_windowedRect.left,
+            m_windowedRect.bottom - m_windowedRect.top,
+            SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    }
+
+    m_wasResized = true;
+}
+
+void Window::SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity)
+{
+    if (enabled == m_isPiP) return; // No-op if already in target state
+    m_isPiP = enabled;
+
+    // Ensure there is a valid windowed rect to restore to
+    if (m_windowedRect.right - m_windowedRect.left < 100) {
+        // First-time toggle or invalid state -- pick sane defaults
+        m_windowedRect.left   = 100;
+        m_windowedRect.top    = 100;
+        m_windowedRect.right  = 100 + 1280;
+        m_windowedRect.bottom = 100 + 720;
+    }
+
+    if (enabled) {
+        // Save current position before transitioning
+        if (!m_isFullscreen) {
+            GetWindowRect(m_hwnd, &m_windowedRect);
+            m_windowedStyle = GetWindowLongW(m_hwnd, GWL_STYLE);
+        }
+
+        m_pipWidth = width;
+        m_pipHeight = height;
+
+        // Get monitor work area to position PiP in bottom-right corner
+        HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        GetMonitorInfoW(monitor, &mi);
+
+        // Preferred-position path: honor the application's saved (or
+        // hotkey-updated) PiP top-left when it's been set. Clamp it inside
+        // the current monitor's work area so a coord saved from a different
+        // monitor layout still lands somewhere visible. -1 / -1 sentinel
+        // means "use the default bottom-right corner".
+        int pipX, pipY;
+        if (m_pipPreferredX >= 0 && m_pipPreferredY >= 0) {
+            pipX = m_pipPreferredX;
+            pipY = m_pipPreferredY;
+            const int maxX = mi.rcWork.right  - (int)width;
+            const int maxY = mi.rcWork.bottom - (int)height;
+            if (pipX < mi.rcWork.left) pipX = mi.rcWork.left;
+            if (pipY < mi.rcWork.top)  pipY = mi.rcWork.top;
+            if (pipX > maxX)           pipX = maxX;
+            if (pipY > maxY)           pipY = maxY;
+        } else {
+            pipX = mi.rcWork.right  - (int)width  - 20;
+            pipY = mi.rcWork.bottom - (int)height - 20;
+        }
+
+        // Remove chrome, set always-on-top
+        SetWindowLongW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowLongW(m_hwnd, GWL_EXSTYLE,
+            GetWindowLongW(m_hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TOPMOST);
+        SetLayeredWindowAttributes(m_hwnd, 0, (BYTE)(opacity * 255), LWA_ALPHA);
+
+        SetWindowPos(m_hwnd, HWND_TOPMOST,
+            pipX, pipY, (int)width, (int)height,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else {
+        // Restore normal window.
+        //
+        // Order matters here. The prior code removed WS_EX_LAYERED first
+        // and never reset SetLayeredWindowAttributes' alpha: DWM's
+        // layered-window cache held onto the old per-window alpha, and
+        // any subsequent code path that re-applied WS_EX_LAYERED (or that
+        // the OS re-applied implicitly during a fast Alt+Enter from PiP)
+        // could pick up the stale 230-ish alpha and leave the main
+        // window visibly transparent. The flow now:
+        //
+        //   1. Force the alpha back to 255 while WS_EX_LAYERED is still
+        //      set: guaranteed to land a fully opaque state in DWM's
+        //      cache regardless of what comes next.
+        //   2. Strip WS_EX_LAYERED and WS_EX_TOPMOST.
+        //   3. Restore the saved window style (chrome / titlebar).
+        //   4. Re-show as a non-topmost window with SWP_FRAMECHANGED so
+        //      DWM picks up the new style flags immediately.
+        //   5. Issue a no-move SetWindowPos with SWP_FRAMECHANGED again
+        //      after the style swap as belt-and-suspenders: some Windows
+        //      builds need a second frame-change to fully drop layered
+        //      compositing.
+        SetLayeredWindowAttributes(m_hwnd, 0, 255, LWA_ALPHA);
+        SetWindowLongW(m_hwnd, GWL_EXSTYLE,
+            GetWindowLongW(m_hwnd, GWL_EXSTYLE) & ~(WS_EX_LAYERED | WS_EX_TOPMOST));
+        SetWindowLongW(m_hwnd, GWL_STYLE, m_windowedStyle);
+
+        SetWindowPos(m_hwnd, HWND_NOTOPMOST,
+            m_windowedRect.left, m_windowedRect.top,
+            m_windowedRect.right - m_windowedRect.left,
+            m_windowedRect.bottom - m_windowedRect.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+
+    m_wasResized = true;
+}
+
+bool Window::NudgePiP(int dx, int dy)
+{
+    if (!m_isPiP || !m_hwnd) return false;
+
+    RECT rc{};
+    if (!GetWindowRect(m_hwnd, &rc)) return false;
+    const int curW = rc.right  - rc.left;
+    const int curH = rc.bottom - rc.top;
+    int newX = rc.left + dx;
+    int newY = rc.top  + dy;
+
+    // Clamp to the work area of whichever monitor currently contains the
+    // PiP window. Lets the user nudge from one corner to another but not
+    // off-screen.
+    HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(monitor, &mi)) {
+        const int maxX = mi.rcWork.right  - curW;
+        const int maxY = mi.rcWork.bottom - curH;
+        if (newX < mi.rcWork.left) newX = mi.rcWork.left;
+        if (newY < mi.rcWork.top)  newY = mi.rcWork.top;
+        if (newX > maxX)           newX = maxX;
+        if (newY > maxY)           newY = maxY;
+    }
+
+    if (newX == rc.left && newY == rc.top) return false;
+
+    SetWindowPos(m_hwnd, HWND_TOPMOST, newX, newY, 0, 0,
+                 SWP_NOSIZE | SWP_NOACTIVATE);
+
+    // Cache the new preferred so any subsequent SetPiP(true) re-applies it
+    // (e.g. if the user toggles fullscreen and back, or restarts the app).
+    m_pipPreferredX = newX;
+    m_pipPreferredY = newY;
+    return true;
+}
+
+bool Window::GetPiPPosition(int32_t& outX, int32_t& outY) const
+{
+    if (!m_isPiP || !m_hwnd) return false;
+    RECT rc{};
+    if (!GetWindowRect(m_hwnd, &rc)) return false;
+    outX = rc.left;
+    outY = rc.top;
+    return true;
+}
+
+std::pair<uint32_t, uint32_t> Window::GetClientSize() const
+{
+    RECT rc{}; // zero-init so stack garbage is never returned if GetClientRect fails
+    if (!m_hwnd || !GetClientRect(m_hwnd, &rc)) {
+        return { 0, 0 };
+    }
+    LONG w = rc.right  - rc.left;
+    LONG h = rc.bottom - rc.top;
+    if (w <= 0 || h <= 0) return { 0, 0 };
+    return { (uint32_t)w, (uint32_t)h };
+}
+
+LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    Window* self = nullptr;
+
+    if (msg == WM_NCCREATE) {
+        auto cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        self = static_cast<Window*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    } else {
+        self = reinterpret_cast<Window*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    switch (msg) {
+    case WM_SIZE:
+        // Set the resize flag for any size change EXCEPT minimize (which
+        // gives 0x0 dimensions and would crash the renderer)
+        if (self && wParam != SIZE_MINIMIZED) {
+            self->m_wasResized = true;
+            // SIZE_MAXIMIZED and SIZE_RESTORED are both valid -- both come
+            // through this path and trigger a clean resize on the next frame.
+        }
+        return 0;
+
+    case WM_MOVE:
+        // The main window moved on screen. The renderer doesn't care about
+        // window position, but the WebView2 settings popup is a separate
+        // top-level window pinned to main's client rect: when main moves,
+        // the popup must follow or it ends up stranded at its old screen
+        // position, appearing to "disappear" because it's no longer over
+        // main's client area.
+        //
+        // Fire the synchronous callback HERE inside WndProc, not via the
+        // m_wasMoved flag. During a title-bar drag, Windows runs a modal
+        // message loop and the app's PeekMessage pump is suspended: the
+        // flag wouldn't be consumed until the drag finished, making the
+        // popup look stranded mid-drag. The callback fires on every WM_MOVE
+        // including the ones delivered inside the modal loop.
+        if (self) {
+            self->m_wasMoved = true;
+            if (self->m_onMove) self->m_onMove();
+        }
+        return 0;
+
+    case WM_ENTERSIZEMOVE:
+        // User started dragging the window edge. WM_SIZE won't fire again
+        // until they release. No-op for now but kept for symmetry.
+        return 0;
+
+    case WM_EXITSIZEMOVE:
+        // User finished dragging. Two things to do:
+        //   1. Flag a resize so the renderer + overlay catch up to the
+        //      final dimensions (in case WM_SIZE didn't fire for a
+        //      same-size drag, or fired multiple times during drag).
+        //   2. Fire the move callback once more. During the drag the
+        //      popup was tracking via WM_MOVE, but on drag release
+        //      Windows reactivates the main window and may shuffle
+        //      z-order, leaving the popup hidden behind main. The
+        //      callback's TrackOwnerRect call re-asserts the popup
+        //      above its owner via SetWindowPos(popup, owner).
+        if (self) {
+            self->m_wasResized = true;
+            if (self->m_onMove) self->m_onMove();
+        }
+        return 0;
+
+    case WM_ACTIVATE:
+        // Main window gained or lost activation. If GAINED (e.g. user
+        // clicked away then back, or finished a title-bar drag), the
+        // popup may have ended up underneath in z-order. Re-assert by
+        // calling the same TrackOwnerRect path. LOWORD(wParam) ==
+        // WA_INACTIVE means focus was just LOST: ignore that case;
+        // only re-stack on a GAIN-focus transition.
+        if (self && self->m_onMove && LOWORD(wParam) != WA_INACTIVE) {
+            self->m_onMove();
+        }
+        break;  // let DefWindowProc handle the rest of WM_ACTIVATE
+
+    case WM_GETMINMAXINFO:
+        // Allow window to be resized down to small but not zero -- prevents
+        // swap chain trying to allocate a 0-byte buffer.
+        if (lParam) {
+            MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+            mmi->ptMinTrackSize.x = 320;
+            mmi->ptMinTrackSize.y = 240;
+        }
+        return 0;
+
+    case WM_KEYDOWN:
+        // Alt+Enter is intentionally NOT handled here: HotkeyManager owns
+        // it (registered in Application::Initialize as "toggle_fullscreen").
+        // Listening here too caused a double-toggle race where both paths
+        // fired on the same keypress and cancelled out, so users had to
+        // press Alt+Enter twice to see a state change.
+        //
+        // Forward to UI callbacks (Esc, arrows, etc.)
+        if (self && self->m_inputCb.onKeyDown) {
+            self->m_inputCb.onKeyDown((int)wParam);
+        }
+        break;
+
+    case WM_MOUSEMOVE:
+        if (self && self->m_inputCb.onMouseMove) {
+            int x = (short)LOWORD(lParam);
+            int y = (short)HIWORD(lParam);
+            self->m_inputCb.onMouseMove(x, y);
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (self && self->m_inputCb.onMouseDown) {
+            int x = (short)LOWORD(lParam);
+            int y = (short)HIWORD(lParam);
+            // Capture the mouse so drags keep working when cursor leaves the window
+            SetCapture(hwnd);
+            self->m_inputCb.onMouseDown(x, y);
+        }
+        return 0;
+
+    case WM_LBUTTONUP:
+        if (self && self->m_inputCb.onMouseUp) {
+            int x = (short)LOWORD(lParam);
+            int y = (short)HIWORD(lParam);
+            ReleaseCapture();
+            self->m_inputCb.onMouseUp(x, y);
+        }
+        return 0;
+
+    case WM_MOUSEWHEEL:
+        if (self && self->m_inputCb.onMouseWheel) {
+            int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+            self->m_inputCb.onMouseWheel(delta);
+        }
+        return 0;
+
+    case WM_SYSKEYDOWN:
+        // Prevent Alt from activating menu
+        if (wParam == VK_MENU) return 0;
+        // Alt+Enter is owned by HotkeyManager (see WM_KEYDOWN comment above).
+        // Returning here without handling lets DefWindowProc do its thing,
+        // which is harmless for Alt+Enter since there is no system menu.
+        break;
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1; // Prevent flicker
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+} // namespace NitLink

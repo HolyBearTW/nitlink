@@ -1,0 +1,14 @@
+// app.rc: Windows resource definitions for NitLink.
+//
+// This file is compiled by the MSVC resource compiler (rc.exe) into a .res
+// object that gets linked into the final .exe. The result: the icon shows
+// up everywhere Windows looks for an .exe icon (File Explorer, taskbar,
+// alt-tab, the title bar of any window registered with this class) even
+// before the app's WinMain runs.
+//
+// The path is relative to this file's location (src/). The actual .ico
+// must exist at assets/nitlink.ico in the project root.
+
+#include "resource.h"
+
+IDI_APP_ICON ICON "../assets/nitlink.ico"

@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NitLink · Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Restrained neutral palette: closer to Linear / Vercel than to gaming UI */
+    --bg:        #0c0d0f;
+    --bg-soft:   #131418;
+    --bg-row:    #15171b;
+    --bg-row-h:  #1a1d22;
+
+    --rule:        rgba(255, 255, 255, 0.06);
+    --rule-strong: rgba(255, 255, 255, 0.10);
+
+    /* One accent. Used three places total: brand, link emphasis, slider/toggle on-state. */
+    --accent:      #5b8def;
+    --accent-soft: rgba(91, 141, 239, 0.16);
+
+    /* Functional status: only used when actually relevant */
+    --ok:        #4ade80;
+
+    --fg:        #e8eaed;
+    --fg-mid:    #9aa0a8;
+    --fg-dim:    #6b7077;
+    --fg-muted:  #4a4f57;
+
+    --sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--sans);
+    color: var(--fg);
+    background: var(--bg);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  ::selection { background: var(--accent-soft); color: var(--fg); }
+
+  /* ─── Layout ─────────────────────────────────────────────── */
+  .screen-mask {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    background: var(--bg);
+  }
+
+  /* ─── Left: Quiet sidebar ────────────────────────────────── */
+  .info-pane {
+    background: var(--bg-soft);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    padding: 28px 24px;
+    overflow: hidden;
+  }
+
+  .brand-block {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+
+  .brand-logo {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+
+  .brand-logo span {
+    color: var(--fg-dim);
+    font-weight: 400;
+  }
+
+  .version-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+
+  .brand-tagline {
+    font-size: 12px;
+    color: var(--fg-dim);
+    margin-bottom: 32px;
+    line-height: 1.45;
+  }
+
+  /* Telemetry: a small monospaced readout, like the corner of mpv's stats panel.
+     No frame, no notched label, no glow. Just data. */
+  .telemetry-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .tele-section-label {
+    font-family: var(--sans);
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .tele-item {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    align-items: baseline;
+    gap: 12px;
+    padding: 6px 0;
+  }
+
+  .tele-label {
+    font-size: 12px;
+    color: var(--fg-dim);
+  }
+
+  .tele-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+  }
+
+  /* Source row. A telemetry-stack entry that becomes an interactive
+     picker when more than one capture device is enumerated. The grid
+     cells (label and value-row) stay in flow; the popover sits in the
+     row as an absolutely-positioned overlay so it does not push other
+     telemetry items around. State is pushed from C++ via
+     PushSettingsState (captureDevices, activeDevice); the UI never
+     holds optimistic state. */
+  .tele-item.source-trigger {
+    position: relative;
+  }
+  .tele-item.source-trigger[data-multi="true"] {
+    cursor: pointer;
+  }
+  .tele-item.source-trigger[data-multi="true"]:hover .tele-value {
+    color: var(--fg);
+  }
+  .source-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+  .source-value-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source-chevron {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-dim);
+    flex-shrink: 0;
+  }
+  .tele-item.source-trigger[data-multi="false"] .source-chevron {
+    display: none;
+  }
+
+  .source-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    background: var(--bg-row);
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    padding: 4px;
+    z-index: 10;
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 240px;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+  .source-popover[data-open="true"] {
+    display: flex;
+  }
+  .source-popover-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-mid);
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .source-popover-item:hover {
+    background: var(--bg-row-h);
+    color: var(--fg);
+  }
+  .source-popover-item[data-active="true"] {
+    color: var(--fg);
+  }
+  .source-popover-bullet {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: transparent;
+    flex-shrink: 0;
+  }
+  .source-popover-item[data-active="true"] .source-popover-bullet {
+    background: var(--accent);
+  }
+  .source-popover-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source-popover-divider {
+    height: 1px;
+    background: var(--rule);
+    margin: 4px 2px;
+  }
+  .source-popover-action {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .source-popover-action:hover {
+    background: var(--bg-row-h);
+    color: var(--fg-mid);
+  }
+
+  /* Dynamic description box: bottom of sidebar, also quiet */
+  .dynamic-desc-box {
+    margin-top: auto;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+  }
+
+  #display-title {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  #display-desc {
+    font-size: 12px;
+    color: var(--fg-dim);
+    line-height: 1.5;
+  }
+
+  /* ─── Right: Settings list ──────────────────────────────── */
+  .main-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Top bar */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    flex-shrink: 0;
+  }
+
+  .top-bar-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+
+  .top-bar-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .link-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 11px;
+    background: transparent;
+    border: 1px solid var(--rule-strong);
+    border-radius: 5px;
+    text-decoration: none;
+    color: var(--fg-mid);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  }
+
+  .link-btn:hover {
+    color: var(--fg);
+    border-color: rgba(255,255,255,0.2);
+    background: var(--bg-row);
+  }
+
+  .link-btn img {
+    height: 13px;
+    width: 13px;
+    opacity: 0.7;
+  }
+  .link-btn:hover img { opacity: 1; }
+
+  /* Controls */
+  .controls-pane {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 32px 16px;
+  }
+
+  .controls-pane::-webkit-scrollbar { width: 8px; }
+  .controls-pane::-webkit-scrollbar-track { background: transparent; }
+  .controls-pane::-webkit-scrollbar-thumb {
+    background: var(--rule-strong);
+    border-radius: 4px;
+  }
+  .controls-pane::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+  .section-label {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0 0 10px 0;
+    padding-left: 2px;
+  }
+
+  .section-label:not(:first-child) {
+    margin-top: 28px;
+  }
+
+  /* Setting row: Linear/GitHub style. Quiet by default. */
+  .setting-row {
+    background: var(--bg-row);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+
+  .setting-row:hover {
+    background: var(--bg-row-h);
+    border-color: var(--rule-strong);
+  }
+
+  .setting-label-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .setting-name-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .setting-name {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+  }
+
+  .setting-status-inline {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-mid);
+    font-weight: 500;
+    padding: 1px 7px;
+    background: var(--bg);
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    letter-spacing: -0.01em;
+  }
+
+  .setting-desc {
+    font-size: 12px;
+    color: var(--fg-dim);
+    line-height: 1.4;
+  }
+
+  /* ─── Toggle ─── Linear/Vercel-style pill toggle */
+  .toggle {
+    width: 32px;
+    height: 18px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.18s ease;
+    flex-shrink: 0;
+  }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #d1d5db;
+    transition: left 0.18s cubic-bezier(0.4, 0, 0.2, 1), background 0.18s ease;
+  }
+
+  .toggle.on {
+    background: var(--accent);
+  }
+
+  .toggle.on::after {
+    left: 16px;
+    background: #fff;
+  }
+
+  /* ─── Slider ─── */
+  .slider-container {
+    width: 200px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .slider {
+    flex: 1;
+    height: 18px;
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+  }
+
+  .slider::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+  }
+
+  .slider-fill {
+    height: 4px;
+    background: var(--accent);
+    border-radius: 2px;
+    position: absolute;
+    left: 0;
+  }
+
+  .slider-thumb {
+    width: 14px;
+    height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .slider-val {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg);
+    width: 30px;
+    text-align: right;
+    letter-spacing: -0.01em;
+  }
+
+  /* ─── Bottom bar: hotkeys ────────────────────────────── */
+  .hotkey-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 12px 32px;
+    border-top: 1px solid var(--rule);
+    flex-shrink: 0;
+    background: var(--bg-soft);
+  }
+
+  .hotkey {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 16px;
+    font-family: var(--sans);
+    font-size: 11px;
+    color: var(--fg-dim);
+    border-right: 1px solid var(--rule);
+  }
+
+  .hotkey:first-child { padding-left: 0; }
+  .hotkey:last-child  { border-right: none; padding-right: 0; }
+
+  .hotkey-key {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--bg-row);
+    border: 1px solid var(--rule-strong);
+    color: var(--fg-mid);
+    border-radius: 3px;
+    letter-spacing: -0.01em;
+  }
+
+</style>
+</head>
+<body>
+
+  <div class="screen-mask">
+
+    <aside class="info-pane">
+      <div class="brand-block">
+        <div class="brand-logo">NitLink<span></span></div>
+        <span class="version-tag">v1.0.0-rc1</span>
+      </div>
+      <p class="brand-tagline">Capture card viewer. Real HDR10, low latency, VRR.</p>
+
+      <div class="telemetry-stack">
+        <div class="tele-section-label">Signal</div>
+        <div class="tele-item">
+          <span class="tele-label">Resolution</span>
+          <span class="tele-value" id="meta-resolution">0000×0000 · 00 FPS</span>
+        </div>
+        <div class="tele-item">
+          <span class="tele-label">Protocol</span>
+          <span class="tele-value" id="meta-link">HDMI 2.1</span>
+        </div>
+        <div class="tele-item">
+          <span class="tele-label">Latency</span>
+          <span class="tele-value" id="meta-latency">0 MS</span>
+        </div>
+        <div class="tele-item source-trigger" id="source-trigger" data-multi="false">
+          <span class="tele-label">Source</span>
+          <div class="source-value-row">
+            <span class="tele-value source-value-name" id="meta-source">—</span>
+            <span class="source-chevron" aria-hidden="true">▾</span>
+          </div>
+          <div class="source-popover" id="source-popover"></div>
+        </div>
+      </div>
+
+      <div class="dynamic-desc-box">
+        <span id="display-title">Settings</span>
+        <p id="display-desc">Hover a control to see what it does.</p>
+      </div>
+    </aside>
+
+    <div class="main-content-wrapper">
+
+      <div class="top-bar">
+        <div class="top-bar-title">Settings</div>
+        <div class="top-bar-actions">
+          <a href="https://tally.so/r/EkZjNr" target="_blank" class="link-btn">
+            Send feedback
+          </a>
+          <a href="https://ko-fi.com/klosed89" target="_blank" class="link-btn">
+            <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="">
+            Support
+          </a>
+        </div>
+      </div>
+
+      <main class="controls-pane">
+
+        <div class="section-label">Video</div>
+
+        <div class="setting-row" data-action="cycleScaler"
+             onmouseenter="updateDesc('Hardware Scaler', 'Toggle between hardware interpolation methods. Catmull-Rom provides sharp bicubic resampling without ringing artifacts: the same algorithm used by mpv and madVR.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">Hardware Scaler</span>
+              <span class="setting-status-inline" id="scaler-val">AUTO</span>
+            </div>
+            <span class="setting-desc">Resampling algorithm for non-native window sizes.</span>
+          </div>
+          <div class="toggle on"></div>
+        </div>
+
+        <div class="setting-row" data-action="toggleHDR"
+             onmouseenter="updateDesc('HDR10 Output', 'Negotiates native 10-bit P010 capture (BT.2020 PQ) and presents through an R10G10B10A2 HDR10 swap chain. Zero color conversion. On the 4K Pro this is auto-detected from the source.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">HDR10 Output</span>
+            </div>
+            <span class="setting-desc">10-bit BT.2020 PQ passthrough for HDR sources.</span>
+          </div>
+          <div class="toggle" id="toggle-hdr"></div>
+        </div>
+
+        <div class="setting-row" data-action="toggleColorExpansion"
+             onmouseenter="updateDesc('Color Range Expansion', 'Forces expansion of limited-range RGB signals (16-235) to full range (0-255). NitLink reads MF_MT_VIDEO_NOMINAL_RANGE and skips this when the driver already reports full-range output, so you generally don\u2019t need to touch this.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">Color Range Expansion</span>
+            </div>
+            <span class="setting-desc">Limited (16-235) to full (0-255). Usually auto.</span>
+          </div>
+          <div class="toggle" id="toggle-color"></div>
+        </div>
+
+        <div class="setting-row" data-action="toggleNIS"
+             onmouseenter="updateDesc('NVIDIA Image Scaling', 'Compute-shader pass that applies spatial upscaling and sharpening at non-native window sizes. Adjustable via nis_sharpness in nitlink.json.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">NVIDIA Image Scaling</span>
+            </div>
+            <span class="setting-desc">Compute-shader upscale + sharpening (NIS).</span>
+          </div>
+          <div class="toggle" id="toggle-nis"></div>
+        </div>
+
+        <div class="setting-row" data-action="toggleVrrPacing"
+             onmouseenter="updateDesc('VRR Present Pacing', 'GPU frame differ gates Present so a G-Sync or FreeSync monitor locks to the source’s unique-frame rate instead of the Elgato’s constant 60 Hz HDMI delivery. Leave OFF on fixed-refresh displays: low-motion content like game intros and splash screens drops the differ’s detected rate to near zero, and gating Present on that collapses visible cadence into the single digits.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">VRR Present Pacing</span>
+            </div>
+            <span class="setting-desc">For G-Sync/FreeSync displays. Leave off on fixed-refresh displays.</span>
+          </div>
+          <div class="toggle" id="toggle-vrr-pacing"></div>
+        </div>
+
+        <div class="section-label">Audio</div>
+
+        <div class="setting-row" data-action="toggleMute"
+             onmouseenter="updateDesc('Mute', 'Instantly cuts the WASAPI audio feed to the capture engine.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">Mute</span>
+            </div>
+            <span class="setting-desc">Silences the WASAPI playback bus.</span>
+          </div>
+          <div class="toggle" id="toggle-mute"></div>
+        </div>
+
+        <div class="setting-row slider-card"
+             onmouseenter="updateDesc('Capture Gain', 'WASAPI playback volume. Keep at 100 for bit-perfect digital capture.')">
+          <div class="setting-label-group">
+            <div class="setting-name-row">
+              <span class="setting-name">Capture Gain</span>
+            </div>
+            <span class="setting-desc">Playback volume. 100 = bit-perfect.</span>
+          </div>
+          <div class="slider-container">
+            <div class="slider" id="slider-volume" data-action="setVolume">
+              <div class="slider-fill" id="slider-volume-fill" style="width: 100%"></div>
+              <div class="slider-thumb" id="slider-volume-thumb" style="left: 100%"></div>
+            </div>
+            <div class="slider-val" id="slider-volume-val">100</div>
+          </div>
+        </div>
+
+      </main>
+
+      <div class="hotkey-strip">
+        <div class="hotkey"><span class="hotkey-key">F1</span> Settings</div>
+        <div class="hotkey"><span class="hotkey-key">Ctrl+F3</span> HUD</div>
+        <div class="hotkey"><span class="hotkey-key">Alt+H</span> HDR</div>
+        <div class="hotkey"><span class="hotkey-key">Alt+Enter</span> Fullscreen</div>
+        <div class="hotkey"><span class="hotkey-key">Ctrl+S</span> Screenshot</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    function updateDesc(title, text) {
+      document.getElementById('display-title').textContent = title;
+      document.getElementById('display-desc').textContent = text;
+    }
+
+    const post = (action, value) => {
+      const payload = (value === undefined) ? { action } : { action, value };
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage(payload);
+      }
+    };
+
+    document.addEventListener('click', e => {
+      let actionEl = e.target.closest('[data-action]');
+      if (!actionEl || actionEl.classList.contains('slider')) return;
+      const action = actionEl.dataset.action;
+      if (actionEl.querySelector('.toggle') || actionEl.classList.contains('toggle')) {
+        const toggleEl = actionEl.querySelector('.toggle') || actionEl;
+        const willBeOn = !toggleEl.classList.contains('on');
+        toggleEl.classList.toggle('on', willBeOn);
+        post(action, willBeOn);
+        return;
+      }
+      post(action);
+    });
+
+    (() => {
+      const slider = document.getElementById('slider-volume');
+      const fill = document.getElementById('slider-volume-fill');
+      const thumb = document.getElementById('slider-volume-thumb');
+      const valEl = document.getElementById('slider-volume-val');
+      const setVisual = pct => {
+        const clamped = Math.max(0, Math.min(100, pct));
+        fill.style.width = clamped + '%';
+        thumb.style.left = clamped + '%';
+        valEl.textContent = Math.round(clamped);
+      };
+      const onPointer = e => {
+        const rect = slider.getBoundingClientRect();
+        const pct = ((e.clientX - rect.left) / rect.width) * 100;
+        setVisual(pct);
+        post('setVolume', Math.max(0, Math.min(100, pct)) / 100);
+      };
+      let dragging = false;
+      slider.addEventListener('pointerdown', e => { dragging = true; slider.setPointerCapture(e.pointerId); onPointer(e); });
+      slider.addEventListener('pointermove', e => { if (dragging) onPointer(e); });
+      slider.addEventListener('pointerup', e => { dragging = false; slider.releasePointerCapture(e.pointerId); });
+      slider._setFromCpp = setVisual;
+    })();
+
+    // Capture source picker. Active device is rendered as a read-only
+    // line in the telemetry stack when only one device is enumerated.
+    // When multiple devices are present, the row becomes clickable and
+    // opens a small popover with the device list. State is push-only
+    // from C++: the popover never holds optimistic state. A failed
+    // switch reverts visually as soon as the next PushSettingsState
+    // arrives with the old active device still active.
+    (() => {
+      const trigger = document.getElementById('source-trigger');
+      const nameEl  = document.getElementById('meta-source');
+      const pop     = document.getElementById('source-popover');
+      if (!trigger || !nameEl || !pop) return;
+
+      let lastDevices = [];
+      let lastActive  = '';
+
+      const closePop = () => { pop.dataset.open = 'false'; };
+      const renderPopover = () => {
+        pop.innerHTML = '';
+        lastDevices.forEach(name => {
+          const item = document.createElement('div');
+          item.className = 'source-popover-item';
+          if (name === lastActive) item.dataset.active = 'true';
+          const dot = document.createElement('span');
+          dot.className = 'source-popover-bullet';
+          const label = document.createElement('span');
+          label.className = 'source-popover-name';
+          label.textContent = name;
+          item.appendChild(dot);
+          item.appendChild(label);
+          item.addEventListener('click', ev => {
+            ev.stopPropagation();
+            post('setPreferredDevice', name);
+            closePop();
+          });
+          pop.appendChild(item);
+        });
+        const divider = document.createElement('div');
+        divider.className = 'source-popover-divider';
+        pop.appendChild(divider);
+        const refresh = document.createElement('div');
+        refresh.className = 'source-popover-action';
+        refresh.textContent = 'Refresh';
+        refresh.addEventListener('click', ev => {
+          ev.stopPropagation();
+          post('refreshDevices');
+        });
+        pop.appendChild(refresh);
+      };
+      const openPop = () => {
+        if (trigger.dataset.multi !== 'true') return;
+        renderPopover();
+        pop.dataset.open = 'true';
+        // Ask the backend for a fresh enumeration so the list reflects
+        // anything plugged in since the last state push. The result
+        // arrives asynchronously and re-renders the popover in place.
+        post('getDeviceList');
+      };
+      const togglePop = () => {
+        (pop.dataset.open === 'true') ? closePop() : openPop();
+      };
+
+      trigger.addEventListener('click', e => {
+        if (trigger.dataset.multi !== 'true') return;
+        e.stopPropagation();
+        togglePop();
+      });
+      document.addEventListener('click', e => {
+        if (!pop.contains(e.target) && !trigger.contains(e.target)) closePop();
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closePop();
+      });
+
+      // Public update entry point. applyState calls this on every
+      // state push with the latest device list and active device.
+      window._updateSource = (devices, active) => {
+        lastDevices = Array.isArray(devices) ? devices : [];
+        lastActive  = typeof active === 'string' ? active : '';
+        nameEl.textContent = lastActive || '—';
+        trigger.dataset.multi = (lastDevices.length > 1) ? 'true' : 'false';
+        if (trigger.dataset.multi === 'false') closePop();
+        if (pop.dataset.open === 'true') renderPopover();
+      };
+    })();
+
+    const applyState = s => {
+      if (!s) return;
+      const setToggle = (id, on) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
+      const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      setToggle('toggle-hdr', s.hdrEnabled);
+      setToggle('toggle-color', s.colorExpansion);
+      setToggle('toggle-nis', s.nisEnabled);
+      setToggle('toggle-vrr-pacing', s.vrrPresentPacing);
+      setToggle('toggle-mute', s.audioMuted);
+
+      if (typeof s.volume === 'number') {
+        const slider = document.getElementById('slider-volume');
+        if (slider && slider._setFromCpp) slider._setFromCpp(s.volume * 100);
+      }
+      setText('scaler-val', s.scalerName);
+      setText('meta-resolution', s.resolutionText);
+      setText('meta-link', s.linkText);
+      setText('meta-latency', s.latencyText);
+
+      if (window._updateSource) {
+        window._updateSource(s.captureDevices, s.activeDevice);
+      }
+    };
+
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.addEventListener('message', evt => {
+        let msg = evt.data;
+        if (typeof msg === 'string') try { msg = JSON.parse(msg); } catch { return; }
+        if (msg && msg.state) applyState(msg.state);
+      });
+      post('ready');
+    }
+  </script>
+</body>
+</html>

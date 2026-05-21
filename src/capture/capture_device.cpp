@@ -1,0 +1,735 @@
+#include "capture_device.h"
+#include <mferror.h>
+#include <debugapi.h>
+#include <sstream>
+#include <chrono>
+
+namespace NitLink {
+
+// Debug helper -- writes to Visual Studio Output window
+static void DebugLog(const std::wstring& msg) {
+    OutputDebugStringW((L"[NitLink] " + msg + L"\n").c_str());
+}
+
+CaptureDevice::CaptureDevice() = default;
+
+CaptureDevice::~CaptureDevice()
+{
+    StopCapture();
+    Close();
+}
+
+bool CaptureDevice::Open(const DeviceInfo& device)
+{
+    m_deviceName = device.name;
+    DebugLog(L"Opening device: " + device.name);
+
+    ComPtr<IMFAttributes> attrs;
+    HRESULT hr = MFCreateAttributes(&attrs, 2);
+    if (FAILED(hr)) return false;
+
+    hr = attrs->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                        MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+    if (FAILED(hr)) return false;
+
+    IMFActivate** devices = nullptr;
+    UINT32 count = 0;
+    hr = MFEnumDeviceSources(attrs.Get(), &devices, &count);
+    if (FAILED(hr) || count == 0) return false;
+
+    bool found = false;
+    for (UINT32 i = 0; i < count; i++) {
+        if (i == device.index) {
+            hr = devices[i]->ActivateObject(IID_PPV_ARGS(&m_source));
+            found = SUCCEEDED(hr);
+            break;
+        }
+    }
+
+    for (UINT32 i = 0; i < count; i++) devices[i]->Release();
+    CoTaskMemFree(devices);
+
+    if (!found || !m_source) {
+        DebugLog(L"Failed to activate device source");
+        return false;
+    }
+
+    // Find the best native format the device offers (MF can convert if needed)
+    if (!NegotiateFormat(m_source.Get())) {
+        DebugLog(L"Failed to negotiate native format");
+        return false;
+    }
+
+    // Enable video processing in the source reader. This inserts a Media
+    // Foundation Transform (MFT) in the pipeline that automatically converts
+    // whatever native format the card outputs (YUY2, NV12, UYVY, etc.) into
+    // the format requested below.
+    //
+    // NOTE: MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING and ENABLE_ADVANCED_VIDEO_PROCESSING
+    // are mutually exclusive. Advanced requires a D3D device manager too.
+    // Only the basic flag is used here; it works on all Windows 10/11 systems.
+    //
+    // MF_LOW_LATENCY (additional attribute below):
+    //   Microsoft-documented hint to the source reader, the underlying media
+    //   source, and any in-line MFTs to prioritize minimum delay over quality
+    //   (or smoothness). For a live console viewer, this is exactly the
+    //   trade-off needed. Whether the Elgato media source actually
+    //   honors the hint is implementation-defined; the attribute is set
+    //   regardless, since there's no downside on capture sources (no
+    //   compression trade-off applies to an uncompressed YUV/RGB capture
+    //   pipeline).
+    //   Reference: learn.microsoft.com/en-us/windows/win32/medfound/mf-low-latency
+    ComPtr<IMFAttributes> readerAttrs;
+    MFCreateAttributes(&readerAttrs, 2);
+    readerAttrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+    readerAttrs->SetUINT32(MF_LOW_LATENCY, TRUE);
+
+    hr = MFCreateSourceReaderFromMediaSource(m_source.Get(), readerAttrs.Get(), &m_reader);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"MFCreateSourceReaderFromMediaSource failed with HRESULT 0x" << std::hex << hr;
+        DebugLog(ss.str());
+        return false;
+    }
+
+    // Try to get the desired output format. With video processing enabled, MF
+    // can convert from whatever the card outputs natively. A small priority
+    // list is tried because cards/drivers expose different format GUIDs.
+    //
+    // When the caller has requested P010 (HDR10 source detected and HDR mode
+    // is on), P010 is tried FIRST. P010 is 10-bit BT.2020 PQ: the gold standard
+    // for HDR10 passthrough. The Elgato 4K Pro publishes this format. If
+    // P010 negotiation fails (e.g. video processor can't supply it for this
+    // configuration), the code falls through to RGB32/etc.
+    // and the caller is responsible for noticing and degrading to SDR pipeline.
+    struct FormatAttempt {
+        GUID         subtype;
+        const wchar_t* name;
+    };
+    FormatAttempt attemptsP010[] = {
+        { MFVideoFormat_P010,   L"P010 (10-bit BT.2020 PQ)" },
+        // No fallback within HDR mode: if P010 fails, the caller decides
+        // whether to retry without P010 or just accept SDR pipeline.
+    };
+    // SDR format preference order. NV12 (8-bit YUV 4:2:0) is preferred over
+    // RGB32 (8-bit BGRA) because it's about 2.7x less bandwidth per frame
+    // (12 bpp vs 32 bpp). On PCIe devices like the 4K Pro both formats deliver
+    // identical resolution; on USB devices like the 4K S, RGB32 silently
+    // downgrades to 1080p because USB 3.x can't sustain 4K@60 RGB32
+    // (~24 Gbps), but it can deliver 4K@60 NV12 (~9 Gbps). The renderer's
+    // NV12 shader path is already implemented and routinely used.
+    FormatAttempt attemptsSDR[] = {
+        { MFVideoFormat_NV12,   L"NV12" },
+        { MFVideoFormat_RGB32,  L"RGB32" },
+        { MFVideoFormat_ARGB32, L"ARGB32" },
+    };
+
+    FormatAttempt* attempts;
+    size_t        attemptCount;
+    if (m_requestP010) {
+        attempts     = attemptsP010;
+        attemptCount = sizeof(attemptsP010) / sizeof(attemptsP010[0]);
+        DebugLog(L"Requesting P010 (HDR10 path)");
+    } else {
+        attempts     = attemptsSDR;
+        attemptCount = sizeof(attemptsSDR) / sizeof(attemptsSDR[0]);
+    }
+
+    bool gotFormat = false;
+    for (size_t i = 0; i < attemptCount; i++) {
+        const auto& attempt = attempts[i];
+        ComPtr<IMFMediaType> outputType;
+        MFCreateMediaType(&outputType);
+        outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        outputType->SetGUID(MF_MT_SUBTYPE, attempt.subtype);
+        outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+        MFSetAttributeSize(outputType.Get(), MF_MT_FRAME_SIZE, m_format.width, m_format.height);
+        MFSetAttributeRatio(outputType.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+
+        // REQUEST the frame rate. Without this MF often picks the LOWEST
+        // matching frame rate from the device's enum list. The 4K S, for
+        // example, lists 4K@30 NV12 BEFORE 4K@60 NV12 in its 186-format
+        // enumeration, and MF defaults to the first match. Result:
+        // a request for "4K NV12" without specifying "at 60" yields 4K@30 silently.
+        // m_format.fps was populated by the native-best enumeration above
+        // (typically 60 for modern consoles, 30 for older sources).
+        if (m_format.fps > 0) {
+            MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
+                                m_format.fps, 1);
+        }
+
+        hr = m_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get());
+        if (SUCCEEDED(hr)) {
+            DebugLog(std::wstring(L"Output format accepted: ") + attempt.name);
+            m_format.subtype = attempt.subtype;
+            if (attempt.subtype == MFVideoFormat_NV12) {
+                m_format.stride = m_format.width;
+            } else if (attempt.subtype == MFVideoFormat_P010) {
+                // P010 layout: 16-bit Y plane (2 bytes per pixel) + half-res
+                // interleaved UV plane (each row half height, 2 bytes per
+                // chroma pair). Stride for upload is the Y-plane row stride.
+                m_format.stride = m_format.width * 2;
+            } else {
+                m_format.stride = m_format.width * 4;
+            }
+            gotFormat = true;
+            break;
+        } else {
+            std::wstringstream ss;
+            ss << L"Output format " << attempt.name << L" rejected (HRESULT 0x" << std::hex << hr << L")";
+            DebugLog(ss.str());
+        }
+    }
+
+    if (!gotFormat) {
+        DebugLog(L"All output format attempts failed");
+        return false;
+    }
+
+    // Verify what was actually negotiated
+    ComPtr<IMFMediaType> actualType;
+    if (SUCCEEDED(m_reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, &actualType))) {
+        GUID subtype;
+        actualType->GetGUID(MF_MT_SUBTYPE, &subtype);
+        UINT32 w, h;
+        MFGetAttributeSize(actualType.Get(), MF_MT_FRAME_SIZE, &w, &h);
+
+        // CRITICAL: write back the ACTUAL negotiated dimensions to m_format.
+        // The original request used whatever `m_format` had (e.g. 4K), but the
+        // driver may have silently downgraded. The 4K S over USB does exactly
+        // this: it accepts a 4K RGB32 request but actually delivers 1080p RGB32
+        // because USB bandwidth can't sustain 4K @ 60Hz RGB. Without updating
+        // m_format, the frame buffer gets sized for the request
+        // (4K) but the capture worker writes 1080p frames into it. Result:
+        // sampling random memory addresses as if they were pixels, which
+        // produces the classic "green stretched garbage" you saw on 4K S.
+        m_format.width  = w;
+        m_format.height = h;
+
+        // Also read back the actual frame rate. If MF silently downgraded
+        // (e.g. driver can't sustain 4K@60 even though it advertised the
+        // format), m_format.fps now reflects what's actually being delivered.
+        UINT32 fpsNum = 0, fpsDen = 1;
+        if (SUCCEEDED(MFGetAttributeRatio(actualType.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen))
+            && fpsDen > 0) {
+            m_format.fps = fpsNum / fpsDen;
+        }
+
+        // Detect row order empirically. MF_MT_DEFAULT_STRIDE is a signed int32
+        // where negative = bottom-up (legacy GDI convention, older drivers),
+        // positive = top-down (modern convention). Some Elgato drivers behave
+        // differently here: 4K Pro PCIe vs 4K S USB report different signs.
+        // Without this query, the orientation would be guessed and one of the
+        // two would render upside down. Planar formats (P010, NV12) are
+        // always top-down so this only really matters for RGB32/ARGB32.
+        // Default to top-down if the driver doesn't expose the attribute.
+        INT32 mfStride = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_DEFAULT_STRIDE, reinterpret_cast<UINT32*>(&mfStride)))) {
+            m_format.topDown = (mfStride >= 0);
+            std::wstringstream sd;
+            sd << L"  Row order: " << (m_format.topDown ? L"top-down" : L"bottom-up")
+               << L" (MF_MT_DEFAULT_STRIDE=" << mfStride << L")";
+            DebugLog(sd.str());
+        } else {
+            m_format.topDown = true; // safe default for modern drivers
+            DebugLog(L"  Row order: top-down (MF_MT_DEFAULT_STRIDE not exposed by driver, assuming top-down)");
+        }
+
+        std::wstringstream ss;
+        ss << L"Negotiated output: " << w << L"x" << h << L" @ " << m_format.fps << L"fps, format ";
+        if (subtype == MFVideoFormat_RGB32)      ss << L"RGB32/BGRA";
+        else if (subtype == MFVideoFormat_NV12)  ss << L"NV12";
+        else if (subtype == MFVideoFormat_YUY2)  ss << L"YUY2";
+        else if (subtype == MFVideoFormat_P010)  ss << L"P010 (10-bit HDR10)";
+        else                                     ss << L"unknown";
+        DebugLog(ss.str());
+
+        // === HDR DIAGNOSTIC ===
+        // Query every color-related attribute MF exposes for full visibility
+        // into what the capture driver reports about the signal. Some
+        // capture drivers don't set these (they just pass pixels through),
+        // but Elgato's Media Foundation driver often does signal HDR via
+        // MF_MT_VIDEO_PRIMARIES, MF_MT_TRANSFER_FUNCTION, and the HDR
+        // metadata attributes. Reading these reveals whether the bytes
+        // arriving are PQ-encoded HDR10, HLG, or just sRGB SDR.
+        UINT32 transferFn = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_TRANSFER_FUNCTION, &transferFn))) {
+            const wchar_t* name = L"unknown";
+            switch (transferFn) {
+                case MFVideoTransFunc_10:        name = L"Linear (1.0)"; break;
+                case MFVideoTransFunc_18:        name = L"Gamma 1.8"; break;
+                case MFVideoTransFunc_20:        name = L"Gamma 2.0"; break;
+                case MFVideoTransFunc_22:        name = L"Gamma 2.2"; break;
+                case MFVideoTransFunc_709:       name = L"BT.709"; break;
+                case MFVideoTransFunc_240M:      name = L"SMPTE 240M"; break;
+                case MFVideoTransFunc_sRGB:      name = L"sRGB"; break;
+                case MFVideoTransFunc_28:        name = L"Gamma 2.8"; break;
+                case MFVideoTransFunc_Log_100:   name = L"Log 100"; break;
+                case MFVideoTransFunc_Log_316:   name = L"Log 316"; break;
+                case MFVideoTransFunc_2020_const:name = L"BT.2020 const"; break;
+                case MFVideoTransFunc_2020:      name = L"BT.2020"; break;
+                case MFVideoTransFunc_26:        name = L"Gamma 2.6"; break;
+                case MFVideoTransFunc_2084:      name = L"SMPTE ST.2084 / PQ (HDR10!)"; break;
+                case MFVideoTransFunc_HLG:       name = L"HLG (Hybrid Log-Gamma)"; break;
+            }
+            std::wstringstream s;
+            s << L"  Transfer function: " << transferFn << L" (" << name << L")";
+            DebugLog(s.str());
+        } else {
+            DebugLog(L"  Transfer function: NOT SET by driver");
+        }
+
+        UINT32 primaries = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_VIDEO_PRIMARIES, &primaries))) {
+            const wchar_t* name = L"unknown";
+            switch (primaries) {
+                case MFVideoPrimaries_BT709:     name = L"BT.709 (HDTV/sRGB)"; break;
+                case MFVideoPrimaries_BT470_2_SysM: name = L"BT.470 SysM"; break;
+                case MFVideoPrimaries_BT470_2_SysBG: name = L"BT.470 SysBG"; break;
+                case MFVideoPrimaries_SMPTE170M: name = L"SMPTE 170M"; break;
+                case MFVideoPrimaries_SMPTE240M: name = L"SMPTE 240M"; break;
+                case MFVideoPrimaries_EBU3213:   name = L"EBU 3213"; break;
+                case MFVideoPrimaries_SMPTE_C:   name = L"SMPTE C"; break;
+                case MFVideoPrimaries_BT2020:    name = L"BT.2020 (HDR wide gamut!)"; break;
+                case MFVideoPrimaries_XYZ:       name = L"XYZ"; break;
+            }
+            std::wstringstream s;
+            s << L"  Video primaries: " << primaries << L" (" << name << L")";
+            DebugLog(s.str());
+        } else {
+            DebugLog(L"  Video primaries: NOT SET by driver");
+        }
+
+        UINT32 colorSpace = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_YUV_MATRIX, &colorSpace))) {
+            std::wstringstream s; s << L"  YUV matrix: " << colorSpace;
+            DebugLog(s.str());
+        }
+        UINT32 nominalRange = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, &nominalRange))) {
+            const wchar_t* name = L"unknown";
+            switch (nominalRange) {
+                case MFNominalRange_0_255:  name = L"0-255 (full)"; break;
+                case MFNominalRange_16_235: name = L"16-235 (limited/TV)"; break;
+                case MFNominalRange_48_208: name = L"48-208"; break;
+                case MFNominalRange_64_127: name = L"64-127"; break;
+            }
+            std::wstringstream s;
+            s << L"  Nominal range: " << nominalRange << L" (" << name << L")";
+            DebugLog(s.str());
+            // Tell the shader whether to do the limited-to-full expansion.
+            // 4K Pro typically reports 16-235 -> fullRange=false -> expand.
+            // 4K S NV12 reports 0-255 -> fullRange=true -> skip the expand
+            // step (the driver already did it). Without this the 4K S
+            // would double-expand, crushing blacks.
+            m_format.fullRange = (nominalRange == MFNominalRange_0_255);
+        } else {
+            DebugLog(L"  Nominal range: NOT SET, assuming limited (16-235)");
+            m_format.fullRange = false; // safest default: assume HDMI limited
+        }
+
+        // Try reading HDR mastering metadata if present. The driver may
+        // attach MaxCLL / MaxFALL and the SMPTE 2086 display metadata when
+        // the upstream signal carries an HDR InfoFrame.
+        UINT32 maxCLL = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_MAX_LUMINANCE_LEVEL, &maxCLL))) {
+            std::wstringstream s; s << L"  MaxCLL (peak content light): " << maxCLL << L" nits";
+            DebugLog(s.str());
+        }
+        UINT32 maxFALL = 0;
+        if (SUCCEEDED(actualType->GetUINT32(MF_MT_MAX_FRAME_AVERAGE_LUMINANCE_LEVEL, &maxFALL))) {
+            std::wstringstream s; s << L"  MaxFALL (avg frame brightness): " << maxFALL << L" nits";
+            DebugLog(s.str());
+        }
+        // === END HDR DIAGNOSTIC ===
+    }
+
+    return true;
+}
+
+bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
+{
+    ComPtr<IMFPresentationDescriptor> pd;
+    HRESULT hr = source->CreatePresentationDescriptor(&pd);
+    if (FAILED(hr)) return false;
+
+    DWORD streamCount = 0;
+    pd->GetStreamDescriptorCount(&streamCount);
+
+    for (DWORD i = 0; i < streamCount; i++) {
+        BOOL selected = FALSE;
+        ComPtr<IMFStreamDescriptor> sd;
+        pd->GetStreamDescriptorByIndex(i, &selected, &sd);
+        if (!selected) continue;
+
+        ComPtr<IMFMediaTypeHandler> handler;
+        sd->GetMediaTypeHandler(&handler);
+
+        DWORD typeCount = 0;
+        handler->GetMediaTypeCount(&typeCount);
+
+        uint32_t bestWidth = 0, bestHeight = 0, bestFps = 0;
+
+        // When the caller requested P010 (HDR10 capture), restrict the
+        // best-format search to entries whose subtype is actually P010.
+        // Otherwise FindBestFormat picks the device's largest resolution
+        // by raw width: which on the 4K S is 4K@60 NV12, where P010 isn't
+        // published, and the subsequent NegotiateFormat() call into MF
+        // rejects with MF_E_INVALIDMEDIATYPE (0xc00d36b4).
+        //
+        // The 4K S only publishes P010 at 1080p and 720p (USB-3 bandwidth
+        // ceiling). When P010 is requested, "largest" then means 1080p@60.
+        // The 4K Pro publishes P010 at 4K, 1080p, 720p, so it picks 4K@60
+        // as before: no behavior change there.
+        //
+        // README §Limitations documents this: "Elgato 4K S: 1080p HDR or
+        // 4K SDR, not both."
+        for (DWORD t = 0; t < typeCount; t++) {
+            ComPtr<IMFMediaType> type;
+            handler->GetMediaTypeByIndex(t, &type);
+
+            if (m_requestP010) {
+                GUID subtype = {};
+                if (FAILED(type->GetGUID(MF_MT_SUBTYPE, &subtype))) continue;
+                if (!IsEqualGUID(subtype, MFVideoFormat_P010)) continue;
+            }
+
+            UINT32 w = 0, h = 0;
+            MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &w, &h);
+
+            UINT32 fpsNum = 0, fpsDen = 1;
+            MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+            UINT32 fps = fpsDen > 0 ? fpsNum / fpsDen : 0;
+
+            if (w > bestWidth || (w == bestWidth && fps > bestFps)) {
+                bestWidth = w;
+                bestHeight = h;
+                bestFps = fps;
+            }
+        }
+
+        if (bestWidth > 0) {
+            m_format.width = bestWidth;
+            m_format.height = bestHeight;
+            m_format.fps = bestFps;
+
+            std::wstringstream ss;
+            ss << L"Native best format: " << bestWidth << L"x" << bestHeight << L" @ " << bestFps << L"fps";
+            DebugLog(ss.str());
+            return true;
+        }
+    }
+
+    m_format.width = 1920;
+    m_format.height = 1080;
+    m_format.fps = 60;
+    return true;
+}
+
+// Map a Media Foundation video subtype GUID to a human-readable name.
+// Includes everything relevant for HDR work (P010 for 10-bit BT.2020,
+// the 8-bit YUV variants for fallback, and the RGB formats currently
+// in use). Unknown GUIDs are returned as their first-DWORD ASCII signature
+// when it looks like a FourCC, else "UNKNOWN".
+static std::wstring SubtypeToName(const GUID& g) {
+    // Common Media Foundation video subtypes. These GUIDs are stable across
+    // Windows versions (defined in mfapi.h) so they can be matched directly.
+    if (IsEqualGUID(g, MFVideoFormat_P010))   return L"P010 (10-bit YUV 4:2:0, BT.2020-PQ-friendly)";
+    if (IsEqualGUID(g, MFVideoFormat_P016))   return L"P016 (16-bit YUV 4:2:0)";
+    if (IsEqualGUID(g, MFVideoFormat_P210))   return L"P210 (10-bit YUV 4:2:2)";
+    if (IsEqualGUID(g, MFVideoFormat_P216))   return L"P216 (16-bit YUV 4:2:2)";
+    if (IsEqualGUID(g, MFVideoFormat_NV12))   return L"NV12 (8-bit YUV 4:2:0)";
+    if (IsEqualGUID(g, MFVideoFormat_NV11))   return L"NV11";
+    if (IsEqualGUID(g, MFVideoFormat_YV12))   return L"YV12";
+    if (IsEqualGUID(g, MFVideoFormat_I420))   return L"I420 (8-bit YUV 4:2:0)";
+    if (IsEqualGUID(g, MFVideoFormat_IYUV))   return L"IYUV";
+    if (IsEqualGUID(g, MFVideoFormat_YUY2))   return L"YUY2 (8-bit YUV 4:2:2)";
+    if (IsEqualGUID(g, MFVideoFormat_UYVY))   return L"UYVY";
+    if (IsEqualGUID(g, MFVideoFormat_Y210))   return L"Y210 (10-bit YUV 4:2:2 packed)";
+    if (IsEqualGUID(g, MFVideoFormat_Y216))   return L"Y216";
+    if (IsEqualGUID(g, MFVideoFormat_Y410))   return L"Y410 (10-bit YUV 4:4:4 packed)";
+    if (IsEqualGUID(g, MFVideoFormat_Y416))   return L"Y416";
+    if (IsEqualGUID(g, MFVideoFormat_RGB24))  return L"RGB24";
+    if (IsEqualGUID(g, MFVideoFormat_RGB32))  return L"RGB32 (8-bit BGRA, the SDR default)";
+    if (IsEqualGUID(g, MFVideoFormat_ARGB32)) return L"ARGB32";
+    if (IsEqualGUID(g, MFVideoFormat_RGB555)) return L"RGB555";
+    if (IsEqualGUID(g, MFVideoFormat_RGB565)) return L"RGB565";
+    if (IsEqualGUID(g, MFVideoFormat_AYUV))   return L"AYUV";
+    if (IsEqualGUID(g, MFVideoFormat_MJPG))   return L"MJPEG (compressed)";
+    if (IsEqualGUID(g, MFVideoFormat_H264))   return L"H264 (compressed)";
+    if (IsEqualGUID(g, MFVideoFormat_HEVC))   return L"HEVC (compressed)";
+
+    // Fall back to a readable representation. Most MF video subtypes have
+    // a FourCC in the first 4 bytes of the GUID (e.g. 'P010' = 0x30313050)
+    // so if those bytes look like printable ASCII they're surfaced.
+    DWORD fourcc = g.Data1;
+    char fc[5] = {
+        static_cast<char>( fourcc        & 0xFF),
+        static_cast<char>((fourcc >>  8) & 0xFF),
+        static_cast<char>((fourcc >> 16) & 0xFF),
+        static_cast<char>((fourcc >> 24) & 0xFF),
+        '\0'
+    };
+    bool printable = true;
+    for (int i = 0; i < 4; i++) {
+        if (fc[i] < 0x20 || fc[i] > 0x7E) { printable = false; break; }
+    }
+    if (printable) {
+        std::wstring s = L"FourCC '";
+        for (int i = 0; i < 4; i++) s += static_cast<wchar_t>(fc[i]);
+        s += L"' (unknown to NitLink)";
+        return s;
+    }
+    return L"UNKNOWN";
+}
+
+bool CaptureDevice::LogAvailableFormats() const
+{
+    if (!m_source) {
+        DebugLog(L"LogAvailableFormats: no media source open");
+        return false;
+    }
+
+    ComPtr<IMFPresentationDescriptor> pd;
+    HRESULT hr = m_source->CreatePresentationDescriptor(&pd);
+    if (FAILED(hr)) {
+        DebugLog(L"LogAvailableFormats: CreatePresentationDescriptor failed");
+        return false;
+    }
+
+    DWORD streamCount = 0;
+    pd->GetStreamDescriptorCount(&streamCount);
+
+    auto Log = [](const std::wstring& msg) {
+        OutputDebugStringW((L"[NitLink/Formats] " + msg + L"\n").c_str());
+    };
+
+    Log(L"==================== Available formats ====================");
+
+    DWORD totalLogged = 0;
+    bool sawP010 = false;
+    bool sawNV12 = false;
+    bool sawTenBit = false;
+
+    for (DWORD si = 0; si < streamCount; si++) {
+        BOOL selected = FALSE;
+        ComPtr<IMFStreamDescriptor> sd;
+        pd->GetStreamDescriptorByIndex(si, &selected, &sd);
+        if (!selected) continue;
+
+        ComPtr<IMFMediaTypeHandler> handler;
+        sd->GetMediaTypeHandler(&handler);
+
+        // Verify this is a video stream (skip audio if any)
+        GUID major{};
+        handler->GetMajorType(&major);
+        if (!IsEqualGUID(major, MFMediaType_Video)) continue;
+
+        DWORD typeCount = 0;
+        handler->GetMediaTypeCount(&typeCount);
+        {
+            std::wstringstream ss;
+            ss << L"Stream " << si << L" has " << typeCount << L" media types:";
+            Log(ss.str());
+        }
+
+        for (DWORD t = 0; t < typeCount; t++) {
+            ComPtr<IMFMediaType> type;
+            handler->GetMediaTypeByIndex(t, &type);
+
+            GUID subtype{};
+            type->GetGUID(MF_MT_SUBTYPE, &subtype);
+
+            UINT32 w = 0, h = 0;
+            MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &w, &h);
+
+            UINT32 fpsNum = 0, fpsDen = 1;
+            MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
+            UINT32 fps = (fpsDen > 0) ? fpsNum / fpsDen : 0;
+
+            UINT32 interlace = 0;
+            type->GetUINT32(MF_MT_INTERLACE_MODE, &interlace);
+
+            // Track gold-standard formats for the summary at the end
+            if (IsEqualGUID(subtype, MFVideoFormat_P010)) sawP010 = true;
+            if (IsEqualGUID(subtype, MFVideoFormat_NV12)) sawNV12 = true;
+            if (IsEqualGUID(subtype, MFVideoFormat_P010) ||
+                IsEqualGUID(subtype, MFVideoFormat_P210) ||
+                IsEqualGUID(subtype, MFVideoFormat_Y210) ||
+                IsEqualGUID(subtype, MFVideoFormat_Y410)) {
+                sawTenBit = true;
+            }
+
+            std::wstringstream ss;
+            ss << L"  [" << t << L"] " << w << L"x" << h << L" @ " << fps
+               << L"fps  " << SubtypeToName(subtype);
+            if (interlace != MFVideoInterlace_Progressive) ss << L"  (interlaced)";
+            Log(ss.str());
+            totalLogged++;
+        }
+    }
+
+    Log(L"------------------------- Summary -------------------------");
+    {
+        std::wstringstream ss;
+        ss << L"Total media types: " << totalLogged;
+        Log(ss.str());
+    }
+    Log(sawP010    ? L"  P010 (10-bit BT.2020 PQ): YES, real HDR10 path is viable"
+                   : L"  P010 (10-bit BT.2020 PQ): no, will need fallback");
+    Log(sawTenBit  ? L"  Any 10-bit format: YES"
+                   : L"  Any 10-bit format: no, device exposes only 8-bit");
+    Log(sawNV12    ? L"  NV12 (8-bit YUV): YES" : L"  NV12 (8-bit YUV): no");
+    Log(L"===========================================================");
+
+    return totalLogged > 0;
+}
+
+void CaptureDevice::Close()
+{
+    StopCapture();
+    m_reader.Reset();
+    if (m_source) {
+        m_source->Shutdown();
+        m_source.Reset();
+    }
+}
+
+bool CaptureDevice::StartCapture(FrameCallback callback)
+{
+    if (m_capturing) return false;
+
+    m_callback = std::move(callback);
+    m_capturing = true;
+    m_captureThread = std::thread(&CaptureDevice::CaptureLoop, this);
+
+    return true;
+}
+
+void CaptureDevice::StopCapture()
+{
+    m_capturing = false;
+    if (m_captureThread.joinable()) {
+        m_captureThread.join();
+    }
+}
+
+void CaptureDevice::CaptureLoop()
+{
+    bool loggedFirstFrame = false;
+
+    // Retry budget for transient ReadSample failures. PS5 console transitions
+    // (boot logo, source switch, SDR<->HDR boundary, dashboard->game launch)
+    // routinely produce a few frames of HDMI signal drop, which the Media
+    // Foundation source reader surfaces as a FAILED(hr) on ReadSample. The
+    // previous loop broke on the first failure, permanently killing the
+    // capture thread for what was a recoverable hiccup. The loop now sleeps
+    // briefly and retries; only after kMaxConsecutiveFailures back-to-back
+    // failures does it flag for a full reopen.
+    int consecutiveFailures = 0;
+    constexpr int kMaxConsecutiveFailures = 5;
+    constexpr auto kFailureSleep = std::chrono::milliseconds(75);
+
+    while (m_capturing) {
+        DWORD streamIndex = 0, flags = 0;
+        LONGLONG timestamp = 0;
+        ComPtr<IMFSample> sample;
+
+        HRESULT hr = m_reader->ReadSample(
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            0, &streamIndex, &flags, &timestamp, &sample
+        );
+
+        // ---- Transient call-level failure ----
+        // Don't kill the thread on the first failure. Sleep briefly to avoid
+        // burning CPU in a tight failure loop, then retry. After enough
+        // consecutive failures the reader is presumed wedged and the
+        // application is flagged to force a full reopen via
+        // ReconcileCaptureFormat.
+        if (FAILED(hr)) {
+            consecutiveFailures++;
+            std::wstringstream ss;
+            ss << L"ReadSample failed (HRESULT 0x" << std::hex << hr
+               << std::dec << L", consecutive=" << consecutiveFailures << L")";
+            DebugLog(ss.str());
+            if (consecutiveFailures >= kMaxConsecutiveFailures) {
+                DebugLog(L"ReadSample retry budget exhausted, flagging force-reopen");
+                m_needsReopen = true;
+                break;
+            }
+            std::this_thread::sleep_for(kFailureSleep);
+            continue;
+        }
+        consecutiveFailures = 0;
+
+        // ---- End-of-stream ----
+        // Source has closed permanently. No recovery: the thread exits and
+        // the application's next reconcile poll will see no needs-reopen
+        // flag, but the renderer will go to no-signal until something else
+        // (user replug, format poller, Alt+H) triggers a reopen.
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+            DebugLog(L"ReadSample: end of stream");
+            break;
+        }
+
+        // ---- Reader fatal error ----
+        // Per Microsoft docs, MF_SOURCE_READERF_ERROR means "do not call any
+        // further IMFSourceReader methods on this instance." Retry in place
+        // is not possible: the only recovery is a fresh source reader from a
+        // fresh Open(). Flag it and exit; the application's run loop will
+        // tear down and re-Open via ReconcileCaptureFormat(force=true).
+        if (flags & MF_SOURCE_READERF_ERROR) {
+            DebugLog(L"ReadSample flagged MF_SOURCE_READERF_ERROR, flagging force-reopen");
+            m_needsReopen = true;
+            break;
+        }
+
+        // ---- Format changed underneath the reader ----
+        // Either the source switched media type (PS5 dashboard -> HDR game
+        // launch, console SDR<->HDR boundary) or the native type changed
+        // (driver renegotiated after signal recovery). The capture loop
+        // cannot keep writing into m_frameBuffer with the prior stride/format
+        // assumption: the next frame's bytes mean something different
+        // now. Flag for reconcile and exit; the application will rebuild
+        // the frame buffer at the new negotiated format.
+        if (flags & (MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED |
+                     MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED)) {
+            DebugLog(L"ReadSample flagged media-type change, flagging force-reopen");
+            m_needsReopen = true;
+            break;
+        }
+
+        // ---- Stream tick (timing-only gap) ----
+        // No media data this call. Common during brief signal dropouts
+        // where the source reader keeps timing alive without delivering
+        // actual frames. Just continue: not a failure.
+        if (flags & MF_SOURCE_READERF_STREAMTICK) continue;
+        if (!sample) continue;
+
+        ComPtr<IMFMediaBuffer> buffer;
+        hr = sample->ConvertToContiguousBuffer(&buffer);
+        if (FAILED(hr)) continue;
+
+        BYTE* rawData = nullptr;
+        DWORD maxLen = 0, currentLen = 0;
+        hr = buffer->Lock(&rawData, &maxLen, &currentLen);
+        if (SUCCEEDED(hr)) {
+            if (!loggedFirstFrame) {
+                std::wstringstream ss;
+                ss << L"First frame received: " << currentLen << L" bytes for "
+                   << m_format.width << L"x" << m_format.height
+                   << L" (expected BGRA: " << (m_format.width * m_format.height * 4)
+                   << L", expected NV12: " << (m_format.width * m_format.height * 3 / 2) << L")";
+                DebugLog(ss.str());
+                loggedFirstFrame = true;
+            }
+
+            if (m_callback) {
+                m_callback(rawData, currentLen, timestamp);
+            }
+            buffer->Unlock();
+        }
+    }
+}
+
+} // namespace NitLink
