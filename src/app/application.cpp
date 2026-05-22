@@ -381,8 +381,28 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     m_audioRouter = std::make_unique<AudioRouter>();
-    // Route audio from the Elgato capture card to the default playback device.
-    if (!m_audioRouter->Initialize(L"Elgato")) {
+    // Route audio from the selected capture card to the default playback device.
+    //
+    // Pass the selected video device's full name as the audio endpoint hint
+    // rather than the generic "Elgato" substring. Reasons:
+    //   1) On systems with Elgato Wave Link / Stream Deck audio routing, the
+    //      "Elgato Virtual Audio" string appears in multiple endpoints (Wave
+    //      Link mixer channels: Headphones Mix, Voice Chat, Stream Mix, etc.).
+    //      A generic "Elgato" hint can match one of those software mixer
+    //      channels instead of the real hardware capture endpoint.
+    //   2) On multi-device setups (e.g. Facecam + 4K X), the generic hint
+    //      could match the wrong card's audio.
+    // Using the specific device name as the hint narrows the substring search
+    // to endpoints containing e.g. "Elgato 4K Pro" or "Elgato 4K X", which
+    // matches only the paired hardware audio endpoint per Elgato's naming
+    // convention. Wave Link channels don't carry the specific device name.
+    // Fallback to "Elgato" preserves the legacy behavior in the edge case
+    // where m_currentDeviceInfo.name is empty (shouldn't happen here since
+    // the capture device was opened earlier in Initialize, but defensive).
+    const std::wstring audioHint = m_currentDeviceInfo.name.empty()
+        ? std::wstring(L"Elgato")
+        : m_currentDeviceInfo.name;
+    if (!m_audioRouter->Initialize(audioHint)) {
         AppLog(L"Initialize: AudioRouter failed (continuing without audio)");
     }
 
@@ -2168,6 +2188,14 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     return true;
 }
 
+const wchar_t* FormatGuidToString(const GUID& g)
+{
+    if (g == MFVideoFormat_NV12)  return L"NV12";
+    if (g == MFVideoFormat_P010)  return L"P010";
+    if (g == MFVideoFormat_RGB32) return L"BGRA";
+    return L"Unknown";
+}
+
 void Application::PushSettingsState()
 {
     if (!m_webviewSettings || !m_config) return;
@@ -2184,6 +2212,14 @@ void Application::PushSettingsState()
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";
+
+    if (m_captureDevice) {
+        auto fmt = m_captureDevice->GetOutputFormat();
+        js << L"\"negotiatedWidth\":"  << fmt.width  << L",";
+        js << L"\"negotiatedHeight\":" << fmt.height << L",";
+        js << L"\"negotiatedFps\":"    << fmt.fps    << L",";
+        js << L"\"negotiatedFormat\":\"" << FormatGuidToString(fmt.subtype) << L"\",";
+    }
 
     // Header meta line: real capture resolution, last measured fps,
     // and end-to-end latency. These come from the running pipeline.
