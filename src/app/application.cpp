@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <debugapi.h>
 #include <shlobj.h>
+#include <shellapi.h>   // ShellExecuteW: openScreenshotFolder dispatch
 #pragma comment(lib, "shell32.lib")
 
 namespace NitLink {
@@ -33,6 +34,29 @@ static bool IsElgatoDevice(const std::wstring& deviceName)
         CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
     }
     return lower.find(L"elgato") != std::wstring::npos;
+}
+
+// Strip vendor-specific suffix from a video device name so the result
+// matches the paired audio endpoint's substring. AverMedia exposes
+// "Live Gamer 4K 2.1-Video" for video and "HDMI (Live Gamer 4K 2.1-Audio)"
+// for audio; stripping the suffix leaves "Live Gamer 4K 2.1" which appears
+// in both. Elgato uses no suffix so this is a no-op for Elgato. Empty
+// input falls back to "Elgato" as a sensible default for the most
+// common card.
+static std::wstring DeriveAudioHint(const std::wstring& videoDeviceName)
+{
+    std::wstring hint = videoDeviceName;
+    const wchar_t* suffixesToStrip[] = { L"-Video", L"-VIDEO", L" Video" };
+    for (const wchar_t* sfx : suffixesToStrip) {
+        const size_t sfxLen = wcslen(sfx);
+        if (hint.size() >= sfxLen &&
+            hint.compare(hint.size() - sfxLen, sfxLen, sfx) == 0) {
+            hint.resize(hint.size() - sfxLen);
+            break;
+        }
+    }
+    if (hint.empty()) hint = L"Elgato";
+    return hint;
 }
 
 // Escape a wide string for safe inclusion inside a JSON string literal.
@@ -292,6 +316,26 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             : L"Initialize: 4K S HID tonemap ON sent for SDR/NV12");
     }
 
+    // F1 Source picker manual override. Applied to the capture device
+    // before Open so the negotiator inside CaptureDevice tries the
+    // user's exact resolution / fps / format combination first.
+    // Unachievable combinations fall back to native-best + standard
+    // attempts and set CaptureDevice::m_fallbackNotice, which the JSON
+    // state push surfaces as a toast on the JS side. The config field
+    // stays set across the fallback so the override re-applies on
+    // subsequent source changes.
+    {
+        CaptureDevice::OverrideSpec ov;
+        if (m_config) {
+            const CaptureFormatOverride cv = m_config->GetOverride(chosen.name);
+            ov.width  = cv.width;
+            ov.height = cv.height;
+            ov.fps    = cv.fps;
+            ov.format = cv.format;
+        }
+        m_captureDevice->SetFormatOverride(ov);
+    }
+
     if (!m_captureDevice->Open(chosen)) {
         // If P010 was requested and failed, retry once without it. The
         // device might publish P010 in its capability list but reject the
@@ -396,12 +440,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // to endpoints containing e.g. "Elgato 4K Pro" or "Elgato 4K X", which
     // matches only the paired hardware audio endpoint per Elgato's naming
     // convention. Wave Link channels don't carry the specific device name.
-    // Fallback to "Elgato" preserves the legacy behavior in the edge case
-    // where m_currentDeviceInfo.name is empty (shouldn't happen here since
-    // the capture device was opened earlier in Initialize, but defensive).
-    const std::wstring audioHint = m_currentDeviceInfo.name.empty()
-        ? std::wstring(L"Elgato")
-        : m_currentDeviceInfo.name;
+    const std::wstring audioHint = DeriveAudioHint(m_currentDeviceInfo.name);
     if (!m_audioRouter->Initialize(audioHint)) {
         AppLog(L"Initialize: AudioRouter failed (continuing without audio)");
     }
@@ -520,8 +559,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // so no pipeline rebuild is needed: the next iteration picks
             // up the new value. FrameDiffer continues to run regardless
             // (its output feeds the HUD content-fps readout and the
-            // VRR-pacing diagnostic log line), it just no longer gates
-            // Present when the flag is false.
+            // VRR-pacing diagnostic log line); its classification only
+            // gates Present when the flag is true.
             m_config->vrrPresentPacing = !m_config->vrrPresentPacing;
             if (!m_config->vrrPresentPacing) {
                 // Disabling: clear the consecutive-skip counter. The
@@ -651,6 +690,68 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                        + L"'; UI will revert to the current device");
             }
             PushSettingsState();
+            return;
+        }
+        if (action == L"setCaptureFormatOverride" && m_config) {
+            // User picked (or cleared) a manual capture format from the
+            // F1 Source picker. The wire payload is a nested object:
+            //   {"action":"setCaptureFormatOverride",
+            //    "value":{"width":1920,"height":1080,"fps":60,"format":"NV12"}}
+            //
+            // The extractStr / extractRaw helpers scan by key name and
+            // would happily pull "width" out of any place in the
+            // message; safe here because no other message
+            // schema uses those four keys, so they only appear inside
+            // the nested object. Each field 0 / empty = Auto for that
+            // axis: the dropdown's "Auto" option emits the empty value.
+            const std::wstring rawW   = extractRaw(L"width");
+            const std::wstring rawH   = extractRaw(L"height");
+            const std::wstring rawFps = extractRaw(L"fps");
+            const std::wstring fmtStr = extractStr(L"format");
+
+            auto parseUint = [](const std::wstring& s) -> uint32_t {
+                if (s.empty()) return 0;
+                try { return static_cast<uint32_t>(std::stoul(s)); }
+                catch (...) { return 0; }
+            };
+
+            auto& cv = m_config->captureFormatOverrides[m_currentDeviceInfo.name];
+            cv.width  = parseUint(rawW);
+            cv.height = parseUint(rawH);
+            cv.fps    = parseUint(rawFps);
+            cv.format = fmtStr;
+            m_config->Save("nitlink.json");
+
+            AppLog(L"setCaptureFormatOverride [" + m_currentDeviceInfo.name + L"]: "
+                   + std::to_wstring(cv.width) + L"x"
+                   + std::to_wstring(cv.height) + L" @ "
+                   + std::to_wstring(cv.fps) + L"fps "
+                   + (cv.format.empty() ? L"(format=Auto)" : cv.format));
+
+            // Force a reconcile so the negotiator picks up the new
+            // override on the next Open. ReconcileCaptureFormat handles
+            // the full teardown / re-Open / downstream rebuild cycle
+            // (renderer textures, frame buffer, differ, placeholder
+            // detector). force=true bypasses the "format already
+            // matches" early-out so the override always takes effect.
+            // If the requested combination is unavailable for the live
+            // source, the negotiator inside CaptureDevice will fall
+            // back to Auto and set the fallback notice; the next
+            // PushSettingsState below picks it up and surfaces the
+            // toast on the JS side.
+            ReconcileCaptureFormat(/*force=*/true);
+            PushSettingsState();
+            return;
+        }
+        if (action == L"openScreenshotFolder") {
+            // User clicked the screenshot toast's path link. Open Windows
+            // Explorer with the file pre-selected (/select switch).
+            const std::wstring path = extractStr(L"value");
+            if (!path.empty()) {
+                const std::wstring args = L"/select,\"" + path + L"\"";
+                ShellExecuteW(nullptr, nullptr, L"explorer.exe",
+                              args.c_str(), nullptr, SW_SHOWNORMAL);
+            }
             return;
         }
     });
@@ -800,6 +901,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // read in Run() will bump this and set m_hasEverReceivedFrame=true,
     // switching the debounce to the longer reacquire-after-loss grace.
     m_lastGoodFrameTime = std::chrono::steady_clock::now();
+    // Motion-recency gate baselines: initialize both to "now" so the very
+    // first ConfirmedPlaceholder evaluation in the run loop does not see
+    // an epoch-zero timestamp and immediately decide the source is stale.
+    // See m_lastMotionTime / m_lastContentTime / kMotionRecencyWindowMs
+    // in application.h for the gate's full semantics.
+    m_lastMotionTime  = m_lastGoodFrameTime;
+    m_lastContentTime = m_lastGoodFrameTime;
 
     // Apply persisted audio + display state so the live subsystems reflect
     // whatever the user had configured when they last closed the app.
@@ -1049,16 +1157,51 @@ void Application::Run()
                 auto captureEnd = Clock::now();
                 m_captureLatencyMs = std::chrono::duration<double, std::milli>(captureEnd - captureStart).count();
                 m_lastGoodFrameTime    = std::chrono::steady_clock::now();
+                // Motion-recency gate: this frame is non-placeholder content
+                // arriving from the capture device, so bump the content
+                // freshness marker the placeholder gate consults. See
+                // application.h for the gate's full semantics.
+                m_lastContentTime      = m_lastGoodFrameTime;
                 m_hasEverReceivedFrame = true;
                 if (m_inPlaceholderState) {
                     AppLog(L"Signal: real source frames resumed");
                     m_inPlaceholderState = false;
                 }
             } else if (cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder) {
-                if (!m_inPlaceholderState) {
-                    AppLog(L"Signal: Elgato placeholder detected, holding last real frame, no upload");
-                    m_inPlaceholderState = true;
+                // MOTION-RECENCY GATE.
+                //
+                // PlaceholderDetector confirmed: this frame is the
+                // kRequiredConsecutiveMatches-th in a row whose fingerprint
+                // matches a baked placeholder, and the streak passed the
+                // temporal-stability check. That is sufficient evidence for
+                // a real Elgato NO SIGNAL placeholder, but it is ALSO
+                // sufficient evidence for a static game intro card whose
+                // luma pattern coincidentally matches the placeholder
+                // (Star Wars Jedi Lucasfilm logo on P010, etc.).
+                //
+                // To break the tie, check history: if either real
+                // content (m_lastContentTime) or motion (m_lastMotionTime)
+                // was seen inside kMotionRecencyWindowMs, the HDMI source
+                // is alive and this is a false positive. Fall through
+                // exactly like CandidatePlaceholder (no log, no latch, no
+                // upload; the Real branch did not run, so no upload
+                // happened).
+                //
+                // If both timers have gone stale, the source has been
+                // quiet long enough that this really is a disconnect.
+                // Honor the confirmation: log the transition once and
+                // arm the placeholder-specific shorter no-signal grace
+                // inside ShouldShowNoSignal.
+                const auto now = std::chrono::steady_clock::now();
+                if (!RecentSourceActivity(now)) {
+                    if (!m_inPlaceholderState) {
+                        AppLog(L"Signal: Elgato placeholder detected, holding last real frame, no upload");
+                        m_inPlaceholderState = true;
+                    }
                 }
+                // else: suppress confirmation. Stay out of m_inPlaceholderState
+                // so the no-signal grace does not arm. The upload-skip behavior
+                // is already correct because the Real branch did not run.
             }
             // CandidatePlaceholder: no upload, no grace bump, no log. Wait
             // and see whether the streak breaks (back to Real) or completes
@@ -1116,7 +1259,17 @@ void Application::Run()
             m_frameDiffer->Process(m_renderer->GetContext(),
                                      m_renderer->GetRawCaptureSRV());
             isNewFrame = m_frameDiffer->WasPreviousFrameNew();
-            if (isNewFrame) m_uniqueFrameCount++;
+            if (isNewFrame) {
+                m_uniqueFrameCount++;
+                // Motion-recency gate: the differ saw a non-duplicate frame,
+                // so the HDMI source is producing fresh content. This is the
+                // motion half of the (motion OR content) gate consulted by
+                // the ConfirmedPlaceholder branch above. Updated here
+                // rather than inside the Real branch so that paused games
+                // (which classify Real but produce duplicates) leave
+                // m_lastMotionTime stale; the content timer carries them.
+                m_lastMotionTime = std::chrono::steady_clock::now();
+            }
         }
 
         // FPS sampling and differ diagnostic: fire every iteration (NOT
@@ -1133,9 +1286,16 @@ void Application::Run()
                 uint64_t framesWritten = m_frameBuffer
                     ? m_frameBuffer->GetFramesWritten()
                     : lastFramesWritten;
-                uint64_t deltaFrames   = framesWritten - lastFramesWritten;
-                m_currentFps           = static_cast<uint32_t>(deltaFrames / elapsed);
-                lastFramesWritten      = framesWritten;
+                // Buffer-reset guard: framesWritten resets to 0 on every
+                // FrameBuffer rebuild (HDR/SDR reconcile, format change).
+                // Without this guard, 0 - lastFramesWritten underflows the
+                // unsigned subtraction and produces a ~2^32 fps spike on
+                // the next sample.
+                uint64_t deltaFrames = (framesWritten >= lastFramesWritten)
+                    ? framesWritten - lastFramesWritten
+                    : 0;
+                m_currentFps         = static_cast<uint32_t>(deltaFrames / elapsed);
+                lastFramesWritten    = framesWritten;
 
                 uint64_t deltaUnique   = m_uniqueFrameCount - lastUniqueFrameCount;
                 m_currentContentFps    = static_cast<uint32_t>(deltaUnique / elapsed);
@@ -1211,8 +1371,8 @@ void Application::Run()
             //
             // The VRR pacing design intent is to collapse Present rate
             // down to the SOURCE'S UNIQUE-FRAME RATE so monitor VRR
-            // follows real game framerate. The signal that tells us
-            // about unique-frame rate is the FrameDiffer's isNewFrame
+            // follows real game framerate. The signal that drives
+            // unique-frame rate is the FrameDiffer's isNewFrame
             // classification on a fresh frame, NOT "did the renderer
             // get a fresh frame this poll cycle." A no-fresh-frame
             // iteration carries zero information about whether the
@@ -1343,7 +1503,7 @@ void Application::Run()
             }
             // PiP gate: the HUD panel is a fixed 280x156 px overlay, which
             // dominates a 480x270 PiP window and looks broken. Suppress it
-            // entirely while PiP is active for rc1: the panel still renders
+            // entirely while PiP is active; the panel still renders
             // normally when PiP is off.
             else if (m_showOverlay && m_overlay && !m_isPiP) {
                 Overlay::Stats stats{};
@@ -1393,6 +1553,15 @@ void Application::Run()
                 } else {
                     m_toastText.clear();
                 }
+            }
+
+            // Screenshot dispatch fires before Present. With FLIP_DISCARD the
+            // backbuffer becomes undefined after Present, so a post-Present
+            // readback would copy garbage. Both render branches need this
+            // site since either path may run on a given frame; the atomic
+            // exchange guarantees a single fire per hotkey press.
+            if (m_screenshotRequested.exchange(false)) {
+                TakeScreenshot();
             }
 
             m_renderer->EndFrame();
@@ -1533,17 +1702,17 @@ void Application::Run()
             }
         }
 
+        // Screenshot dispatch: see HDR branch above for the FLIP_DISCARD
+        // rationale.
+        if (m_screenshotRequested.exchange(false)) {
+            TakeScreenshot();
+        }
+
         m_renderer->EndFrame();
         } // end if (!hdrActive)
         
         auto renderEnd = Clock::now();
         m_renderLatencyMs = std::chrono::duration<double, std::milli>(renderEnd - renderStart).count();
-
-        // Screenshot dispatch -- Ctrl+S sets the flag, the work happens here on
-        // the render thread (DX11 context is not thread-safe).
-        if (m_screenshotRequested.exchange(false)) {
-            TakeScreenshot();
-        }
     }
 }
 
@@ -1605,7 +1774,7 @@ void Application::Shutdown()
 
 void Application::ToggleFullscreen()
 {
-    // rc1 safety: refuse fullscreen toggle while PiP is active. PiP runs
+    // Safety: refuse fullscreen toggle while PiP is active. PiP runs
     // the main window as WS_EX_LAYERED + WS_EX_TOPMOST with an alpha-keyed
     // layered surface; if SetFullscreen swaps styles out from under those
     // attributes, DWM ends up with a fullscreen-ish window that still
@@ -1632,12 +1801,11 @@ void Application::ToggleFullscreen()
 
 void Application::TogglePiP()
 {
-    // Note: an earlier rc1 build refused this toggle when HDR output was
-    // active because layered-window alpha over an HDR10 PQ backbuffer
-    // looked broken. After the SetPiP exit-style fixes and the Alt+Enter
-    // guard landed, PiP is stable enough to allow HDR PiP again:
-    // the colours may still need work in a future post-rc1 SDR-in-HDR
-    // PiP path, but the window-state behaviour is sound.
+    // PiP is allowed regardless of HDR state. The SetPiP exit-style
+    // handling and the Alt+Enter guard keep the layered-window alpha
+    // and the HDR10 PQ backbuffer interacting cleanly; the window-state
+    // behaviour is sound. SDR-in-HDR PiP colour handling has room for
+    // refinement but does not gate the toggle.
 
     m_isPiP = !m_isPiP;
 
@@ -1685,6 +1853,16 @@ void Application::ToggleSettings()
     }
 }
 
+bool Application::RecentSourceActivity(std::chrono::steady_clock::time_point now) const
+{
+    using namespace std::chrono;
+    const auto recent = (m_lastMotionTime > m_lastContentTime)
+                            ? m_lastMotionTime
+                            : m_lastContentTime;
+    const auto elapsedMs = duration_cast<milliseconds>(now - recent).count();
+    return elapsedMs < kMotionRecencyWindowMs;
+}
+
 bool Application::ShouldShowNoSignal()
 {
     using namespace std::chrono;
@@ -1719,6 +1897,42 @@ bool Application::ShouldShowNoSignal()
     // back below the threshold or grace expires.
     constexpr auto kReacquireDebounce = milliseconds(250);
 
+    const auto now     = Clock::now();
+
+    // MOTION-RECENCY EARLY EXIT.
+    //
+    // Before consulting any of the grace timers, ask whether the source
+    // has shown evidence of being alive in the recent past. If either
+    // the frame differ reported non-duplicate motion or the placeholder
+    // classifier let a Real frame through within kMotionRecencyWindowMs,
+    // the source is healthy; short-circuit: clear the latches, do
+    // not log, do not arm the no-signal page.
+    //
+    // This is the discriminator that handles fingerprint-match false
+    // positives (Star Wars Jedi Lucasfilm card, similar static intro
+    // cards). The PlaceholderDetector cannot distinguish those from a
+    // real Elgato placeholder by fingerprint alone; both produce
+    // pixel-identical 9-zone luma signatures. Temporal context can:
+    // a real placeholder is preceded by silence, an intro card is
+    // preceded by animation. See m_lastMotionTime / m_lastContentTime
+    // in application.h for how the two halves are tracked.
+    //
+    // Guarded by m_hasEverReceivedFrame so the startup grace below can
+    // still trip when the user launches NitLink with no source
+    // connected. Without that guard, the timers initialized to "now()"
+    // in Initialize would suppress the startup no-signal screen for
+    // the full kMotionRecencyWindowMs.
+    if (m_hasEverReceivedFrame && RecentSourceActivity(now)) {
+        if (m_signalLostLogged) {
+            AppLog(L"Signal: restored (was lost)");
+        } else if (m_signalReacquiringLogged) {
+            AppLog(L"Signal: reacquired");
+        }
+        m_signalLostLogged        = false;
+        m_signalReacquiringLogged = false;
+        return false;
+    }
+
     const bool placeholderConfirmed = m_placeholderDetector
         && m_placeholderDetector->IsCurrentlyPlaceholder();
 
@@ -1742,7 +1956,10 @@ bool Application::ShouldShowNoSignal()
     // fingerprints plus the temporal-stability gate) confirms the
     // Elgato NO SIGNAL output. Negative: m_lastGoodFrameTime fails to
     // advance for longer than the active grace window.
-    const auto now     = Clock::now();
+    //
+    // `now` was already taken at the top of the function for the
+    // motion-recency early exit; reuse it here so both checks see the
+    // exact same instant.
     const auto elapsed = now - m_lastGoodFrameTime;
     const auto grace   = !m_hasEverReceivedFrame
         ? kStartupGrace
@@ -1822,7 +2039,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // The periodic HDRSourcePoller will eventually catch up via its
     // AcceptUpdate drain in the main loop, but on a polling cadence of
     // ~1s the drain often hasn't fired yet by the time the capture
-    // worker dies and forces us in here. Using the stale cached
+    // worker dies and triggers this path. Using the stale cached
     // m_sourceIsHDR10 in that window makes wantP010 below resolve to
     // the OLD format, the device re-opens as P010 against a now-SDR
     // source, and the next frames upload as green garbage (SDR-shaped
@@ -1982,6 +2199,24 @@ bool Application::ReconcileCaptureFormat(bool force)
             : L"Reconcile: 4K S HID tonemap ON sent for SDR/NV12");
     }
 
+    // F1 Source picker manual override (same lifecycle as Initialize:
+    // applied before Open, fallback handled inside CaptureDevice). This
+    // is the path the setCaptureFormatOverride message handler reaches
+    // by calling ReconcileCaptureFormat(force=true). The user just
+    // changed a dropdown, the config is fresh, the next Open picks up
+    // the new values.
+    {
+        CaptureDevice::OverrideSpec ov;
+        if (m_config) {
+            const CaptureFormatOverride cv = m_config->GetOverride(deviceToOpen.name);
+            ov.width  = cv.width;
+            ov.height = cv.height;
+            ov.fps    = cv.fps;
+            ov.format = cv.format;
+        }
+        m_captureDevice->SetFormatOverride(ov);
+    }
+
     bool opened = m_captureDevice->Open(deviceToOpen);
     if (!opened && wantP010) {
         // P010 negotiation failed at the MF level. Same fallback as
@@ -2066,6 +2301,24 @@ bool Application::ReconcileCaptureFormat(bool force)
             rkind = DX11Renderer::CaptureFormatKind::BGRA;
         }
         m_renderer->SetSourceFormat(rkind);
+
+        // Post-negotiation HDR/swap-chain sync. CaptureDevice's internal
+        // attempts loop can reject P010 and fall through to NV12/BGRA
+        // with Open returning true (e.g. 4K S has no 4K-P010, so a 4K
+        // override + HDR-on lands NV12 at 4K). The Open retry-fallback
+        // earlier in this function only fires when the OUTER Open call
+        // returns false; it does not catch this internal-fallback case.
+        // Without this sync, the swap chain stays HDR10 (from Alt+H ON)
+        // while the renderer feeds 8-bit SDR luma through it. Bring
+        // both flags down to match capture reality.
+        if (wantP010 && !captureIsP010 && m_config->hdrEnabled) {
+            AppLog(L"Reconcile: capture is non-P010 despite wantP010; "
+                   L"disabling renderer HDR mode and rolling back hdrEnabled");
+            m_config->hdrEnabled = false;
+            if (m_overlay) m_overlay->OnResizeBegin();
+            m_renderer->SetHDREnabled(false);
+            if (m_overlay) m_overlay->OnResizeEnd();
+        }
     }
 
     m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp) {
@@ -2182,6 +2435,20 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         return false;
     }
 
+    // Re-route audio to the new device. The audio router was bound to the
+    // previous device at Initialize time; without this re-init, audio
+    // either falls silent (endpoint gone with the old card) or keeps
+    // streaming from the wrong card's endpoint.
+    if (m_audioRouter) {
+        const std::wstring newAudioHint = DeriveAudioHint(newDevice.name);
+        m_audioRouter->Shutdown();
+        if (!m_audioRouter->Initialize(newAudioHint)) {
+            AppLog(L"SwitchCaptureDevice: AudioRouter re-init failed (continuing without audio)");
+        } else {
+            AppLog(L"SwitchCaptureDevice: AudioRouter re-bound to '" + newAudioHint + L"'");
+        }
+    }
+
     // Persist the new preference so the next launch opens this device
     // by default through Initialize's PickPreferredDevice path.
     m_config->Save("nitlink.json");
@@ -2206,6 +2473,7 @@ void Application::PushSettingsState()
     std::wstringstream js;
     js << L"{\"state\":{";
     js << L"\"hdrEnabled\":"        << (m_config->hdrEnabled        ? L"true" : L"false") << L",";
+    js << L"\"hdrAutoDetectAvailable\":" << (m_hdrDetectionAvailable ? L"true" : L"false") << L",";
     js << L"\"colorExpansion\":"    << (m_config->colorExpansion    ? L"true" : L"false") << L",";
     js << L"\"nisEnabled\":"        << (m_config->nisEnabled        ? L"true" : L"false") << L",";
     js << L"\"vrrPresentPacing\":"  << (m_config->vrrPresentPacing  ? L"true" : L"false") << L",";
@@ -2219,6 +2487,69 @@ void Application::PushSettingsState()
         js << L"\"negotiatedHeight\":" << fmt.height << L",";
         js << L"\"negotiatedFps\":"    << fmt.fps    << L",";
         js << L"\"negotiatedFormat\":\"" << FormatGuidToString(fmt.subtype) << L"\",";
+
+        // Available formats: the full set the device's media type handler
+        // exposed at Open time. Drives the F1 Source picker's cascade
+        // dropdowns. Interlaced entries are filtered here rather than on
+        // the JS side because no NitLink-target consumer source emits
+        // interlaced and the user-facing dropdowns should not even hint
+        // at it as a possibility.
+        js << L"\"availableFormats\":[";
+        const auto& formats = m_captureDevice->GetAvailableFormats();
+        bool firstFormat = true;
+        for (const auto& af : formats) {
+            if (af.interlaced) continue;
+            if (!firstFormat) js << L",";
+            firstFormat = false;
+            js << L"{\"width\":"   << af.width
+               << L",\"height\":" << af.height
+               << L",\"fps\":"    << af.fps
+               << L",\"format\":\"" << FormatGuidToString(af.subtype) << L"\"}";
+        }
+        js << L"],";
+    }
+
+    // captureFormatOverride: the user's saved manual selection from the
+    // F1 Source picker for the CURRENTLY ACTIVE device. Per-device
+    // storage in m_config->captureFormatOverrides; the JS wire schema
+    // stays single-object because the picker only ever shows one
+    // device's choices at a time. Switching devices triggers another
+    // PushSettingsState which emits the new device's saved override.
+    //
+    // Convention: each numeric field at 0 means Auto for that dimension;
+    // empty format string means Auto for format. All-Auto = full automatic
+    // negotiation (default). The JS side mirrors this interpretation;
+    // no separate "isAuto" flag is needed.
+    {
+        const CaptureFormatOverride ov =
+            m_config->GetOverride(m_currentDeviceInfo.name);
+        js << L"\"captureFormatOverride\":{"
+           << L"\"width\":"  << ov.width  << L","
+           << L"\"height\":" << ov.height << L","
+           << L"\"fps\":"    << ov.fps    << L","
+           << L"\"format\":\"" << ov.format << L"\""
+           << L"},";
+    }
+
+    // Transient user-facing notice produced by the capture pipeline
+    // (currently only set when a manual format override could not be
+    // honored and the pipeline fell back to Auto). Consumed here so the
+    // next PushSettingsState pass does not re-show the same toast. Empty
+    // string = no notice; JS treats it that way and renders nothing.
+    {
+        std::wstring notice = m_captureDevice
+            ? m_captureDevice->ConsumeFallbackNotice()
+            : L"";
+        js << L"\"notification\":\"" << JsonEscapeWide(notice) << L"\",";
+    }
+
+    // Most recent screenshot path, surfaced as a richer toast on the JS
+    // side (filename + clickable open-folder link). One-shot: cleared
+    // after emission so the same toast does not re-fire on subsequent
+    // pushes.
+    {
+        js << L"\"screenshotSaved\":\"" << JsonEscapeWide(m_lastScreenshotPath) << L"\",";
+        m_lastScreenshotPath.clear();
     }
 
     // Header meta line: real capture resolution, last measured fps,
@@ -2435,6 +2766,18 @@ void Application::TakeScreenshot()
     bool ok = m_renderer->SaveScreenshot(fullPath);
     if (ok) {
         AppLog(L"Screenshot saved: " + fullPath);
+        m_lastScreenshotPath = fullPath;
+        PushSettingsState();
+
+        // Surface a renderer-overlay toast so the user sees the save
+        // confirmation during gameplay. The WebView toast fired by
+        // PushSettingsState above only renders into a visible surface
+        // when the settings menu is open; the overlay path draws on
+        // top of the main capture window regardless of menu state.
+        std::wstring filename = fullPath;
+        size_t slash = filename.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) filename = filename.substr(slash + 1);
+        ShowToast(L"Screenshot saved: " + filename);
     } else {
         AppLog(L"Screenshot failed");
     }

@@ -127,29 +127,40 @@ private:
     static bool ZoneMatch(const Fingerprint& a, const Fingerprint& b, uint8_t tolerance);
     bool MatchesAnyKnown(const Fingerprint& fp, CaptureFormatKind format) const;
 
-    // How close two zone bytes have to be to "match": 8/255, about 3% tolerance.
-    // Tight enough that real content (with varied zone luma) doesn't match
-    // by accident, loose enough that capture noise / firmware jitter on the
-    // Elgato placeholder doesn't cause spurious misses.
-    static constexpr uint8_t kZoneTolerance = 8;
+    // How close two zone bytes have to be to "match": 4/255, about 1.5%
+    // tolerance. Real Elgato P010 placeholder fingerprints captured via
+    // Ctrl+F5 show zero frame-to-frame jitter (bit-identical across
+    // consecutive captures), so the placeholder side of the gap is exact;
+    // the tolerance only has to cover hardware noise. A looser tolerance
+    // admits false positives from dark game-intro content: measured
+    // minimum luma distance from the baked P010 placeholder to Star Wars
+    // Jedi studio-logo frames was 6 steps, so 4 sits safely in the gap
+    // between the placeholder's bit-static reality and the closest
+    // false-positive content.
+    static constexpr uint8_t kZoneTolerance = 4;
 
     // How close two consecutive frame fingerprints have to be for the
     // frame to count as "temporally stable" within a placeholder streak.
-    // Tighter than kZoneTolerance because the Elgato placeholder is
-    // close-to-static across frames, but with headroom for real capture-
-    // pipeline noise: USB transmission jitter on the 4K S, P010 encoding
-    // variance at high producer rates, and reused-buffer race windows
-    // can push consecutive fingerprints apart by a few luma steps even
-    // on a strictly static placeholder image. Set high enough to absorb
-    // that noise, low enough that real animated content (intro logos,
-    // slow fades) still drifts past it and resets the streak.
-    static constexpr uint8_t kStableTolerance = 6;
+    // Real Elgato P010 placeholders are bit-identical across consecutive
+    // Ctrl+F5 captures (zero drift), while real game intro logos animate
+    // through the center zone (Star Wars Jedi logos shifted center luma
+    // through 0x12, 0x1B, 0x1D, 0x25, 0x53 across frames). A tight
+    // stability window collapses the streak as soon as that animation
+    // appears; 2 leaves room for USB transmission jitter and P010
+    // encoding variance on the real placeholder without admitting
+    // legitimate animated content.
+    static constexpr uint8_t kStableTolerance = 2;
 
     // Consecutive matches required before declaring placeholder state.
-    // 5 frames is about 83 ms at 60 Hz. Short enough to feel responsive on
-    // a real HDMI unplug, long enough that a single false-match on a real
-    // frame can't flip the latch alone.
-    static constexpr int kRequiredConsecutiveMatches = 5;
+    // Defense in depth against the intro-logo false-positive pattern.
+    // 15 frames is about 250 ms at 60 Hz: still fast enough to feel
+    // responsive on a real HDMI unplug (the Elgato placeholder typically
+    // displays for many seconds during a handshake gap, easily satisfying
+    // a 250 ms streak requirement), but long enough that a coincidental
+    // short match on real content cannot flip the latch. Paired with the
+    // tight zone and stability tolerances above, the three gates together
+    // make a false confirmation on animated content extremely unlikely.
+    static constexpr int kRequiredConsecutiveMatches = 15;
 
     int  m_consecutiveMatches = 0;
     bool m_inPlaceholder      = false;

@@ -18,6 +18,27 @@ struct GameSettings {
     bool        colorExpansion = false;
 };
 
+// Capture format override: user-selected resolution / fps / pixel format
+// from the F1 Source picker. Each numeric field at 0 means "Auto" for that
+// dimension; empty format string means "Auto" for format. All-Auto means
+// full automatic negotiation (the default).
+//
+// The override is best-effort: if the requested combination is unavailable
+// for the live source, CaptureDevice falls back to Auto and surfaces a
+// toast notification via the JSON state push. The override is preserved in
+// config across that fallback so the next source change retries it; the
+// user has to explicitly switch a dropdown back to Auto to remove it.
+struct CaptureFormatOverride {
+    uint32_t     width  = 0;
+    uint32_t     height = 0;
+    uint32_t     fps    = 0;
+    std::wstring format;  // "NV12" / "P010" / "BGRA" / "" for Auto
+
+    bool isFullAuto() const {
+        return width == 0 && height == 0 && fps == 0 && format.empty();
+    }
+};
+
 struct Config {
     // Window
     uint32_t windowWidth  = 1920;
@@ -42,6 +63,22 @@ struct Config {
 
     // Capture
     std::wstring preferredDevice = L""; // Empty = first available
+
+    // Manual capture format overrides, keyed by capture device name.
+    // Each card remembers its own pick (4K Pro at 4K, 4K S at 1080p+240,
+    // etc.). Missing entry = all-Auto = full automatic negotiation.
+    // Lookup via GetOverride() below; write via captureFormatOverrides[name].
+    std::map<std::wstring, CaptureFormatOverride> captureFormatOverrides;
+
+    // Read-only lookup for the per-device override map. Returns the
+    // saved override for `deviceName`, or all-Auto defaults if no entry
+    // exists. Does NOT insert. Use captureFormatOverrides[name]
+    // directly when writing.
+    CaptureFormatOverride GetOverride(const std::wstring& deviceName) const {
+        auto it = captureFormatOverrides.find(deviceName);
+        if (it == captureFormatOverrides.end()) return {};
+        return it->second;
+    }
 
     // Display pipeline knobs
     bool         colorExpansion  = false;  // Limited (16-235) -> full (0-255). Default OFF: PS5 over HDMI typically sends full range, and applying expansion to full-range data crushes blacks. Toggle ON only if your blacks look gray.

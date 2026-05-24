@@ -46,6 +46,15 @@ bool Config::Load(const std::string& path)
     std::ifstream file(path);
     if (!file.is_open()) return false;
 
+    // Pre-loop accumulators for capture-format override parsing. Two
+    // schemas are accepted: the legacy flat keys from rc2 (one anonymous
+    // override) and the new per-device indexed keys (rc3+). Both feed
+    // into the post-loop reconciliation below.
+    bool sawLegacyOverride = false;
+    CaptureFormatOverride legacyOverride;
+    std::map<int, std::wstring>         indexedOverrideDevice;
+    std::map<int, CaptureFormatOverride> indexedOverrides;
+
     std::string line;
     while (std::getline(file, line)) {
         line = Trim(line);
@@ -102,6 +111,75 @@ bool Config::Load(const std::string& path)
             // through MultiByteToWideChar (UTF-8 input expected).
             preferredDevice.assign(val.begin(), val.end());
         }
+
+        // Capture format overrides. Two schemas accepted:
+        //   Legacy (rc2): flat capture_override_{width,height,fps,format}
+        //     keys, one anonymous override for the whole config.
+        //   New (rc3+): indexed capture_override.<N>.{device,width,
+        //     height,fps,format} keys per saved device. Each card
+        //     remembers its own pick.
+        // Both accumulate into pre-loop temps and are reconciled below.
+        if (key == "capture_override_width") {
+            legacyOverride.width = std::stoul(val);
+            sawLegacyOverride = true;
+        } else if (key == "capture_override_height") {
+            legacyOverride.height = std::stoul(val);
+            sawLegacyOverride = true;
+        } else if (key == "capture_override_fps") {
+            legacyOverride.fps = std::stoul(val);
+            sawLegacyOverride = true;
+        } else if (key == "capture_override_format") {
+            // Format strings are always ASCII ("NV12" / "P010" / "BGRA"
+            // / "") so the same narrow-to-wide convention as
+            // preferred_device above is safe here.
+            legacyOverride.format.assign(val.begin(), val.end());
+            sawLegacyOverride = true;
+        } else if (key.rfind("capture_override.", 0) == 0) {
+            // capture_override.<N>.<field> = <value>
+            // capture_override.count is parsed but ignored: the map's
+            // contents post-loop are the source of truth for size.
+            const auto remainder = key.substr(17);  // length of "capture_override."
+            const auto dot = remainder.find('.');
+            if (dot != std::string::npos) {
+                try {
+                    const int idx = std::stoi(remainder.substr(0, dot));
+                    const std::string field = remainder.substr(dot + 1);
+                    if (field == "device") {
+                        // Device names are ASCII in practice (same
+                        // convention as preferred_device above).
+                        indexedOverrideDevice[idx].assign(val.begin(), val.end());
+                    } else if (field == "width") {
+                        indexedOverrides[idx].width = std::stoul(val);
+                    } else if (field == "height") {
+                        indexedOverrides[idx].height = std::stoul(val);
+                    } else if (field == "fps") {
+                        indexedOverrides[idx].fps = std::stoul(val);
+                    } else if (field == "format") {
+                        indexedOverrides[idx].format.assign(val.begin(), val.end());
+                    }
+                } catch (...) {
+                    // Malformed index, skip the line silently.
+                }
+            }
+        }
+    }
+
+    // Post-loop: transpose indexed overrides into the per-device map.
+    // Entries without a device name are dropped (incomplete record).
+    for (const auto& [idx, ov] : indexedOverrides) {
+        const auto deviceIt = indexedOverrideDevice.find(idx);
+        if (deviceIt == indexedOverrideDevice.end() || deviceIt->second.empty()) continue;
+        captureFormatOverrides[deviceIt->second] = ov;
+    }
+
+    // Legacy migration: if pre-rc3 flat keys were present AND the new
+    // indexed schema was empty, attribute the legacy override to the
+    // currently preferred device. preferred_device is parsed earlier in
+    // the file so it is already set by this point. If preferred_device
+    // is empty, the legacy override is discarded (no device to attribute
+    // it to).
+    if (sawLegacyOverride && captureFormatOverrides.empty() && !preferredDevice.empty()) {
+        captureFormatOverrides[preferredDevice] = legacyOverride;
     }
 
     return true;
@@ -147,6 +225,37 @@ bool Config::Save(const std::string& path)
         }
         file << "preferred_device = " << narrow << "\n\n";
     }
+
+    file << "# Capture format overrides (per device, F1 Source picker)\n";
+    file << "# Schema: capture_override.<N>.<field> = <value>\n";
+    file << "# Fields per entry: device, width, height, fps, format\n";
+    file << "# Numeric fields at 0 (or empty for format) mean Auto.\n";
+    file << "# Format value: NV12 / P010 / BGRA / (empty for Auto).\n";
+    if (!captureFormatOverrides.empty()) {
+        file << "capture_override.count = " << captureFormatOverrides.size() << "\n";
+        int idx = 0;
+        for (const auto& [device, ov] : captureFormatOverrides) {
+            // Same narrowing convention as preferred_device. Device
+            // names and format strings are ASCII in practice.
+            std::string narrowDevice;
+            narrowDevice.reserve(device.size());
+            for (wchar_t wc : device) {
+                narrowDevice.push_back(static_cast<char>(wc));
+            }
+            std::string narrowFormat;
+            narrowFormat.reserve(ov.format.size());
+            for (wchar_t wc : ov.format) {
+                narrowFormat.push_back(static_cast<char>(wc));
+            }
+            file << "capture_override." << idx << ".device = " << narrowDevice << "\n";
+            file << "capture_override." << idx << ".width = "  << ov.width  << "\n";
+            file << "capture_override." << idx << ".height = " << ov.height << "\n";
+            file << "capture_override." << idx << ".fps = "    << ov.fps    << "\n";
+            file << "capture_override." << idx << ".format = " << narrowFormat << "\n";
+            ++idx;
+        }
+    }
+    file << "\n";
 
     file << "# Display\n";
     file << "color_expansion = " << (colorExpansion ? "true" : "false") << "\n\n";

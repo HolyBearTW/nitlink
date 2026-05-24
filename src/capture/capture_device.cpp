@@ -11,6 +11,24 @@ static void DebugLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink] " + msg + L"\n").c_str());
 }
 
+// Integer fps from a media type's MF_MT_FRAME_RATE attribute.
+// Returns 0 if the attribute is missing or has a zero denominator.
+// Used by LogAvailableFormats to populate m_availableFormats AND by
+// NegotiateFormat's post-acceptance guard to compare negotiated fps
+// against the requested override. Both paths must produce identical
+// values, or the cascade (driven by m_availableFormats) and the
+// backstop (driven by readback) will disagree about which framerates
+// are valid.
+static UINT32 GetFpsFromMediaType(IMFMediaType* type) {
+    UINT32 fpsNum = 0, fpsDen = 1;
+    if (SUCCEEDED(MFGetAttributeRatio(type, MF_MT_FRAME_RATE,
+                                      &fpsNum, &fpsDen))
+        && fpsDen > 0) {
+        return fpsNum / fpsDen;
+    }
+    return 0;
+}
+
 CaptureDevice::CaptureDevice() = default;
 
 CaptureDevice::~CaptureDevice()
@@ -102,6 +120,13 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     // P010 negotiation fails (e.g. video processor can't supply it for this
     // configuration), the code falls through to RGB32/etc.
     // and the caller is responsible for noticing and degrading to SDR pipeline.
+    //
+    // Manual override (F1 Source picker): if m_overrideSpec is non-default,
+    // its dimensions replace the native-best m_format dimensions, and its
+    // format string (if set) constrains the attempts list to just that
+    // GUID. If override-driven negotiation fails, the code falls back to
+    // native-best dimensions + standard attempts and sets m_fallbackNotice
+    // so the JSON state push surfaces a toast.
     struct FormatAttempt {
         GUID         subtype;
         const wchar_t* name;
@@ -124,61 +149,191 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         { MFVideoFormat_ARGB32, L"ARGB32" },
     };
 
-    FormatAttempt* attempts;
-    size_t        attemptCount;
-    if (m_requestP010) {
-        attempts     = attemptsP010;
-        attemptCount = sizeof(attemptsP010) / sizeof(attemptsP010[0]);
-        DebugLog(L"Requesting P010 (HDR10 path)");
-    } else {
-        attempts     = attemptsSDR;
-        attemptCount = sizeof(attemptsSDR) / sizeof(attemptsSDR[0]);
-    }
+    // Snapshot the native-best dimensions before any override mutates
+    // m_format. The fallback path restores from this snapshot when the
+    // override turns out to be unachievable on the live source.
+    const uint32_t nativeBestW   = m_format.width;
+    const uint32_t nativeBestH   = m_format.height;
+    const uint32_t nativeBestFps = m_format.fps;
 
-    bool gotFormat = false;
-    for (size_t i = 0; i < attemptCount; i++) {
-        const auto& attempt = attempts[i];
-        ComPtr<IMFMediaType> outputType;
-        MFCreateMediaType(&outputType);
-        outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        outputType->SetGUID(MF_MT_SUBTYPE, attempt.subtype);
-        outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-        MFSetAttributeSize(outputType.Get(), MF_MT_FRAME_SIZE, m_format.width, m_format.height);
-        MFSetAttributeRatio(outputType.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-
-        // REQUEST the frame rate. Without this MF often picks the LOWEST
-        // matching frame rate from the device's enum list. The 4K S, for
-        // example, lists 4K@30 NV12 BEFORE 4K@60 NV12 in its 186-format
-        // enumeration, and MF defaults to the first match. Result:
-        // a request for "4K NV12" without specifying "at 60" yields 4K@30 silently.
-        // m_format.fps was populated by the native-best enumeration above
-        // (typically 60 for modern consoles, 30 for older sources).
-        if (m_format.fps > 0) {
-            MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
-                                m_format.fps, 1);
-        }
-
-        hr = m_reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get());
-        if (SUCCEEDED(hr)) {
-            DebugLog(std::wstring(L"Output format accepted: ") + attempt.name);
-            m_format.subtype = attempt.subtype;
-            if (attempt.subtype == MFVideoFormat_NV12) {
-                m_format.stride = m_format.width;
-            } else if (attempt.subtype == MFVideoFormat_P010) {
-                // P010 layout: 16-bit Y plane (2 bytes per pixel) + half-res
-                // interleaved UV plane (each row half height, 2 bytes per
-                // chroma pair). Stride for upload is the Y-plane row stride.
-                m_format.stride = m_format.width * 2;
-            } else {
-                m_format.stride = m_format.width * 4;
-            }
-            gotFormat = true;
-            break;
+    // Build the attempts list and apply override dimensions. Captured by
+    // a lambda so the fallback path can reset and rebuild the list before
+    // retrying.
+    std::vector<FormatAttempt> attempts;
+    auto rebuildStandardAttempts = [&]() {
+        attempts.clear();
+        if (m_requestP010) {
+            for (auto& a : attemptsP010) attempts.push_back(a);
         } else {
+            for (auto& a : attemptsSDR) attempts.push_back(a);
+        }
+    };
+
+    const bool overrideRequested = !m_overrideSpec.isFullAuto();
+    if (overrideRequested) {
+        // Apply override dimensions. Zero / empty fields keep their
+        // native-best values, so the user can override just format or
+        // just resolution without specifying every axis.
+        if (m_overrideSpec.width  > 0) m_format.width  = m_overrideSpec.width;
+        if (m_overrideSpec.height > 0) m_format.height = m_overrideSpec.height;
+        if (m_overrideSpec.fps    > 0) m_format.fps    = m_overrideSpec.fps;
+
+        // If override.format is specified, the attempts list contains
+        // only that GUID. Exact match or fall through to fallback. If not,
+        // the user is overriding dimensions only; format then follows
+        // the HDR mode flag the same as auto behavior.
+        GUID overrideGuid = GUID_NULL;
+        if      (m_overrideSpec.format == L"NV12") overrideGuid = MFVideoFormat_NV12;
+        else if (m_overrideSpec.format == L"P010") overrideGuid = MFVideoFormat_P010;
+        else if (m_overrideSpec.format == L"BGRA" ||
+                 m_overrideSpec.format == L"RGB32") overrideGuid = MFVideoFormat_RGB32;
+
+        if (!IsEqualGUID(overrideGuid, GUID_NULL)) {
+            attempts.push_back({ overrideGuid, L"manual override format" });
             std::wstringstream ss;
-            ss << L"Output format " << attempt.name << L" rejected (HRESULT 0x" << std::hex << hr << L")";
+            ss << L"Manual override: " << m_format.width << L"x"
+               << m_format.height << L" @ " << m_format.fps
+               << L"fps, format " << m_overrideSpec.format;
+            DebugLog(ss.str());
+        } else {
+            // Override dimensions only, format=Auto. The user's intent here
+            // is "give me THIS resolution, any working format", not "give
+            // me ONLY P010 at this resolution and fail if unavailable."
+            //
+            // Build a hybrid attempts list: HDR-preferred format first
+            // (when m_requestP010), then SDR fallbacks. This lets a user
+            // on a 4K Pro pick 1080p with HDR enabled and still succeed,
+            // because the 4K Pro publishes P010 only at 4K, so the override
+            // would otherwise need to fall back to native-best 4K to
+            // satisfy the HDR mode flag, which silently ignores the
+            // user's dimension pick.
+            //
+            // No fallback notice in this branch: the dimension override
+            // was honored (just with a different format than the HDR
+            // flag would imply), which is the correct interpretation of
+            // "Auto" for format.
+            if (m_requestP010) {
+                attempts.push_back({ MFVideoFormat_P010, L"P010 (HDR preferred)" });
+            }
+            attempts.push_back({ MFVideoFormat_NV12,   L"NV12 (auto)" });
+            attempts.push_back({ MFVideoFormat_RGB32,  L"RGB32 (auto)" });
+            attempts.push_back({ MFVideoFormat_ARGB32, L"ARGB32 (auto)" });
+            std::wstringstream ss;
+            ss << L"Manual override (dimensions only): " << m_format.width
+               << L"x" << m_format.height << L" @ " << m_format.fps << L"fps";
             DebugLog(ss.str());
         }
+    } else {
+        rebuildStandardAttempts();
+        if (m_requestP010) DebugLog(L"Requesting P010 (HDR10 path)");
+    }
+
+    // The attempts loop, factored into a lambda so it can run twice:
+    // once with the override settings, then again with native-best +
+    // standard attempts if the override path fails. The loop mutates
+    // m_format on success (subtype + stride) and uses the current
+    // m_format.width/height/fps for the request; both get rewritten
+    // before each invocation of this lambda.
+    auto tryAttempts = [&](bool enforceOverrideDims) -> bool {
+        for (const auto& attempt : attempts) {
+            ComPtr<IMFMediaType> outputType;
+            MFCreateMediaType(&outputType);
+            outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+            outputType->SetGUID(MF_MT_SUBTYPE, attempt.subtype);
+            outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+            MFSetAttributeSize(outputType.Get(), MF_MT_FRAME_SIZE,
+                               m_format.width, m_format.height);
+            MFSetAttributeRatio(outputType.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+
+            // REQUEST the frame rate. Without this MF often picks the LOWEST
+            // matching frame rate from the device's enum list. The 4K S, for
+            // example, lists 4K@30 NV12 BEFORE 4K@60 NV12 in its 186-format
+            // enumeration, and MF defaults to the first match. Result:
+            // a request for "4K NV12" without specifying "at 60" yields 4K@30
+            // silently. m_format.fps was populated by NegotiateFormat (or
+            // overridden above) and reflects what the caller wants.
+            if (m_format.fps > 0) {
+                MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
+                                    m_format.fps, 1);
+            }
+
+            HRESULT hrAttempt = m_reader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get());
+            if (SUCCEEDED(hrAttempt)) {
+                // Post-negotiation dimension/fps guard: defends against
+                // drivers that accept SetCurrentMediaType at the requested
+                // values but silently substitute the source-native ones on
+                // readback. Observed on Elgato 4K Pro: 1920x1080 RGB32
+                // request returns S_OK, but GetCurrentMediaType immediately
+                // reports 3840x2160. The fps half is the matching backstop
+                // for the cascade's per-resolution fps filter (uniqueFps in
+                // nitlink-menu.html): if the cascade is bypassed and a
+                // non-existent (resolution, fps) combo is sent, the guard
+                // rejects it the same way as a dimension lie.
+                if (enforceOverrideDims) {
+                    ComPtr<IMFMediaType> negotiatedType;
+                    UINT32 negW = 0, negH = 0;
+                    if (SUCCEEDED(m_reader->GetCurrentMediaType(
+                            MF_SOURCE_READER_FIRST_VIDEO_STREAM, &negotiatedType)) &&
+                        SUCCEEDED(MFGetAttributeSize(negotiatedType.Get(),
+                            MF_MT_FRAME_SIZE, &negW, &negH))) {
+                        const UINT32 negFps = GetFpsFromMediaType(negotiatedType.Get());
+                        const bool dimMismatch = (negW != m_format.width ||
+                                                  negH != m_format.height);
+                        const bool fpsMismatch = (m_format.fps > 0 && negFps > 0 &&
+                                                  negFps != m_format.fps);
+                        if (dimMismatch || fpsMismatch) {
+                            std::wstringstream ss;
+                            ss << L"Output format " << attempt.name
+                               << L" returned S_OK but driver substituted "
+                               << negW << L"x" << negH << L"@" << negFps << L"fps"
+                               << L" (override requested " << m_format.width << L"x"
+                               << m_format.height << L"@" << m_format.fps << L"fps);"
+                               << L" rejecting attempt";
+                            DebugLog(ss.str());
+                            continue;
+                        }
+                    }
+                }
+                DebugLog(std::wstring(L"Output format accepted: ") + attempt.name);
+                m_format.subtype = attempt.subtype;
+                if (attempt.subtype == MFVideoFormat_NV12) {
+                    m_format.stride = m_format.width;
+                } else if (attempt.subtype == MFVideoFormat_P010) {
+                    // P010 layout: 16-bit Y plane (2 bytes per pixel) +
+                    // half-res interleaved UV plane (each row half height,
+                    // 2 bytes per chroma pair). Stride for upload is the
+                    // Y-plane row stride.
+                    m_format.stride = m_format.width * 2;
+                } else {
+                    m_format.stride = m_format.width * 4;
+                }
+                return true;
+            }
+            std::wstringstream ss;
+            ss << L"Output format " << attempt.name
+               << L" rejected (HRESULT 0x" << std::hex << hrAttempt << L")";
+            DebugLog(ss.str());
+        }
+        return false;
+    };
+
+    bool gotFormat = tryAttempts(/*enforceOverrideDims=*/ overrideRequested);
+
+    // Override fallback: if the user-specified combination did not
+    // negotiate, restore native-best dimensions and retry with the
+    // standard attempts list. m_overrideSpec is NOT cleared from
+    // config; the persisted choice stays so that the next source
+    // change retries it. The override is removed only by explicitly
+    // picking "Auto".
+    if (!gotFormat && overrideRequested) {
+        DebugLog(L"Manual override unachievable; falling back to automatic negotiation");
+        m_fallbackNotice = L"Capture format unavailable, reverted to automatic.";
+        m_format.width  = nativeBestW;
+        m_format.height = nativeBestH;
+        m_format.fps    = nativeBestFps;
+        rebuildStandardAttempts();
+        gotFormat = tryAttempts(/*enforceOverrideDims=*/ false);
     }
 
     if (!gotFormat) {
@@ -209,11 +364,8 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         // Also read back the actual frame rate. If MF silently downgraded
         // (e.g. driver can't sustain 4K@60 even though it advertised the
         // format), m_format.fps now reflects what's actually being delivered.
-        UINT32 fpsNum = 0, fpsDen = 1;
-        if (SUCCEEDED(MFGetAttributeRatio(actualType.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen))
-            && fpsDen > 0) {
-            m_format.fps = fpsNum / fpsDen;
-        }
+        const UINT32 negFps = GetFpsFromMediaType(actualType.Get());
+        if (negFps > 0) m_format.fps = negFps;
 
         // Detect row order empirically. MF_MT_DEFAULT_STRIDE is a signed int32
         // where negative = bottom-up (legacy GDI convention, older drivers),
@@ -397,9 +549,7 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
             UINT32 w = 0, h = 0;
             MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &w, &h);
 
-            UINT32 fpsNum = 0, fpsDen = 1;
-            MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-            UINT32 fps = fpsDen > 0 ? fpsNum / fpsDen : 0;
+            UINT32 fps = GetFpsFromMediaType(type.Get());
 
             if (w > bestWidth || (w == bestWidth && fps > bestFps)) {
                 bestWidth = w;
@@ -483,8 +633,14 @@ static std::wstring SubtypeToName(const GUID& g) {
     return L"UNKNOWN";
 }
 
-bool CaptureDevice::LogAvailableFormats() const
+bool CaptureDevice::LogAvailableFormats()
 {
+    // Clear the cache up front so repeated calls (e.g. after a format
+    // reconcile re-Open) do not stack duplicate entries. If the source is
+    // gone the cache stays empty and the F1 dropdowns fall back to
+    // a single "Auto" option.
+    m_availableFormats.clear();
+
     if (!m_source) {
         DebugLog(L"LogAvailableFormats: no media source open");
         return false;
@@ -543,9 +699,7 @@ bool CaptureDevice::LogAvailableFormats() const
             UINT32 w = 0, h = 0;
             MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &w, &h);
 
-            UINT32 fpsNum = 0, fpsDen = 1;
-            MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, &fpsNum, &fpsDen);
-            UINT32 fps = (fpsDen > 0) ? fpsNum / fpsDen : 0;
+            UINT32 fps = GetFpsFromMediaType(type.Get());
 
             UINT32 interlace = 0;
             type->GetUINT32(MF_MT_INTERLACE_MODE, &interlace);
@@ -566,6 +720,19 @@ bool CaptureDevice::LogAvailableFormats() const
             if (interlace != MFVideoInterlace_Progressive) ss << L"  (interlaced)";
             Log(ss.str());
             totalLogged++;
+
+            // Cache the entry for the F1 Source picker's override dropdowns.
+            // Interlaced entries are kept here; the UI filters them out
+            // (no consumer-grade target source sends interlaced, but
+            // exposing them in the diagnostic view stays consistent with
+            // the [NitLink/Formats] log above).
+            AvailableFormat af;
+            af.width      = w;
+            af.height     = h;
+            af.fps        = fps;
+            af.subtype    = subtype;
+            af.interlaced = (interlace != MFVideoInterlace_Progressive);
+            m_availableFormats.push_back(af);
         }
     }
 

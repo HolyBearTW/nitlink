@@ -1913,17 +1913,33 @@ void DX11Renderer::EndFrame()
 
 bool DX11Renderer::SaveScreenshot(const std::wstring& path)
 {
-    if (!m_captureTexture || !m_hasFrame) {
-        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: no frame\n");
+    if (!m_swapChain) {
+        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: no swap chain\n");
         return false;
     }
-    if (m_captureFormat != CaptureFormatKind::BGRA) {
-        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: planar format (NV12/P010) not yet supported\n");
+
+    // Read the swap chain backbuffer (post-shader, display-correct image)
+    // instead of the raw planar capture texture. Must be called before
+    // EndFrame()'s Present, since FLIP_DISCARD leaves buffer 0 undefined
+    // after Present. See the dispatch call sites in Application::Run.
+    ComPtr<ID3D11Texture2D> backBuffer;
+    HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+    if (FAILED(hr)) {
+        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: GetBuffer failed\n");
         return false;
     }
 
     D3D11_TEXTURE2D_DESC srcDesc{};
-    m_captureTexture->GetDesc(&srcDesc);
+    backBuffer->GetDesc(&srcDesc);
+
+    // Only the SDR BGRA8 backbuffer can be saved directly. HDR mode
+    // reconfigures the swap chain to R10G10B10A2 with BT.2020 PQ
+    // encoding; an 8-bit BMP write would require a tone-map pass that
+    // is not wired into this path.
+    if (srcDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: HDR backbuffer not supported (toggle Alt+H to SDR first)\n");
+        return false;
+    }
 
     D3D11_TEXTURE2D_DESC stagingDesc = srcDesc;
     stagingDesc.Usage          = D3D11_USAGE_STAGING;
@@ -1932,10 +1948,10 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     stagingDesc.MiscFlags      = 0;
 
     ComPtr<ID3D11Texture2D> stagingTex;
-    HRESULT hr = m_device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
+    hr = m_device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
     if (FAILED(hr)) return false;
 
-    m_context->CopyResource(stagingTex.Get(), m_captureTexture.Get());
+    m_context->CopyResource(stagingTex.Get(), backBuffer.Get());
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     hr = m_context->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
@@ -1957,18 +1973,11 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     uint8_t*       dst = pixelData.data();
     const size_t   srcPitch = mapped.RowPitch;
 
+    // Backbuffer is already full-range display sRGB. Direct row copy.
     for (uint32_t y = 0; y < height; y++) {
         const uint8_t* sRow = src + y * srcPitch;
         uint8_t*       dRow = dst + y * rowBytes;
-        for (uint32_t x = 0; x < width; x++) {
-            for (int c = 0; c < 3; c++) {
-                int v = sRow[x * 4 + c];
-                v = (v - 16) * 255 / 219;
-                if (v < 0) v = 0; else if (v > 255) v = 255;
-                dRow[x * 4 + c] = static_cast<uint8_t>(v);
-            }
-            dRow[x * 4 + 3] = 255;
-        }
+        memcpy(dRow, sRow, rowBytes);
     }
 
     m_context->Unmap(stagingTex.Get(), 0);
@@ -1984,10 +1993,15 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     };
 #pragma pack(pop)
 
+    // Negative bV4Height signals a top-down DIB: rows stored from the top
+    // of the image to the bottom. The swap chain backbuffer is already
+    // top-down, so the staging readback bytes land in that order. A
+    // positive height would tell BMP readers the rows are bottom-up and
+    // they would flip the image vertically on display.
     BITMAPV4HEADER hdr{};
     hdr.bV4Size          = sizeof(BITMAPV4HEADER);
     hdr.bV4Width         = (LONG)width;
-    hdr.bV4Height        = (LONG)height;
+    hdr.bV4Height        = -(LONG)height;
     hdr.bV4Planes        = 1;
     hdr.bV4BitCount      = 32;
     hdr.bV4V4Compression = BI_BITFIELDS;
@@ -2401,10 +2415,10 @@ bool DX11Renderer::SetHDREnabled(bool enable)
         // So this is best-effort: if the C3 ignores it, nothing is lost.
         // If it honors it, shadows snap deeper.
         //
-        // Future: extract real mastering display metadata from the Elgato
-        // HDR InfoFrame packet (bytes 5..31 of the packet already read
-        // for HDR10 auto-detect). For now, static defaults are good
-        // enough: most HDR games signal exactly these values anyway.
+        // Static defaults match what most HDR games signal. Per-source
+        // mastering metadata is available from the Elgato HDR InfoFrame
+        // packet (bytes 5..31) if finer fidelity is wanted; the static
+        // values cover the common case.
         ComPtr<IDXGISwapChain4> sc4;
         if (SUCCEEDED(m_swapChain.As(&sc4))) {
             DXGI_HDR_METADATA_HDR10 meta{};

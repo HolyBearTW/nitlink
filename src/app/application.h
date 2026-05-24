@@ -170,6 +170,17 @@ private:
     // the renderer-side checks.
     bool ShouldShowNoSignal();
 
+    // True when motion (FrameDiffer non-duplicate frame) or content
+    // (PlaceholderDetector classified Real) was observed inside
+    // kMotionRecencyWindowMs of `now`. Single source of truth consulted
+    // by the ConfirmedPlaceholder branch in the run loop AND by the
+    // early-exit at the top of ShouldShowNoSignal. Takes `now` as a
+    // parameter so both call sites can pass the same instant and the
+    // gate sees the exact same clock value as the surrounding logic.
+    // Does NOT consider m_hasEverReceivedFrame; callers wrap with that
+    // guard when the startup grace path matters.
+    bool RecentSourceActivity(std::chrono::steady_clock::time_point now) const;
+
     // Core components
     std::unique_ptr<Window>           m_window;
     std::unique_ptr<DX11Renderer>     m_renderer;
@@ -218,6 +229,12 @@ private:
     // can discover the feature toggles without hunting for F1.
     bool m_firstLaunch = false;
     std::atomic<bool> m_screenshotRequested{false};
+
+    // Path of the most recent screenshot saved by TakeScreenshot,
+    // surfaced to the WebView2 toast via PushSettingsState. One-shot:
+    // cleared after emission so the same toast does not re-fire on
+    // subsequent state pushes.
+    std::wstring m_lastScreenshotPath;
 
     // Auto-detected HDR source state. Populated initially by Initialize via
     // the Elgato HDR InfoFrame read; updated at runtime by ReconcileCaptureFormat
@@ -282,6 +299,60 @@ private:
     // Latched for log-once-on-transition into / out of the placeholder
     // branch in the run loop.
     bool m_inPlaceholderState = false;
+
+    // Motion-recency suppression for false-positive ConfirmedPlaceholder.
+    //
+    // PlaceholderDetector matches frames by 9-zone luma fingerprint, but
+    // some real content (Star Wars Jedi intro studio logo cards, other
+    // dark-centered-logo splash screens) produces fingerprints pixel-
+    // identical to the baked Elgato P010 placeholder for 2-3 seconds at
+    // a time. Without an additional discriminator the 15-frame streak
+    // completes and the no-signal logic false-triggers on a healthy
+    // source.
+    //
+    // Discriminator: was there REAL ACTIVITY (motion OR non-placeholder
+    // content) within kMotionRecencyWindowMs? A real disconnect is
+    // preceded by silence: game content stops AND motion stops, because
+    // the only thing arriving from the capture device is the static
+    // placeholder. A game intro logo card is preceded by movement (the
+    // prior animation) or by other non-placeholder content (the prior
+    // studio card transition).
+    //
+    // m_lastMotionTime  : last time FrameDiffer reported a non-duplicate
+    //                     frame (isNewFrame=true). Goes stale during a
+    //                     paused game (60Hz of pixel-identical dupes
+    //                     produces isNewFrame=false on every iteration).
+    // m_lastContentTime : last time PlaceholderDetector classified a
+    //                     frame as Real (not Candidate, not Confirmed).
+    //                     Stays fresh during a paused game because the
+    //                     paused frame still arrives at 60Hz and (unless
+    //                     the paused screen happens to match a baked
+    //                     placeholder fingerprint) is classified Real.
+    //
+    // The gate uses max(lastMotion, lastContent): either signal proves
+    // the HDMI source is still alive. ConfirmedPlaceholder is honored
+    // only when BOTH have gone stale for kMotionRecencyWindowMs.
+    //
+    // Both are initialized to steady_clock::now() at session start so
+    // the very first frames don't trip the gate as stale; see
+    // application.cpp Initialize().
+    std::chrono::steady_clock::time_point m_lastMotionTime{};
+    std::chrono::steady_clock::time_point m_lastContentTime{};
+
+    // Window the motion-recency gate considers "recent". 5000 ms after
+    // measurement: Star Wars Jedi's Lucasfilm logo card holds for ~2-3
+    // seconds at a time, and 2000 ms left the gate expiring mid-card,
+    // producing a brief "Signal: lost (reason=placeholder)" flash before
+    // the card transitioned off and gameplay resumed. 5000 ms comfortably
+    // covers any single static intro card a game is likely to display
+    // (Respawn, Lucasfilm, EA, Unreal Engine, etc. all hold for under
+    // 4 seconds individually) while still detecting a real HDMI unplug
+    // in 5-6 seconds (5s gate + 1s kPlaceholderGrace below in
+    // ShouldShowNoSignal). The placeholder is shown by Elgato firmware
+    // for many seconds during a handshake gap, so 6-second detection
+    // latency is invisible in practice and provides natural tolerance
+    // for momentary cable wiggles.
+    static constexpr int kMotionRecencyWindowMs = 5000;
 
     // Debug instrumentation: when Ctrl+F5 fires this flag is set; the next
     // successful frame's fingerprint is logged once and the flag clears.
