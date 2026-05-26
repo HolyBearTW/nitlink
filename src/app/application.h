@@ -7,6 +7,7 @@
 #include "capture/frame_buffer.h"
 #include "capture/frame_differ.h"
 #include "capture/hdr_source_poller.h"
+#include "capture/elgato_hdr_control.h"
 #include "capture/placeholder_detector.h"
 #include "input/hotkey_manager.h"
 #include "audio/audio_router.h"
@@ -47,6 +48,15 @@ public:
 private:
     void ProcessFrame();
     void UpdateTaskbarIcon(const std::wstring& iconPath);
+
+    // Compose and apply the Windows title bar text from the current
+    // detection state. Format: "NitLink - <source> [HDR]"  or
+    // "NitLink - <source> [SDR]"  when source identifier is known,
+    // plain "NitLink" otherwise. Called from Initialize after the 4K S
+    // vendor HID block populates m_detectedHdmiSource + m_sourceIsHDR10,
+    // and from ReconcileCaptureFormat after a force-reopen re-probe
+    // updates m_sourceIsHDR10.
+    void UpdateWindowTitle();
 
     // Push current config + live stats to the WebView2 settings UI so its
     // toggles/sliders/labels reflect reality. Called on open, on hotkey-
@@ -244,12 +254,50 @@ private:
     // the HDR10 shader path. When false, the pipeline stays on BGRA + SDR.
     bool m_sourceIsHDR10 = false;
 
-    // True when the Elgato HDR InfoFrame property GUID was readable at
-    // Initialize. Captured once and remembered so ReconcileCaptureFormat
-    // applies the same "trust the user's hdr_enabled config when detection
-    // is unavailable" fallback that Initialize used. The 4K Pro sets this
-    // to true; the 4K S sets it to false (no property GUID over USB).
+    // True when ANY direct HDR detection succeeded at Initialize:
+    //   - 4K Pro: IKsPropertySet HDR InfoFrame property GUID was readable
+    //   - 4K S:   vendor HID HDR Metadata probe (sub_cmd 0x13 refresh +
+    //             sub_cmd 0x09 read) returned a valid result
+    // Used by useP010 / wantP010 to decide whether to trust the direct
+    // detection vs fall back to the user's hdr_enabled config /
+    // source-ID heuristic.
     bool m_hdrDetectionAvailable = false;
+
+    // True when the connected Elgato device is a 4K S specifically (as
+    // opposed to a 4K Pro or any other model). Set in Initialize when
+    // Probe4KSHdrMetadata succeeds; that probe is 4K-S-specific (matches
+    // VID 0x0FD9 + PID 0x00AE/0x00AF), so probe.queryOk==true is a
+    // sufficient discriminator. Drives 4K-S-specific behavior:
+    //   1. wantP010 requires userWantsHDR on the 4K S (4K HDR is not
+    //      possible over USB; the user must explicitly opt in to HDR
+    //      at the cost of resolution).
+    //   2. Capture resolution is clamped to 1080p when wantP010 is true
+    //      (the card only publishes P010 at 1080p/720p; without the
+    //      clamp, P010 negotiation falls back to NV12 at 4K and the HDR
+    //      pipeline is lost).
+    // 4K Pro keeps the existing "P010 whenever source is HDR" logic via
+    // the IKsPropertySet path: it supports 4K P010 over PCIe and the
+    // shader handles SDR tonemap when userWantsHDR is false.
+    bool m_is4KS = false;
+
+    // Source resolution + fps read from the 4K Pro Elgato custom
+    // property set (props 210 + 208) after CaptureDevice::Open. Used
+    // by UpdateWindowTitle to surface the source's actual signal
+    // dimensions in the title bar (4K Pro path only; the 4K S exposes
+    // equivalent info via its vendor HID sub_cmd 0x00). detected ==
+    // false when the device isn't a 4K Pro or the post-Open read
+    // failed.
+    Source4KProMode m_source4KProMode{};
+
+    // Detected HDMI source identifier from the 4K S vendor HID. Populated
+    // once per app process by Detect4KSHdmiSource(). When the label
+    // matches a known HDR-capable console (Is4KSHdmiSourceHdrCapable
+    // returns true) AND the user has hdr_auto_from_source enabled in
+    // config, the useP010 pipeline decision treats the source as HDR
+    // even without direct HDR signal detection. Stored as a member so
+    // ReconcileCaptureFormat reuses the same source-ID without re-firing
+    // the (MCU-budget-costing) vendor HID query.
+    std::wstring m_detectedHdmiSource;
 
     // The capture device opened in Initialize, cached so ReconcileCaptureFormat
     // can re-Open the same device after a format-change teardown without
@@ -261,6 +309,16 @@ private:
     // Performance tracking
     double m_captureLatencyMs = 0.0;
     double m_renderLatencyMs = 0.0;
+
+    // App ingest: live card-driver-to-app-callback delivery time, computed
+    // each frame as arrivalWallNs - (frame.deviceTimestamp * 100) in ns
+    // since both share the QPC epoch on Windows. Replaces the 16+8 baked
+    // constants from the overlay's old estTotalLat formula. Stays at 0
+    // when the active capture driver doesn't populate
+    // MFSampleExtension_DeviceTimestamp.
+    double   m_mfDeliveryLatencyMs  = 0.0;
+    uint32_t m_mfDeliveryLogCounter = 0;   // periodic DebugView throttle
+
     uint32_t m_currentFps        = 0;   // HDMI signal rate (~60 healthy)
     uint32_t m_currentContentFps = 0;   // game unique-frame rate (from differ)
     uint64_t m_uniqueFrameCount  = 0;

@@ -15,13 +15,16 @@ public:
         uint32_t width  = 0;
         uint32_t height = 0;
         int64_t  timestamp = 0;
+        int64_t  arrivalWallNs = 0;     // steady_clock ns at MF callback
+        uint64_t deviceTimestamp = 0;   // MFSampleExtension_DeviceTimestamp (QPC 100ns)
     };
 
     FrameBuffer(uint32_t width, uint32_t height, uint32_t stride);
     ~FrameBuffer() = default;
 
     // Producer (capture thread) writes frames
-    void Write(const uint8_t* data, uint32_t size, int64_t timestamp);
+    void Write(const uint8_t* data, uint32_t size, int64_t timestamp,
+               int64_t arrivalWallNs = 0, uint64_t deviceTimestamp = 0);
 
     // Consumer (render thread) reads latest frame
     // Returns true if a new frame is available since last read
@@ -63,7 +66,9 @@ private:
                                     // (data.size() is the capacity, which is
                                     // sized for the worst-case format:
                                     // BGRA at 4 bytes/pixel)
-        int64_t timestamp = 0;
+        int64_t  timestamp = 0;
+        int64_t  arrivalWallNs = 0;
+        uint64_t deviceTimestamp = 0;
     };
 
     static constexpr int kNumBuffers = 3;

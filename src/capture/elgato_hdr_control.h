@@ -95,4 +95,30 @@ struct HDRSourceInfo {
 HDRSourceInfo ReadElgatoHDRSource(const std::wstring& deviceName,
                                   bool quiet = false);
 
+// Current source mode readout for the Elgato 4K Pro.
+//
+// Reads the source's negotiated resolution and frame rate from two
+// properties on the Elgato custom property set:
+//   Property 208 = current source frame rate (DWORD, fps)
+//   Property 210 = current source resolution (DWORD packed as two
+//                  little-endian 16-bit values: bytes 0..1 = height,
+//                  bytes 2..3 = width)
+//
+// Both properties populate only AFTER the capture filter has been
+// opened (MF media-type negotiation pushes the values into the
+// driver's source-state registers). Calling this before Open() returns
+// detected=false because the registers read as zero.
+//
+// Costs one DirectShow filter open + two IKsPropertySet Get() calls.
+// Safe to call from any thread that has COM apartment-init'd.
+//
+// On the 4K S (no IKsPropertySet GUID) returns detected=false.
+struct Source4KProMode {
+    bool     detected = false;
+    uint32_t width    = 0;
+    uint32_t height   = 0;
+    uint32_t fps      = 0;
+};
+Source4KProMode Detect4KProSourceMode(const std::wstring& deviceName);
+
 } // namespace NitLink

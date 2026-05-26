@@ -31,7 +31,8 @@ FrameBuffer::FrameBuffer(uint32_t width, uint32_t height, uint32_t stride)
     }
 }
 
-void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp)
+void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp,
+                         int64_t arrivalWallNs, uint64_t deviceTimestamp)
 {
     // Pick a free slot: anything that isn't the reader's slot or the
     // currently-fresh slot. With three buffers and at most two roles taken
@@ -54,6 +55,8 @@ void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp)
     buf.actualSize = copySize;     // remember the real frame length so the
                                     // reader doesn't grab the buffer capacity
     buf.timestamp = timestamp;
+    buf.arrivalWallNs = arrivalWallNs;
+    buf.deviceTimestamp = deviceTimestamp;
 
     // Hash a small sample of pixels for signal-loss detection. 64 points
     // spread across the frame are enough to catch any motion (real
@@ -138,6 +141,8 @@ bool FrameBuffer::Read(FrameData& outFrame)
     outFrame.width     = m_width;
     outFrame.height    = m_height;
     outFrame.timestamp = buf.timestamp;
+    outFrame.arrivalWallNs = buf.arrivalWallNs;
+    outFrame.deviceTimestamp = buf.deviceTimestamp;
     return true;
 }
 

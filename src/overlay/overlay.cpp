@@ -398,20 +398,26 @@ void Overlay::Render(const Stats& stats)
         return m_brushCrit.Get();
     };
 
-    // Estimated end-to-end latency:
-    //   ~16ms = MF pipeline buffering
-    //   ~8ms  = HDMI + card encode + PCIe
-    //   +GPU upload time
-    //   ~8ms  = present + scanout
-    // totalLatency was declared earlier (used to push into m_latencyHistory).
-    // Reuse it here for the latency display + thresholds.
-    float estTotalLat  = sig ? (16.0f + 8.0f + totalLatency + 8.0f) : 0.0f;
+    // App ingest: real, live, per-frame card-driver-to-app delivery time
+    // measured via MFSampleExtension_DeviceTimestamp (QPC 100ns) deltaed
+    // against arrivalWallNs (steady_clock ns). Both share the QPC epoch on
+    // Windows. Replaces the old estimated-end-to-end formula that baked
+    // ~16ms (MF buffering) + ~8ms (HDMI/card/PCIe) + ~8ms (present/scanout)
+    // as guesses; those constants were specific to one test rig and didn't
+    // generalize. The new value is what NitLink can measure directly,
+    // NOT the full photon-to-photon end-to-end (the source device and
+    // display panel are still invisible from inside the app).
+    //
+    // 0 means the driver doesn't populate the attribute (some non-Elgato
+    // cards). Negative values would only appear under clock skew between
+    // QPC and steady_clock; clamp them to 0 defensively.
+    const float appIngest = sig ? std::max(0.0f, (float)stats.appIngestMs) : 0.0f;
 
-    auto e2eBrush = [&]() -> ID2D1SolidColorBrush* {
+    auto appIngestBrush = [&]() -> ID2D1SolidColorBrush* {
         if (!sig) return m_brushText.Get();
-        if (estTotalLat <  45.0f) return m_brushGood.Get();
-        if (estTotalLat <= 80.0f) return m_brushWarn.Get();
-        return m_brushCrit.Get();
+        if (appIngest <  10.0f) return m_brushGood.Get();   // PCIe / fast paths
+        if (appIngest <= 25.0f) return m_brushWarn.Get();   // USB / busy systems
+        return m_brushCrit.Get();                            // something's wrong
     };
 
     // LEFT column: FRAME RATE
@@ -436,18 +442,18 @@ void Overlay::Render(const Stats& stats)
             m_textFormatUnit.Get(), ur, m_brushDim.Get());
     }
 
-    // RIGHT column: TOTAL LATENCY
+    // RIGHT column: APP INGEST
     {
         D2D1_RECT_F lr = D2D1::RectF(colMid + 4.0f,   metricY,
                                        panel.right - pad, metricY + 12.0f);
-        std::wstring lbl = L"TOTAL LATENCY";
+        std::wstring lbl = L"APP INGEST";
         m_d2dContext->DrawText(lbl.c_str(), (UINT32)lbl.size(),
             m_textFormatLabel.Get(), lr, m_brushDim.Get());
 
         std::wstring v;
         if (sig) {
             std::wstringstream ss;
-            ss << std::fixed << std::setprecision(0) << estTotalLat;
+            ss << std::fixed << std::setprecision(1) << appIngest;
             v = ss.str();
         } else {
             v = L"--";
@@ -455,7 +461,7 @@ void Overlay::Render(const Stats& stats)
         D2D1_RECT_F vr = D2D1::RectF(colMid + 4.0f,   metricY + 12.0f,
                                        panel.right - 38.0f, metricY + 48.0f);
         m_d2dContext->DrawText(v.c_str(), (UINT32)v.size(),
-            m_textFormatBig.Get(), vr, e2eBrush());
+            m_textFormatBig.Get(), vr, appIngestBrush());
 
         D2D1_RECT_F ur = D2D1::RectF(colMid + 48.0f,    metricY + 32.0f,
                                        panel.right - pad, metricY + 48.0f);
@@ -567,9 +573,9 @@ void Overlay::Render(const Stats& stats)
         // FPS sparkline: left half. Stroke color reflects current FPS.
         drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory, 70.0f, fpsBrush());
 
-        // Latency sparkline: right half. Build it dynamically from history.
-        // Stroke color reflects current end-to-end latency.
-        drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, e2eBrush());
+        // App ingest sparkline: right half. Built dynamically from history.
+        // Stroke color reflects current app ingest threshold band.
+        drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, appIngestBrush());
     }
 
     // ---- 6. Pipeline status strip (bottom 16px) ----------------------------

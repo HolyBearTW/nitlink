@@ -87,6 +87,16 @@ struct Config {
     // switches to FP16 backbuffer with scRGB colorspace.
     bool         hdrEnabled      = false;
 
+    // HDR auto-from-source: fallback heuristic when direct HDR signal
+    // detection is unavailable (HID error, MCU non-responsive, or a
+    // device family without a detection path). When the connected
+    // source identifier matches a known HDR-capable console (PS5,
+    // future Xbox Series X|S, Switch 2), default the pipeline to HDR
+    // even without a direct signal-state confirmation. User can still
+    // Alt+H to switch to SDR for the current session. Set to false to
+    // keep purely config-driven behavior (hdrEnabled alone decides).
+    bool         hdrAutoFromSource = true;
+
     // VRR present pacing.
     // When ON: Present is gated by the GPU frame differ. With Independent
     //   Flip + ALLOW_TEARING active (both set on the swap chain), the

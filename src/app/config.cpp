@@ -99,6 +99,7 @@ bool Config::Load(const std::string& path)
         if (key == "nis_scale_mode")  nisScaleMode = std::stoi(val);
         if (key == "nis_sharpness")   nisSharpness = std::stof(val);
         if (key == "hdr_enabled")     hdrEnabled   = ParseBool(val);
+        if (key == "hdr_auto_from_source") hdrAutoFromSource = ParseBool(val);
         if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
         if (key == "show_overlay")    showOverlay   = ParseBool(val);
@@ -266,7 +267,11 @@ bool Config::Save(const std::string& path)
     file << "nis_sharpness = "  << nisSharpness << "\n\n";
 
     file << "# HDR\n";
-    file << "hdr_enabled = " << (hdrEnabled ? "true" : "false") << "\n\n";
+    file << "hdr_enabled = " << (hdrEnabled ? "true" : "false") << "\n";
+    file << "# When true, auto-detect HDR pipeline based on detected HDMI source\n";
+    file << "# identifier on Elgato 4K S (e.g. PS5 -> assume HDR-capable, default to HDR).\n";
+    file << "# Set false to keep classic config-driven behavior (hdr_enabled alone decides).\n";
+    file << "hdr_auto_from_source = " << (hdrAutoFromSource ? "true" : "false") << "\n\n";
 
     file << "# VRR present pacing\n";
     file << "# When true, Present only fires on unique frames detected by the GPU\n";

@@ -312,4 +312,63 @@ HDRSourceInfo ReadElgatoHDRSource(const std::wstring& deviceName, bool quiet) {
     return info;
 }
 
+// ===========================================================================
+// Current source mode readout for the Elgato 4K Pro.
+//
+// Reads property 208 (source fps) and property 210 (source resolution
+// packed as height-LE16 + width-LE16) from the Elgato custom property
+// set. Both populate only after the capture filter has been opened.
+// ===========================================================================
+Source4KProMode Detect4KProSourceMode(const std::wstring& deviceName) {
+    Source4KProMode result;
+
+    HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool comOwnedHere = SUCCEEDED(comHr) && comHr != S_FALSE;
+
+    {
+        CComPtr<IBaseFilter> filter = FindDeviceFilter(deviceName, /*quiet=*/ true);
+        if (filter) {
+            CComPtr<IKsPropertySet> ps;
+            HRESULT hr = filter->QueryInterface(IID_PPV_ARGS(&ps));
+            if (SUCCEEDED(hr) && ps) {
+                DWORD fpsBuf = 0;
+                DWORD modeBuf = 0;
+                DWORD returned = 0;
+
+                HRESULT hrFps = ps->Get(
+                    kElgatoCustomPropertySet, 208,
+                    nullptr, 0, &fpsBuf, sizeof(fpsBuf), &returned);
+
+                HRESULT hrMode = ps->Get(
+                    kElgatoCustomPropertySet, 210,
+                    nullptr, 0, &modeBuf, sizeof(modeBuf), &returned);
+
+                if (SUCCEEDED(hrFps) && SUCCEEDED(hrMode) &&
+                    fpsBuf > 0 && modeBuf != 0) {
+                    // Property 210 packs height in the low 16 bits and
+                    // width in the high 16 bits, both little-endian.
+                    // Example at 4K: 70 08 00 0f -> height=0x0870=2160,
+                    // width=0x0F00=3840.
+                    result.detected = true;
+                    result.fps      = fpsBuf;
+                    result.height   = static_cast<uint32_t>(modeBuf & 0xFFFF);
+                    result.width    = static_cast<uint32_t>((modeBuf >> 16) & 0xFFFF);
+
+                    std::wstringstream ss;
+                    ss << L"Detect4KProSourceMode: source is "
+                       << result.width << L"x" << result.height
+                       << L" @ " << result.fps << L"fps";
+                    Log(ss.str());
+                }
+            }
+        }
+    }
+
+    if (comOwnedHere) {
+        CoUninitialize();
+    }
+    return result;
+}
+
+
 } // namespace NitLink

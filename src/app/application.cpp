@@ -225,21 +225,100 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Auto-detect may fail on some Elgato device classes (e.g. 4K S over
     // USB doesn't expose the property GUID the 4K Pro uses for this query).
     // When detection is unavailable, the user's hdrEnabled config preference
-    // is trusted instead: if HDR is enabled, the user probably wants HDR.
-    // P010 negotiation can still fail at the MF level, in which case the
-    // fallback path below catches it.
+    // is trusted instead. When hdr_auto_from_source is enabled in
+    // config and a known HDR-capable HDMI source is detected via the 4K S
+    // vendor HID (e.g. PlayStation 5), the source identity becomes the
+    // proxy for "user probably wants HDR". P010 negotiation can still fail
+    // at the MF level, in which case the fallback path below catches it.
     if (isElgato) {
         HDRSourceInfo srcInfo = ReadElgatoHDRSource(chosen.name);
         m_sourceIsHDR10        = srcInfo.isHDR10;
         m_hdrDetectionAvailable = srcInfo.propertyAccessible;
         if (srcInfo.propertyAccessible) {
+            // 4K Pro path: IKsPropertySet GUID supplied direct HDR state.
             AppLog(srcInfo.isHDR10
                 ? L"Initialize: source detected as HDR10 (PQ), will request P010 capture"
                 : L"Initialize: source detected as SDR, will use BGRA capture");
         } else {
-            AppLog(L"Initialize: HDR source detection unavailable, will use hdr_enabled config setting to decide");
+            // 4K S path: IKsPropertySet GUID is not supported. Fall
+            // through to the 4K S vendor HID flow below which provides
+            // both the source label and direct HDR signal state.
+            AppLog(L"Initialize: 4K Pro property GUID unavailable on this device; trying 4K S vendor HID path");
             m_sourceIsHDR10 = false;
         }
+
+        // 4K S vendor HID flow: source identifier + direct HDR signal
+        // state. Runs only when the 4K Pro property GUID was unavailable
+        // (4K S, and any other Elgato variant that lacks the GUID).
+        // On the 4K Pro the IKsPropertySet path above already settled
+        // m_sourceIsHDR10 and m_hdrDetectionAvailable, so this block
+        // is skipped.
+        //
+        //   1. Detect4KSHdmiSource: 2 HID ops, returns source label for
+        //                           window title and heuristic fallback.
+        //   2. Probe4KSHdrMetadata: 3 HID ops (SET 0x13 refresh +
+        //                           1.5s wait + QUERY 0x09 + GET),
+        //                           returns direct HDR signal-state
+        //                           truth from the MCU's HDR Metadata
+        //                           register.
+        //   3. Set4KSTonemap:       1 HID op, fires below.
+        //
+        // Total 6 HID transactions per process lifetime, with the
+        // probe's required 1.5s mid-sleep as built-in pacing between
+        // bursts. The 4K S firmware tolerates this op count when the
+        // pacing is preserved.
+        //
+        // When the probe succeeds, m_hdrDetectionAvailable is promoted
+        // to true (overriding the false set above by ReadElgatoHDRSource)
+        // and m_sourceIsHDR10 reflects probe.hdrActive. This bypasses
+        // the source-ID heuristic block further down and lets the
+        // signal-state probe drive useP010 directly.
+        //
+        // When the probe fails (HID error, MCU non-responsive), the
+        // source-ID heuristic remains the fallback.
+        if (!srcInfo.propertyAccessible) {
+            static bool s_4ksVendorHidFired = false;
+            if (!s_4ksVendorHidFired) {
+                s_4ksVendorHidFired = true;
+
+                const HdmiSourceInfo info = Detect4KSHdmiSource();
+                if (info.detected) {
+                    m_detectedHdmiSource = info.label;
+                    AppLog(L"Initialize: Detected HDMI source: " + info.label);
+                } else {
+                    AppLog(L"Initialize: HDMI source not identified via vendor HID");
+                }
+
+                const HdrMetadataProbeResult probe = Probe4KSHdrMetadata();
+                if (probe.queryOk) {
+                    m_sourceIsHDR10         = probe.hdrActive;
+                    m_hdrDetectionAvailable = true;
+                    // Probe success is a 4K-S-specific signal: the
+                    // probe matches VID 0x0FD9 + PID 0x00AE/0x00AF only.
+                    // Used below to gate the 4K-S-specific resolution
+                    // clamp and the userWantsHDR-gated wantP010 logic.
+                    m_is4KS = true;
+                    std::wstringstream ss;
+                    ss << L"Initialize: 4K S vendor HID HDR probe -> "
+                       << (probe.hdrActive ? L"HDR ACTIVE" : L"SDR")
+                       << L" (byte[1]=0x"
+                       << std::hex << std::setw(2) << std::setfill(L'0')
+                       << static_cast<unsigned>(probe.raw[1])
+                       << L", EOTF=0x"
+                       << std::setw(2) << std::setfill(L'0')
+                       << static_cast<unsigned>(probe.eotf)
+                       << L")";
+                    AppLog(ss.str());
+                } else {
+                    AppLog(L"Initialize: 4K S vendor HID HDR probe unavailable; falling back to source-ID heuristic / hdr_enabled config");
+                }
+            }
+        }
+
+        // Note: title bar update is deferred until AFTER CaptureDevice::Open
+        // below. UpdateWindowTitle reads the actual negotiated subtype to
+        // decide between [HDR] and [SDR], so it has to wait for format
+        // negotiation. See the UpdateWindowTitle call further down.
     } else {
         // Non-Elgato source has no InfoFrame property. Default to SDR
         // detection state; the user's hdrEnabled config can still
@@ -282,15 +361,65 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // 4K Pro / 4K S still get HDR through the normal logic; the gate
     // only changes behavior on non-Elgato selections.
     const bool userWantsHDR = m_config && m_config->hdrEnabled;
-    const bool useP010 = isElgato &&
-                         (m_sourceIsHDR10 ||
-                          (userWantsHDR && !m_hdrDetectionAvailable));
+
+    // Source-ID auto-tonemap heuristic: when direct HDR signal detection
+    // isn't available AND the connected source is identified as a known
+    // HDR-capable console AND the user has hdr_auto_from_source enabled
+    // (default true), default the pipeline to HDR. Overrides hdrEnabled=
+    // false for the session. User can Alt+H to switch back to SDR.
+    // The 4K Pro path (m_hdrDetectionAvailable=true) is NOT affected by
+    // this heuristic; it always uses its direct HDR property readout.
+    const bool sourceImpliesHDR =
+        isElgato && !m_hdrDetectionAvailable &&
+        m_config && m_config->hdrAutoFromSource &&
+        Is4KSHdmiSourceHdrCapable(m_detectedHdmiSource);
+
+    // useP010 selection rules (4K S vs 4K Pro split):
+    //
+    // 4K S (m_is4KS == true): the card cannot deliver 4K HDR; P010 is
+    //   only published at 1080p/720p. HDR pipeline therefore costs the
+    //   user resolution (4K override gets clamped to 1080p below). So
+    //   the user must explicitly opt in via hdrEnabled (Alt+H or config).
+    //   Source-being-HDR alone is not enough: when source is HDR but
+    //   the user has not asked for HDR rendering, stay on NV12 at the
+    //   user's preferred resolution (4K is fine) and let the card's
+    //   tonemap (Set4KSTonemap ON below) handle the HDR-to-SDR
+    //   conversion.
+    //
+    // 4K Pro (m_hdrDetectionAvailable && !m_is4KS): IKsPropertySet path
+    //   exposed direct HDR detection AND supports 4K P010 over PCIe.
+    //   P010 whenever the source is HDR (regardless of userWantsHDR);
+    //   the shader handles the SDR-from-HDR tonemap when userWantsHDR
+    //   is false. No resolution clamp needed.
+    //
+    // No direct detection (non-Elgato, or 4K S with a failed probe):
+    //   fall back to the source-ID heuristic combined with the user's
+    //   hdr_enabled config.
+    bool useP010;
+    if (m_is4KS) {
+        useP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
+    } else {
+        useP010 = isElgato &&
+                  (m_sourceIsHDR10 ||
+                   sourceImpliesHDR ||
+                   (userWantsHDR && !m_hdrDetectionAvailable));
+    }
     if (useP010) {
-        AppLog(L"Initialize: P010 HDR10 capture pipeline selected");
+        if (m_is4KS) {
+            AppLog(L"Initialize: P010 HDR10 capture pipeline selected (4K S + source HDR + user wants HDR; resolution will be clamped to 1080p)");
+        } else if (sourceImpliesHDR && !userWantsHDR) {
+            AppLog(L"Initialize: P010 HDR10 capture pipeline selected (auto-enabled from detected source: " +
+                   m_detectedHdmiSource +
+                   L" via hdr_auto_from_source heuristic; press Alt+H for SDR)");
+        } else {
+            AppLog(L"Initialize: P010 HDR10 capture pipeline selected");
+        }
         m_captureDevice->RequestP010(true);
     } else {
         if (userWantsHDR && !isElgato) {
             AppLog(L"Initialize: hdr_enabled is true but the selected device is not Elgato; forcing SDR capture (P010 path is only validated for Elgato hardware)");
+        } else if (m_is4KS && m_sourceIsHDR10 && !userWantsHDR) {
+            AppLog(L"Initialize: 4K S source is HDR but user prefers SDR (hdrEnabled=false); using card-side tonemap to deliver clean SDR at full resolution");
         }
         AppLog(L"Initialize: SDR BGRA capture pipeline selected");
     }
@@ -310,6 +439,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // interpreted as 100-nit-paper-white SDR). Always pair the two.
     // Skipped on non-Elgato devices since the HID protocol is
     // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF).
+    // Detect4KSHdmiSource already fired earlier in Initialize (before
+    // the useP010 decision so the source-ID heuristic can feed into
+    // it); no second call here.
     if (isElgato && Set4KSTonemap(/*enableTonemap=*/ !useP010)) {
         AppLog(useP010
             ? L"Initialize: 4K S HID tonemap OFF sent for raw HDR/P010"
@@ -333,6 +465,29 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             ov.fps    = cv.fps;
             ov.format = cv.format;
         }
+
+        // 4K S HDR resolution clamp: when the HDR pipeline is selected
+        // on the 4K S, override any >1080p resolution preference down
+        // to 1920x1080 so P010 negotiation actually succeeds. The 4K S
+        // only publishes P010 at 1080p/720p over USB; without this
+        // clamp the user's 4K override would force P010 to fall back
+        // to NV12 inside CaptureDevice::Open, defeating the HDR
+        // pipeline. The user's saved config is NOT modified: when they
+        // Alt+H back to SDR, useP010 goes false, this branch is skipped,
+        // and the next reconcile reopens at their preferred 4K NV12
+        // (with card-side tonemap engaged for HDR sources).
+        if (m_is4KS && useP010 && ov.height > 1080) {
+            AppLog(L"Initialize: 4K S HDR pipeline, clamping capture override "
+                   L"from " + std::to_wstring(ov.width) + L"x" +
+                   std::to_wstring(ov.height) + L" down to 1920x1080 "
+                   L"(4K S publishes P010 only at 1080p/720p)");
+            ov.width  = 1920;
+            ov.height = 1080;
+            // fps stays as requested (60fps works at 1080p P010). Format
+            // stays as requested too ("" = Auto picks P010 first via the
+            // attemptsP010 list when m_requestP010 is true).
+        }
+
         m_captureDevice->SetFormatOverride(ov);
     }
 
@@ -362,6 +517,16 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
     AppLog(L"Initialize: capture device opened");
 
+    // 4K Pro source-mode readout. Reads the connected HDMI source's
+    // resolution + fps from the Elgato custom property set (props 210
+    // and 208), which populate only after the capture filter has been
+    // opened. Stores the result in m_source4KProMode for later use by
+    // the window-title composer. Silent no-op on devices without the
+    // Elgato IKsPropertySet GUID (4K S and non-Elgato sources).
+    if (isElgato && m_hdrDetectionAvailable && !m_is4KS) {
+        m_source4KProMode = Detect4KProSourceMode(chosen.name);
+    }
+
     // Log every native format this device exposes. Pure diagnostic: does
     // NOT change the running pipeline. Useful when triaging: confirms
     // whether the Elgato publishes P010 (10-bit BT.2020 PQ) for the HDR10
@@ -369,6 +534,44 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_captureDevice->LogAvailableFormats();
 
     auto format = m_captureDevice->GetOutputFormat();
+
+    // Post-Open tonemap reconciliation. CaptureDevice::Open() can fall
+    // back from P010 to NV12 within a single call when the requested
+    // resolution doesn't publish P010 (most commonly the 4K S manual
+    // override at 3840x2160, where P010 is only available at
+    // 1080p/720p). Open() returns success in that case, so the outer
+    // retry-with-BGRA block above doesn't fire, and the Set4KSTonemap
+    // OFF call earlier (sent because useP010 was true) is now
+    // misaligned with the actual NV12 capture: the card keeps passing
+    // raw BT.2020 PQ codes packed into the 8-bit NV12 container, which
+    // produces a washed picture in SDR rendering AND a near-black
+    // picture in HDR rendering (the SDR-shaped 8-bit codes interpreted
+    // as PQ light up at near-zero nits).
+    //
+    // Detect the fallback by comparing requested vs actual subtype.
+    // When P010 was requested but NV12 (or any non-P010) was
+    // negotiated, flip the 4K S tonemap to ON so the card converts
+    // the HDR source to clean SDR before delivering NV12. The shader
+    // path then renders correctly regardless of Alt+H state.
+    if (isElgato && useP010) {
+        const bool actualIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
+        if (!actualIsP010) {
+            if (Set4KSTonemap(/*enableTonemap=*/ true)) {
+                AppLog(L"Initialize: P010 requested but Open negotiated a non-HDR "
+                       L"format (likely 4K manual override; 4K S only publishes "
+                       L"P010 at 1080p/720p); flipped 4K S tonemap ON so NV12 "
+                       L"frames carry clean SDR instead of raw HDR codes");
+            }
+        }
+    }
+
+    // Now safe to update the title: source identifier and HDR detection
+    // were settled by the 4K S vendor HID block above, AND the actual
+    // capture format is known (post-Open). UpdateWindowTitle reads
+    // GetOutputFormat().subtype to distinguish [HDR] (P010 negotiated)
+    // from [SDR] (NV12 negotiated, e.g. 4K override fallback).
+    UpdateWindowTitle();
+
     m_frameBuffer = std::make_unique<FrameBuffer>(format.width, format.height, format.stride);
     AppLog(L"Initialize: frame buffer created");
 
@@ -866,6 +1069,27 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 m_config->hdrEnabled = !m_config->hdrEnabled;
                 AppLog(m_config->hdrEnabled ? L"HDR ON (ALT+H)" : L"HDR OFF (ALT+H)");
             }
+            // Refresh the window title so the [HDR]/[SDR] suffix
+            // tracks the user's preference. On the 4K S, Reconcile
+            // also fires a format swap which calls UpdateWindowTitle
+            // again post-Open; on the 4K Pro, capture stays P010 and
+            // Reconcile is a no-op, so this is the only place the
+            // title gets updated on Alt+H. UpdateWindowTitle is cheap
+            // and idempotent (SetWindowTextW with the same string is
+            // a no-op), so calling here on both paths is safe.
+            UpdateWindowTitle();
+            // No source-state re-probe here: the probe's 1.5s MCU
+            // re-parse wait would block this main-thread hotkey handler
+            // and stall the render loop (contentFps drops to 0 and
+            // dropped-frame count spikes during the probe). Source HDR
+            // state changes (PS5 HDR toggled while NitLink is open) are
+            // handled automatically via ReconcileCaptureFormat's
+            // force-reopen path: the MF reader chokes on the media-type
+            // change underneath it, the capture worker exits and sets
+            // the needs-reopen flag, and the next render-loop iteration
+            // reconciles with force=true, which re-probes and updates
+            // the title bar. Alt+H here only flips the user's
+            // hdrEnabled preference.
         });
     // Ctrl+F4: HDR color-fidelity diagnostic overlay. Draws calibrated
     // reference patches over the bottom of the screen with KNOWN scRGB
@@ -934,8 +1158,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(L"Initialize: HDR source poller skipped (property unsupported on this device)");
     }
 
-    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp) {
-        if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp);
+    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
+                                          int64_t arrivalWallNs, uint64_t deviceTimestamp) {
+        if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
     AppLog(L"Initialize: capture started, entering run loop");
 
@@ -1156,6 +1381,28 @@ void Application::Run()
                 m_renderer->UpdateCaptureTexture(frame.data, frame.size, frame.width, frame.height);
                 auto captureEnd = Clock::now();
                 m_captureLatencyMs = std::chrono::duration<double, std::milli>(captureEnd - captureStart).count();
+
+                // App ingest: real card-driver-to-app delivery time.
+                // MFSampleExtension_DeviceTimestamp is in QPC 100ns units and
+                // shares the QPC epoch with steady_clock on Windows, so the
+                // delta against arrivalWallNs is the actual delivery latency.
+                // Replaces the 16+8 baked constants from the old HUD formula.
+                // If the driver doesn't populate the attribute,
+                // deviceTimestamp is 0 and the reported latency is also
+                // 0 (rather than a garbage huge-negative subtraction).
+                if (frame.deviceTimestamp != 0) {
+                    const int64_t deviceTimestampNs = (int64_t)frame.deviceTimestamp * 100;
+                    const int64_t deliveryDeltaNs   = frame.arrivalWallNs - deviceTimestampNs;
+                    m_mfDeliveryLatencyMs = deliveryDeltaNs / 1'000'000.0;
+                } else {
+                    m_mfDeliveryLatencyMs = 0.0;
+                }
+                // Periodic visibility: log every ~60 real frames (~1s @60fps)
+                // without spamming.
+                if ((m_mfDeliveryLogCounter++ % 60) == 0) {
+                    AppLog(L"App ingest: " + std::to_wstring(m_mfDeliveryLatencyMs) + L" ms");
+                }
+
                 m_lastGoodFrameTime    = std::chrono::steady_clock::now();
                 // Motion-recency gate: this frame is non-placeholder content
                 // arriving from the capture device, so bump the content
@@ -1509,6 +1756,7 @@ void Application::Run()
                 Overlay::Stats stats{};
                 stats.captureLatencyMs = m_captureLatencyMs;
                 stats.renderLatencyMs  = m_renderLatencyMs;
+                stats.appIngestMs      = m_mfDeliveryLatencyMs;
                 // Content fps comes from the frame differ (detects unique
                 // frames). When the scene is static the differ correctly
                 // reports 0, but a "0 fps" reading is misleading because
@@ -1660,6 +1908,7 @@ void Application::Run()
             Overlay::Stats stats{};
             stats.captureLatencyMs = m_captureLatencyMs;
             stats.renderLatencyMs  = m_renderLatencyMs;
+            stats.appIngestMs      = m_mfDeliveryLatencyMs;
             // Prefer the real game framerate (from FrameDiffer) over the
             // HDMI signal rate. They diverge for sub-60fps games: HDMI
             // duplicates frames at the signal level, so a 30fps game still
@@ -2058,13 +2307,51 @@ bool Application::ReconcileCaptureFormat(bool force)
     const bool isElgato = IsElgatoDevice(m_currentDeviceInfo.name);
 
     if (force && isElgato && m_hdrDetectionAvailable) {
+        bool titleDirty = false;
+
+        // Try the 4K Pro IKsPropertySet path first. Cheap (no HID
+        // transactions, just a property GUID call). Returns
+        // propertyAccessible=false on the 4K S, which falls through to
+        // the vendor HID probe below.
         HDRSourceInfo srcInfo = ReadElgatoHDRSource(m_currentDeviceInfo.name);
-        if (srcInfo.propertyAccessible && srcInfo.isHDR10 != m_sourceIsHDR10) {
-            AppLog(srcInfo.isHDR10
-                ? L"Reconcile force-reopen: source InfoFrame re-read says HDR10 (was SDR)"
-                : L"Reconcile force-reopen: source InfoFrame re-read says SDR (was HDR10)");
-            m_sourceIsHDR10 = srcInfo.isHDR10;
+        if (srcInfo.propertyAccessible) {
+            if (srcInfo.isHDR10 != m_sourceIsHDR10) {
+                AppLog(srcInfo.isHDR10
+                    ? L"Reconcile force-reopen: source InfoFrame re-read says HDR10 (was SDR)"
+                    : L"Reconcile force-reopen: source InfoFrame re-read says SDR (was HDR10)");
+                m_sourceIsHDR10 = srcInfo.isHDR10;
+                titleDirty = true;
+            }
+        } else {
+            // 4K S path: re-probe via vendor HID. Costs 3 HID
+            // transactions plus a 1.5s wall-clock wait on the MCU
+            // re-parse. Per-toggle this is comfortably within the
+            // firmware envelope. Rapid repeated force-reopens within
+            // a single USB session can push the cumulative op count
+            // past the fragility ceiling, but the 1.5s mid-probe wait
+            // provides natural pacing between bursts. If MCU stalls
+            // become reproducible from this path, gate by a
+            // last-successful-probe timestamp throttle.
+            const HdrMetadataProbeResult probe = Probe4KSHdrMetadata();
+            if (probe.queryOk && probe.hdrActive != m_sourceIsHDR10) {
+                AppLog(probe.hdrActive
+                    ? L"Reconcile force-reopen: 4K S vendor HID probe says HDR ACTIVE (was SDR)"
+                    : L"Reconcile force-reopen: 4K S vendor HID probe says SDR (was HDR ACTIVE)");
+                m_sourceIsHDR10 = probe.hdrActive;
+                titleDirty = true;
+            } else if (probe.queryOk) {
+                AppLog(L"Reconcile force-reopen: 4K S vendor HID probe confirms current HDR state (no change)");
+            } else {
+                AppLog(L"Reconcile force-reopen: 4K S vendor HID probe failed; keeping cached HDR state");
+            }
         }
+
+        // (Title update happens later, after the post-Open format check
+        // settles the actual capture subtype. titleDirty above is purely
+        // informational at this point: the source-state change is
+        // already in m_sourceIsHDR10, and the title write reads from
+        // the soon-to-be-negotiated capture format anyway.)
+        (void)titleDirty;
     }
 
     // Capture format selection: P010 whenever the source is HDR10, regardless
@@ -2094,9 +2381,20 @@ bool Application::ReconcileCaptureFormat(bool force)
     // any cached HDR detection state. See the equivalent gate in
     // Initialize for the full rationale.
     const bool userWantsHDR = m_config->hdrEnabled;
-    const bool wantP010     = isElgato &&
-                              (m_sourceIsHDR10 ||
-                               (userWantsHDR && !m_hdrDetectionAvailable));
+    // Same 4K S vs 4K Pro split as Initialize:
+    //   4K S: wantP010 only when source HDR AND user opts in (resolution
+    //         clamp to 1080p is the trade-off; opting out keeps 4K NV12
+    //         with card-side tonemap).
+    //   4K Pro / non-Elgato detection: existing logic (P010 whenever
+    //         source HDR, shader handles SDR tonemap when user wants SDR).
+    bool wantP010;
+    if (m_is4KS) {
+        wantP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
+    } else {
+        wantP010 = isElgato &&
+                   (m_sourceIsHDR10 ||
+                    (userWantsHDR && !m_hdrDetectionAvailable));
+    }
     const bool isP010       = m_captureDevice->IsP010Requested();
 
     if (wantP010 == isP010 && !force) {
@@ -2214,6 +2512,23 @@ bool Application::ReconcileCaptureFormat(bool force)
             ov.fps    = cv.fps;
             ov.format = cv.format;
         }
+
+        // 4K S HDR resolution clamp: same rule as Initialize. When
+        // wantP010 is true on the 4K S, clamp >1080p down to 1080p so
+        // P010 negotiation succeeds. When wantP010 is false (user just
+        // toggled Alt+H to SDR or source went SDR), this branch is
+        // skipped and the user's saved 4K override applies as normal.
+        // The Reconcile cadence (every render-loop iteration) means
+        // Alt+H toggles propagate here within one frame: SDR<->HDR
+        // toggle becomes a capture-format-and-resolution swap on 4K S.
+        if (m_is4KS && wantP010 && ov.height > 1080) {
+            AppLog(L"Reconcile: 4K S HDR pipeline, clamping capture override "
+                   L"from " + std::to_wstring(ov.width) + L"x" +
+                   std::to_wstring(ov.height) + L" down to 1920x1080");
+            ov.width  = 1920;
+            ov.height = 1080;
+        }
+
         m_captureDevice->SetFormatOverride(ov);
     }
 
@@ -2254,6 +2569,31 @@ bool Application::ReconcileCaptureFormat(bool force)
     // the renderer's row-order and range hints (driver flips between paths
     // can change either), and restart the capture worker.
     auto format = m_captureDevice->GetOutputFormat();
+
+    // Same post-Open tonemap reconciliation as Initialize. If wantP010
+    // was true but Open negotiated a non-P010 format (4K manual override
+    // path inside Open's attempts loop), the 4K S tonemap is misaligned
+    // (set OFF earlier for the P010 attempt, but capture is now NV12).
+    // Flip tonemap to ON so NV12 frames carry clean SDR. See Initialize
+    // for the long-form rationale.
+    if (isElgato && wantP010) {
+        const bool actualIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
+        if (!actualIsP010) {
+            if (Set4KSTonemap(/*enableTonemap=*/ true)) {
+                AppLog(L"Reconcile: wantP010=true but Open negotiated a non-HDR "
+                       L"format; flipped 4K S tonemap ON for clean SDR NV12");
+            }
+        }
+    }
+
+    // Title bar may need updating: if the source HDR state changed (the
+    // earlier force-reopen re-probe already set m_sourceIsHDR10) OR if
+    // the negotiated capture format changed (the [HDR]/[SDR] suffix is
+    // derived from format.subtype). Always call here; UpdateWindowTitle
+    // is cheap (no HID ops) and idempotent (SetWindowTextW with the
+    // same string is a no-op).
+    UpdateWindowTitle();
+
     m_frameBuffer = std::make_unique<FrameBuffer>(format.width, format.height, format.stride);
 
     // Reset the frame differ's per-stream state. Its m_prevTex still holds
@@ -2321,8 +2661,9 @@ bool Application::ReconcileCaptureFormat(bool force)
         }
     }
 
-    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp) {
-        if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp);
+    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
+                                          int64_t arrivalWallNs, uint64_t deviceTimestamp) {
+        if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
 
     m_currentDeviceInfo = deviceToOpen;
@@ -2786,6 +3127,87 @@ void Application::TakeScreenshot()
 void Application::UpdateTaskbarIcon(const std::wstring& iconPath)
 {
     m_window->SetIcon(iconPath);
+}
+
+// Compose the title bar string from current state.
+//
+//   No source detected, no HDR    -> "NitLink"
+//   detection
+//   Source detected, no HDR       -> "NitLink - PlayStation 5"
+//   detection
+//   Source detected, HDR          -> "NitLink - PlayStation 5 [HDR]"
+//   detection, capture is P010    (real HDR pipeline)
+//   Source detected, HDR          -> "NitLink - PlayStation 5 [SDR]"
+//   detection, capture is NV12    (4K S 4K-override fallback: source
+//                                  may be HDR but card delivers SDR)
+//
+// The "[HDR]" / "[SDR]" suffix reflects the ACTUAL capture format (the
+// negotiated MF subtype), not the upstream source HDR state. Source can
+// be HDR while capture is NV12 (4K S manual override at 3840x2160 forces
+// NV12 because P010 is only published at 1080p/720p): in that case the
+// user sees an SDR-tonemapped picture, so "[SDR]" is the honest label.
+// Showing "[HDR]" when capture is actually NV12 would be misleading;
+// the user pressing Alt+H expecting HDR would see the renderer mode
+// flip but the picture stay SDR-shaped.
+//
+// Suffix is only added when m_hdrDetectionAvailable is true (i.e. the
+// 4K Pro property GUID or the 4K S vendor HID probe returned a
+// definite answer). Without detection, the suffix is omitted to avoid
+// the misleading implication that "[SDR]" means "confirmed SDR" when
+// it actually means "detection unavailable".
+void Application::UpdateWindowTitle()
+{
+    if (!m_window) return;
+
+    std::wstring title = L"NitLink";
+
+    // Source identifier segment. Currently populated on the 4K S path
+    // (Detect4KSHdmiSource decodes the HDMI Source Product Descriptor
+    // InfoFrame). Empty on the 4K Pro until a source-identifier
+    // mechanism is found on that device.
+    if (!m_detectedHdmiSource.empty()) {
+        title += L" - ";
+        title += m_detectedHdmiSource;
+    }
+
+    // Source resolution + fps segment. Currently populated on the 4K
+    // Pro path (Detect4KProSourceMode reads the Elgato custom property
+    // set's props 210 + 208 post-Open). Skipped on the 4K S because
+    // the source identifier above already gives the user the device
+    // context they need.
+    if (m_source4KProMode.detected) {
+        std::wstringstream ss;
+        ss << L" - " << m_source4KProMode.width << L"x"
+           << m_source4KProMode.height << L" @ "
+           << m_source4KProMode.fps << L"Hz";
+        title += ss.str();
+    }
+
+    // HDR/SDR suffix. Reflects the EFFECTIVE display mode (what the
+    // user actually sees on screen): [HDR] when the source is sending
+    // HDR signal AND the user has HDR rendering enabled. Both gates
+    // matter:
+    //   source HDR + hdrEnabled    -> renderer outputs HDR10 PQ          -> [HDR]
+    //   source HDR + !hdrEnabled   -> shader tonemaps HDR to SDR          -> [SDR]
+    //   source SDR + hdrEnabled    -> SDR data through HDR pipeline       -> [SDR]
+    //   source SDR + !hdrEnabled   -> SDR everything                      -> [SDR]
+    //
+    // On the 4K S, hdrEnabled drives the capture format swap (P010 vs
+    // NV12) via the wantP010 formula, so this also matches the actual
+    // capture format. On the 4K Pro, capture stays P010 whenever
+    // source is HDR (the shader handles tonemap when hdrEnabled is
+    // false), so the title only flips when the user toggles Alt+H,
+    // matching what they perceive.
+    //
+    // Suffix only appears when direct HDR detection is available, to
+    // avoid the misleading implication that an absent suffix means SDR.
+    if (m_hdrDetectionAvailable) {
+        const bool effectiveHDR = m_sourceIsHDR10 &&
+                                  m_config && m_config->hdrEnabled;
+        title += effectiveHDR ? L" [HDR]" : L" [SDR]";
+    }
+
+    m_window->SetTitle(title);
 }
 
 } // namespace NitLink

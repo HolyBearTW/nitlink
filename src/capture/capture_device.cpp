@@ -2,7 +2,10 @@
 #include <mferror.h>
 #include <debugapi.h>
 #include <sstream>
+#include <iomanip>
 #include <chrono>
+#include <cstdio>
+#include <cstring>
 
 namespace NitLink {
 
@@ -71,6 +74,7 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         DebugLog(L"Failed to activate device source");
         return false;
     }
+
 
     // Find the best native format the device offers (MF can convert if needed)
     if (!NegotiateFormat(m_source.Get())) {
@@ -534,8 +538,8 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
         // The 4K Pro publishes P010 at 4K, 1080p, 720p, so it picks 4K@60
         // as before: no behavior change there.
         //
-        // README §Limitations documents this: "Elgato 4K S: 1080p HDR or
-        // 4K SDR, not both."
+        // README's "Known limitations" section documents this: "Elgato 4K S:
+        // 1080p HDR or 4K SDR, not both."
         for (DWORD t = 0; t < typeCount; t++) {
             ComPtr<IMFMediaType> type;
             handler->GetMediaTypeByIndex(t, &type);
@@ -784,6 +788,7 @@ void CaptureDevice::StopCapture()
 void CaptureDevice::CaptureLoop()
 {
     bool loggedFirstFrame = false;
+    bool probedDeviceTimestamp = false;
 
     // Retry budget for transient ReadSample failures. PS5 console transitions
     // (boot logo, source switch, SDR<->HDR boundary, dashboard->game launch)
@@ -873,6 +878,7 @@ void CaptureDevice::CaptureLoop()
         if (flags & MF_SOURCE_READERF_STREAMTICK) continue;
         if (!sample) continue;
 
+
         ComPtr<IMFMediaBuffer> buffer;
         hr = sample->ConvertToContiguousBuffer(&buffer);
         if (FAILED(hr)) continue;
@@ -891,8 +897,31 @@ void CaptureDevice::CaptureLoop()
                 loggedFirstFrame = true;
             }
 
+            // Read the device hardware timestamp on every sample. Per Microsoft
+            // docs MFSampleExtension_DeviceTimestamp is in QPC 100ns units which
+            // shares an epoch with steady_clock on Windows, so it is
+            // directly comparable to arrivalWallNs for real card-to-app
+            // delivery latency.
+            // If the driver doesn't populate it (some non-Elgato cards), the
+            // value stays 0 and the consumer side treats that as "unavailable".
+            UINT64 deviceTs = 0;
+            HRESULT dtHr = sample->GetUINT64(MFSampleExtension_DeviceTimestamp, &deviceTs);
+            if (!probedDeviceTimestamp) {
+                probedDeviceTimestamp = true;
+                std::wstringstream ss;
+                if (SUCCEEDED(dtHr)) {
+                    ss << L"DeviceTimestamp: SUPPORTED (first value=" << deviceTs << L" 100ns ticks)";
+                } else {
+                    ss << L"DeviceTimestamp: NOT SUPPORTED (hr=0x" << std::hex << dtHr
+                       << L"); MF delivery latency will be unavailable on this device";
+                }
+                DebugLog(ss.str());
+            }
+
             if (m_callback) {
-                m_callback(rawData, currentLen, timestamp);
+                const int64_t arrivalWallNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                m_callback(rawData, currentLen, timestamp, arrivalWallNs, deviceTs);
             }
             buffer->Unlock();
         }

@@ -18,6 +18,12 @@ public:
     struct Stats {
         double       captureLatencyMs = 0;
         double       renderLatencyMs  = 0;
+        // App ingest: real card-to-app delivery time, measured via
+        // MFSampleExtension_DeviceTimestamp. Replaces the 16+8 baked
+        // constants the older HUD formula added into the displayed
+        // total. 0 means the device driver doesn't populate the
+        // attribute (unavailable).
+        double       appIngestMs      = 0;
         uint32_t     fps              = 0;   // game content frames per second
         uint32_t     captureWidth     = 0;
         uint32_t     captureHeight    = 0;

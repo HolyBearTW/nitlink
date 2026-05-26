@@ -61,8 +61,11 @@ struct AvailableFormat {
     bool     interlaced = false;
 };
 
-// Callback: raw frame data, size in bytes, presentation timestamp (100ns units)
-using FrameCallback = std::function<void(const uint8_t*, uint32_t, int64_t)>;
+// Callback: raw frame data, size in bytes, presentation timestamp (100ns units),
+// arrival wall-clock (steady_clock nanoseconds, captured when MF handed the frame),
+// device hardware timestamp (MFSampleExtension_DeviceTimestamp, QPC 100ns units;
+// 0 if the driver does not populate the attribute).
+using FrameCallback = std::function<void(const uint8_t*, uint32_t, int64_t, int64_t, uint64_t)>;
 
 class CaptureDevice {
 public:
