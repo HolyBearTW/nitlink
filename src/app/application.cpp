@@ -528,6 +528,14 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         m_source4KProMode = Detect4KProSourceMode(chosen.name);
     }
 
+    // 4K X source mode uses the UVC XU command mailbox. The destructive probe
+    // that disturbed the card is gone; Detect4KXSourceMode issues exact-sized
+    // request/response transfers whose writes go only to the XU command port,
+    // never the HID/processing path. The XU read needs a LIVE signal, so it
+    // does not run at init: the device is flagged by name and Run() fires the
+    // read on each no-signal to signal (re)lock edge.
+    m_is4KX = isElgato && (chosen.name.find(L"4K X") != std::wstring::npos);
+
     // Log every native format this device exposes. Pure diagnostic: does
     // NOT change the running pipeline. Useful when triaging: confirms
     // whether the Elgato publishes P010 (10-bit BT.2020 PQ) for the HDR10
@@ -1492,6 +1500,15 @@ void Application::Run()
         // both the HDR and SDR no-signal trigger sites.
         const bool showNoSignalNow = ShouldShowNoSignal();
 
+        // 4K X: read live source mode once each time the signal (re)locks. The XU
+        // read needs a LIVE signal so it can't run at init; this fires on the
+        // no-signal to signal edge and re-fires after resolution/HDR changes
+        // (which drop + relock). Bounded request/response; cost lands on lock only.
+        if (m_is4KX && m_prev4KXNoSignal && !showNoSignalNow) {
+            m_source4KProMode = Detect4KXSourceMode(m_currentDeviceInfo.name);
+        }
+        m_prev4KXNoSignal = showNoSignalNow;
+
         // =====================================================================
         // VRR PRESENT PACING: differ-driven Present
         // =====================================================================
@@ -1599,6 +1616,8 @@ void Application::Run()
                     std::wstringstream ss;
                     ss << L"VRR pacing: lastDiff=" << m_frameDiffer->GetLastDiffValue()
                        << L" threshold=" << m_frameDiffer->GetThreshold()
+                       << L" maxTile=" << m_frameDiffer->GetLastMaxTileValue()
+                       << L" tileThr=" << m_frameDiffer->GetTileThreshold()
                        << L" contentFps=" << m_currentContentFps
                        << L" hdmiFps=" << m_currentFps
                        << L" dropped=" << dropped
@@ -2833,6 +2852,9 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         }
     }
 
+    // No 4K X XU access on the device-switch path: probing the XU here would
+    // trigger the destructive scan that can wedge the card.
+
     // Persist the new preference so the next launch opens this device
     // by default through Initialize's PickPreferredDevice path.
     m_config->Save("nitlink.json");
@@ -3211,6 +3233,11 @@ void Application::UpdateWindowTitle()
     if (!m_detectedHdmiSource.empty()) {
         title += L" - ";
         title += m_detectedHdmiSource;
+    } else if (!m_source4KProMode.sourceName.empty()) {
+        // 4K X: source product string decoded from the XU SPD InfoFrame
+        // (Detect4KXSourceMode), e.g. "PS5". Same slot as the 4K S identifier.
+        title += L" - ";
+        title += m_source4KProMode.sourceName;
     }
 
     // Source resolution + fps segment. Currently populated on the 4K

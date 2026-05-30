@@ -280,6 +280,13 @@ private:
     // shader handles SDR tonemap when userWantsHDR is false.
     bool m_is4KS = false;
 
+    // 4K X: name-matched device flag + edge-detect state for the once-per-lock
+    // UVC XU source-mode read (Detect4KXSourceMode). The X reads the LIVE
+    // source, so the read fires on each signal (re)lock edge in Run(), not at
+    // init.
+    bool m_is4KX           = false;
+    bool m_prev4KXNoSignal = true;
+
     // Source resolution + fps read from the 4K Pro Elgato custom
     // property set (props 210 + 208) after CaptureDevice::Open. Used
     // by UpdateWindowTitle to surface the source's actual signal

@@ -114,11 +114,31 @@ HDRSourceInfo ReadElgatoHDRSource(const std::wstring& deviceName,
 //
 // On the 4K S (no IKsPropertySet GUID) returns detected=false.
 struct Source4KProMode {
-    bool     detected = false;
-    uint32_t width    = 0;
-    uint32_t height   = 0;
-    uint32_t fps      = 0;
+    bool     detected  = false;
+    uint32_t width     = 0;
+    uint32_t height    = 0;
+    uint32_t fps       = 0;
+    bool         hdrActive = false;  // source HDR active (4K X: XU 0x22 DRM InfoFrame byte4==0x87)
+    std::wstring sourceName;         // 4K X: SPD InfoFrame product string, e.g. "PS5" (empty if unknown)
 };
 Source4KProMode Detect4KProSourceMode(const std::wstring& deviceName);
+
+// Current source mode for the Elgato 4K X.
+//
+// The X does NOT expose the Pro's IKsPropertySet custom set; its source state
+// lives on UVC Extension Unit #4 (GUID 961073C7), reached via IKsControl on the
+// XU's KS topology node (type KSNODETYPE_DEV_SPECIFIC) using the Realtek "AT"
+// framing: SET trigger(payload-len) + SET payload (a1 06 00 00 <reg> 00 00 00
+// LRC), poll, GET. The SET writes go ONLY to the XU command port (entity 0x04,
+// sel 0x01/0x02), never the HID or processing path, so the round-trip is safe
+// (wire-verified). Three queries are issued: reg 0x37 returns the timing block
+// (resolution + fps), reg 0x65 the DRM InfoFrame (HDR active when byte 4 ==
+// 0x87), and reg 0x4b the SPD InfoFrame (source product name, e.g. "PS5").
+// Register values are specific to firmware 24.5.31 (the map changed once when
+// 0x92 died); on other firmware the reads return detected=false and the title
+// simply omits the 4K X line. Same struct as the Pro readout so the
+// window-title / state path can consume either. Must be read on a LIVE, LOCKED
+// signal; returns detected=false on non-4K-X devices, no XU node, or no lock.
+Source4KProMode Detect4KXSourceMode(const std::wstring& deviceName);
 
 } // namespace NitLink
