@@ -18,6 +18,16 @@ int WINAPI WinMain(
     _In_ LPSTR lpCmdLine,
     _In_ int nCmdShow)
 {
+    // Harden the DLL search path before anything else runs. This drops the
+    // current working directory (and other unsafe locations) from the default
+    // search order so a DLL planted next to wherever the app was launched
+    // can't hijack a dependency loaded later, notably WebView2Loader.dll,
+    // pulled in when the settings overlay initializes. LOAD_LIBRARY_SEARCH_
+    // DEFAULT_DIRS keeps System32 and the executable's own directory, which is
+    // where NitLink's real dependencies live. Best-effort: nothing to do if it
+    // fails, the app still runs (just without the hardening).
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+
     // Opt into per-monitor DPI awareness BEFORE creating any windows.
     // Without this, Windows lies about pixel sizes when DPI scaling is
     // not 100%, which produces a blurry image because rendering happens at

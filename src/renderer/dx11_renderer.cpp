@@ -888,11 +888,11 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     if (FAILED(hr)) return false;
 
     ComPtr<IDXGIDevice> dxgiDevice;
-    m_device.As(&dxgiDevice);
+    if (FAILED(m_device.As(&dxgiDevice))) return false;
     ComPtr<IDXGIAdapter> adapter;
-    dxgiDevice->GetAdapter(&adapter);
+    if (FAILED(dxgiDevice->GetAdapter(&adapter))) return false;
     ComPtr<IDXGIFactory2> factory;
-    adapter->GetParent(IID_PPV_ARGS(&factory));
+    if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
 
     hr = factory->CreateSwapChainForHwnd(
         m_device.Get(), hwnd, &scd, nullptr, nullptr, &m_swapChain);

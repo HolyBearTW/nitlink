@@ -277,15 +277,22 @@ void AudioRouter::RouteLoop()
 
 void AudioRouter::Shutdown()
 {
-    if (!m_running) return;
-    AudioLog(L"Shutdown: stopping");
+    // Stop the running pipeline only if it actually started. The thread is
+    // created together with m_running=true, so gating the join here is safe.
+    if (m_running) {
+        AudioLog(L"Shutdown: stopping");
+        m_running = false;
+        if (m_thread.joinable()) m_thread.join();
 
-    m_running = false;
-    if (m_thread.joinable()) m_thread.join();
+        if (m_captureClient) m_captureClient->Stop();
+        if (m_renderClient)  m_renderClient->Stop();
+    }
 
-    if (m_captureClient) m_captureClient->Stop();
-    if (m_renderClient)  m_renderClient->Stop();
-
+    // Free owned resources unconditionally. A failed Initialize() can leave
+    // m_captureFormat/m_renderFormat allocated (GetMixFormat already ran) while
+    // m_running stayed false, so gating these on m_running leaks the formats.
+    // CoTaskMemFree(nullptr) and ComPtr::Reset() on empty are both no-ops, so
+    // this stays idempotent across repeated Shutdown() / destructor calls.
     if (m_captureFormat) { CoTaskMemFree(m_captureFormat); m_captureFormat = nullptr; }
     if (m_renderFormat)  { CoTaskMemFree(m_renderFormat);  m_renderFormat  = nullptr; }
 

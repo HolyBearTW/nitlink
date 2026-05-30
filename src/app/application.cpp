@@ -686,6 +686,17 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_webviewSettings = std::make_unique<WebViewSettings>();
     m_webviewSettings->Initialize(m_window->GetHWND(), actualW, actualH);
     m_webviewSettings->SetMessageHandler([this](const std::wstring& msg) {
+        // Length gate first. Every legitimate message in the schema below is
+        // small (a few hundred chars at most); a multi-megabyte string only
+        // means a malformed or hostile sender, and the repeated find() scans
+        // further down would turn it into needless O(n) work. Reject it before
+        // any parsing. This is the bridge's outer trust boundary; treat the
+        // WebView2 sender as untrusted in case navigation is ever not locked
+        // down (see WebViewSettings nav allow-list).
+        if (msg.size() > 8192) {
+            AppLog(L"WebView2 msg: oversized payload, ignoring");
+            return;
+        }
         // Messages from JS arrive as JSON strings of the form:
         //   {"action":"toggleHDR","value":true}
         //   {"action":"setVolume","value":0.75}
@@ -913,16 +924,23 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             const std::wstring rawFps = extractRaw(L"fps");
             const std::wstring fmtStr = extractStr(L"format");
 
-            auto parseUint = [](const std::wstring& s) -> uint32_t {
-                if (s.empty()) return 0;
-                try { return static_cast<uint32_t>(std::stoul(s)); }
-                catch (...) { return 0; }
+            // Clamp each axis to a sane ceiling. These are untrusted bridge
+            // values; the capture negotiator already rejects nonsensical modes
+            // and falls back to Auto, but clamping here keeps a bogus number
+            // (or a negative, which std::stoul silently wraps) out of the
+            // persisted config in the first place. 0 / empty = Auto per axis.
+            auto parseUint = [](const std::wstring& s, uint32_t hi) -> uint32_t {
+                if (s.empty() || s[0] == L'-') return 0;
+                try {
+                    unsigned long n = std::stoul(s);
+                    return static_cast<uint32_t>(n > hi ? hi : n);
+                } catch (...) { return 0; }
             };
 
             auto& cv = m_config->captureFormatOverrides[m_currentDeviceInfo.name];
-            cv.width  = parseUint(rawW);
-            cv.height = parseUint(rawH);
-            cv.fps    = parseUint(rawFps);
+            cv.width  = parseUint(rawW, 16384);
+            cv.height = parseUint(rawH, 16384);
+            cv.fps    = parseUint(rawFps, 1000);
             cv.format = fmtStr;
             m_config->Save("nitlink.json");
 
@@ -951,7 +969,16 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // User clicked the screenshot toast's path link. Open Windows
             // Explorer with the file pre-selected (/select switch).
             const std::wstring path = extractStr(L"value");
-            if (!path.empty()) {
+            // path is untrusted bridge input that gets interpolated into a
+            // quoted explorer.exe argument. An embedded double-quote could
+            // break out of the quoting and inject extra switches (e.g.
+            // /root,<dir>), so reject those outright. Also require the path to
+            // actually exist on disk, since this action only ever opens a file
+            // NitLink itself just wrote, so a non-existent path is bogus.
+            std::error_code existsEc;
+            if (!path.empty() &&
+                path.find(L'"') == std::wstring::npos &&
+                std::filesystem::exists(path, existsEc)) {
                 const std::wstring args = L"/select,\"" + path + L"\"";
                 ShellExecuteW(nullptr, nullptr, L"explorer.exe",
                               args.c_str(), nullptr, SW_SHOWNORMAL);

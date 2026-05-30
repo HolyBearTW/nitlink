@@ -344,6 +344,16 @@ HdmiSourceInfo Detect4KSHdmiSource()
         Log(ss.str());
     }
 
+    // The MCU status byte (readBuf[0]) must be 0x00 for the response to be
+    // valid. On a non-success status the descriptor region holds error or
+    // stale bytes, and matching markers against it can yield a false-positive
+    // source identification, so bail out here (info.detected stays false).
+    // The raw log above still captures the bytes for diagnosis.
+    if (readBuf[0] != 0x00) {
+        Log(L"Detect4KSHdmiSource: non-success MCU status byte, skipping decode");
+        return info;
+    }
+
     // Decode known markers.
     //
     // Observed layout for PS5:
@@ -509,7 +519,13 @@ HdrMetadataProbeResult Probe4KSHdrMetadata()
     //          0x00 = no InfoFrame parsed (source is SDR).
     // Byte 5 = EOTF byte from the InfoFrame payload (only meaningful
     //          when byte 1 == 0x87). 0x02 = ST2084 PQ, 0x03 = HLG.
-    if (readBuf[1] == 0x87) {
+    //
+    // Require byte 0 == 0x00 (MCU success) BEFORE trusting byte 1. On a
+    // non-success status the response may be stale or partial from an
+    // incomplete re-parse, and a spurious 0x87 there would yield a false
+    // HDR-active verdict. Mirrors the status-byte guard in Detect4KSHdmiSource.
+    // The full 33-byte response is still logged below for diagnostics.
+    if (readBuf[0] == 0x00 && readBuf[1] == 0x87) {
         result.hdrActive = true;
         result.eotf      = readBuf[5];
     }

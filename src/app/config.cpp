@@ -35,6 +35,38 @@ static bool ParseBool(const std::string& v) {
     return v == "true" || v == "1" || v == "yes" || v == "on";
 }
 
+// Safe numeric parsers: the config is hand-editable, so malformed or
+// out-of-range values must fall back to `def` and clamp to [lo,hi] instead
+// of throwing (std::sto*) or feeding a bogus size into allocation. Note
+// std::stoul wraps a leading '-' instead of throwing, so reject it explicitly.
+static uint32_t ParseU32(const std::string& v, uint32_t def, uint32_t lo, uint32_t hi) {
+    try {
+        if (!v.empty() && v[0] == '-') return def;
+        unsigned long n = std::stoul(v);
+        if (n < lo) return lo;
+        if (n > hi) return hi;
+        return static_cast<uint32_t>(n);
+    } catch (...) { return def; }
+}
+
+static int ParseI32(const std::string& v, int def, int lo, int hi) {
+    try {
+        int n = std::stoi(v);
+        if (n < lo) return lo;
+        if (n > hi) return hi;
+        return n;
+    } catch (...) { return def; }
+}
+
+static float ParseFloatClamped(const std::string& v, float def, float lo, float hi) {
+    try {
+        float n = std::stof(v);
+        if (n < lo) return lo;
+        if (n > hi) return hi;
+        return n;
+    } catch (...) { return def; }
+}
+
 bool Config::Load(const std::string& path)
 {
     if (!std::filesystem::exists(path)) {
@@ -85,19 +117,19 @@ bool Config::Load(const std::string& path)
         }
 
         // Global settings (existing schema)
-        if (key == "window_width")    windowWidth  = std::stoul(val);
-        if (key == "window_height")   windowHeight = std::stoul(val);
-        if (key == "pip_width")       pipWidth     = std::stoul(val);
-        if (key == "pip_height")      pipHeight    = std::stoul(val);
-        if (key == "pip_opacity")     pipOpacity   = std::stof(val);
-        if (key == "pip_x")           pipX         = std::stoi(val);
-        if (key == "pip_y")           pipY         = std::stoi(val);
-        if (key == "audio_volume")    audioVolume  = std::stof(val);
+        if (key == "window_width")    windowWidth  = ParseU32(val, windowWidth, 320, 16384);
+        if (key == "window_height")   windowHeight = ParseU32(val, windowHeight, 240, 16384);
+        if (key == "pip_width")       pipWidth     = ParseU32(val, pipWidth, 80, 16384);
+        if (key == "pip_height")      pipHeight    = ParseU32(val, pipHeight, 45, 16384);
+        if (key == "pip_opacity")     pipOpacity   = ParseFloatClamped(val, pipOpacity, 0.0f, 1.0f);
+        if (key == "pip_x")           pipX         = ParseI32(val, pipX, -100000, 100000);
+        if (key == "pip_y")           pipY         = ParseI32(val, pipY, -100000, 100000);
+        if (key == "audio_volume")    audioVolume  = ParseFloatClamped(val, audioVolume, 0.0f, 1.0f);
         if (key == "audio_muted")     audioMuted   = ParseBool(val);
         if (key == "color_expansion") colorExpansion = ParseBool(val);
         if (key == "nis_enabled")     nisEnabled   = ParseBool(val);
-        if (key == "nis_scale_mode")  nisScaleMode = std::stoi(val);
-        if (key == "nis_sharpness")   nisSharpness = std::stof(val);
+        if (key == "nis_scale_mode")  nisScaleMode = ParseI32(val, nisScaleMode, 0, 2);
+        if (key == "nis_sharpness")   nisSharpness = ParseFloatClamped(val, nisSharpness, 0.0f, 1.0f);
         if (key == "hdr_enabled")     hdrEnabled   = ParseBool(val);
         if (key == "hdr_auto_from_source") hdrAutoFromSource = ParseBool(val);
         if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
@@ -121,13 +153,13 @@ bool Config::Load(const std::string& path)
         //     remembers its own pick.
         // Both accumulate into pre-loop temps and are reconciled below.
         if (key == "capture_override_width") {
-            legacyOverride.width = std::stoul(val);
+            legacyOverride.width = ParseU32(val, 0, 0, 16384);
             sawLegacyOverride = true;
         } else if (key == "capture_override_height") {
-            legacyOverride.height = std::stoul(val);
+            legacyOverride.height = ParseU32(val, 0, 0, 16384);
             sawLegacyOverride = true;
         } else if (key == "capture_override_fps") {
-            legacyOverride.fps = std::stoul(val);
+            legacyOverride.fps = ParseU32(val, 0, 0, 1000);
             sawLegacyOverride = true;
         } else if (key == "capture_override_format") {
             // Format strings are always ASCII ("NV12" / "P010" / "BGRA"

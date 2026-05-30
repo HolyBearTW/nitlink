@@ -18,6 +18,7 @@
 #include <shellapi.h>   // ShellExecuteW: for opening external links in default browser
 #include <sstream>
 #include <string>
+#include <wchar.h>      // _wcsnicmp: case-insensitive URI scheme allow-list checks
 #include <windows.h>
 
 using namespace Microsoft::WRL;
@@ -89,6 +90,31 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
                                         return S_OK;
                                     }).Get(), &m_messageToken);
 
+                            // Navigation allow-list. The only legitimate
+                            // top-level navigation is to the app's own local
+                            // file:// content (nitlink-menu.html). Cancel
+                            // anything else (http(s), about:, javascript:, a
+                            // planted path) so a compromised or redirected
+                            // page can't drive the top frame somewhere hostile.
+                            // Real external links go through NewWindowRequested
+                            // below and open in the user's browser instead.
+                            // (NavigateToString, if ever wired up, lands on
+                            // about:blank and would need "about:" added here.)
+                            EventRegistrationToken navToken{};
+                            m_webview->add_NavigationStarting(
+                                Callback<ICoreWebView2NavigationStartingEventHandler>(
+                                    [](ICoreWebView2*,
+                                        ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                                        wil::unique_cotaskmem_string uri;
+                                        if (SUCCEEDED(args->get_Uri(&uri)) && uri &&
+                                            _wcsnicmp(uri.get(), L"file:", 5) != 0) {
+                                            args->put_Cancel(TRUE);
+                                            WVLog(L"NavigationStarting: blocked "
+                                                  + std::wstring(uri.get()));
+                                        }
+                                        return S_OK;
+                                    }).Get(), &navToken);
+
                             // Intercept target="_blank" / window.open() / external link
                             // clicks so they open in the user's default browser instead
                             // of spawning a stripped-down child WebView2 window (which
@@ -101,8 +127,20 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
                                         ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
                                         wil::unique_cotaskmem_string uri;
                                         if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
-                                            ShellExecuteW(nullptr, L"open", uri.get(),
-                                                          nullptr, nullptr, SW_SHOWNORMAL);
+                                            // Only hand http(s) links to the shell.
+                                            // NewWindowRequested can fire for any scheme
+                                            // (file:, javascript:, custom protocol handlers
+                                            // that launch local programs); ShellExecute
+                                            // "open" on those could run an arbitrary
+                                            // registered handler, so restrict to web links.
+                                            if (_wcsnicmp(uri.get(), L"http:", 5) == 0 ||
+                                                _wcsnicmp(uri.get(), L"https:", 6) == 0) {
+                                                ShellExecuteW(nullptr, L"open", uri.get(),
+                                                              nullptr, nullptr, SW_SHOWNORMAL);
+                                            } else {
+                                                WVLog(L"NewWindowRequested: blocked non-web "
+                                                      L"scheme: " + std::wstring(uri.get()));
+                                            }
                                         }
                                         // Tell WebView2 the event was handled here: don't
                                         // open a child window.
@@ -163,8 +201,37 @@ void WebViewSettings::Resize() {
 }
 
 void WebViewSettings::NavigateToFile(const std::wstring& path) {
-    wchar_t fullPath[MAX_PATH];
-    GetFullPathNameW(path.c_str(), MAX_PATH, fullPath, nullptr);
+    // Resolve relative names against the EXECUTABLE's directory, not the
+    // process CWD. GetFullPathNameW anchors at the CWD, so a file planted in
+    // whatever directory the app happens to be launched from could shadow the
+    // real UI html. The bundled html ships next to the exe, so anchor there
+    // deterministically. Absolute paths (drive-letter or UNC) are passed
+    // through unchanged.
+    const bool isAbsolute =
+        (path.size() >= 2 && path[1] == L':') ||
+        (path.size() >= 2 && (path[0] == L'\\' || path[0] == L'/') &&
+                             (path[1] == L'\\' || path[1] == L'/'));
+
+    std::wstring fullPath;
+    if (isAbsolute) {
+        fullPath = path;
+    } else {
+        wchar_t exePath[MAX_PATH] = {};
+        DWORD n = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) {
+            std::wstring dir(exePath);
+            size_t slash = dir.find_last_of(L"\\/");
+            if (slash != std::wstring::npos) dir.resize(slash + 1);
+            fullPath = dir + path;
+        } else {
+            // Fallback to the prior CWD-relative behavior only if the module
+            // path is unreadable (should never happen in practice).
+            wchar_t tmp[MAX_PATH] = {};
+            GetFullPathNameW(path.c_str(), MAX_PATH, tmp, nullptr);
+            fullPath = tmp;
+        }
+    }
+
     std::wstring uri = L"file:///";
     uri += fullPath;
     for (auto& c : uri) if (c == L'\\') c = L'/';

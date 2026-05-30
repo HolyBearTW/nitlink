@@ -184,6 +184,18 @@ bool DiscordRPC::ReadFrame(Opcode& op, std::string& payload)
     if (!ReadFile(m_pipe, &len, sizeof(len), &got, nullptr) || got != sizeof(len)) return false;
 
     op = (Opcode)opc;
+
+    // Cap the frame length before resize(). len is an untrusted u32 straight
+    // off the pipe; a corrupt or hostile frame could claim up to 4 GiB and
+    // turn resize() into an OOM crash. Discord RPC frames are small JSON blobs
+    // (the reference library caps the whole frame at 64 KiB), so anything
+    // larger is malformed and the read is dropped.
+    static constexpr uint32_t kMaxFrameLen = 64 * 1024;
+    if (len > kMaxFrameLen) {
+        RPCLog(L"ReadFrame: frame length exceeds cap, dropping");
+        return false;
+    }
+
     payload.resize(len);
     if (len > 0) {
         if (!ReadFile(m_pipe, payload.data(), len, &got, nullptr) || got != len) return false;
