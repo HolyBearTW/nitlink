@@ -24,6 +24,11 @@ public:
         // total. 0 means the device driver doesn't populate the
         // attribute (unavailable).
         double       appIngestMs      = 0;
+        // Real per-frame GPU work in milliseconds, from D3D11 timestamp
+        // queries bracketing the per-frame draws. 0 means the queries
+        // are not yet populated (first few frames) or query creation
+        // failed at startup.
+        double       gpuMs            = 0;
         uint32_t     fps              = 0;   // game content frames per second
         uint32_t     captureWidth     = 0;
         uint32_t     captureHeight    = 0;

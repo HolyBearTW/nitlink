@@ -931,6 +931,14 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     if (!CreateFullscreenQuad()) return false;
     if (!CreateCompositeShader()) return false;
 
+    // GPU timestamp queries are a "best effort" telemetry feature. If the
+    // driver refuses to create them, the HUD shows "GPU --" but rendering
+    // continues normally.
+    m_gpuQueryEnabled = CreateGpuTimingQueries();
+    if (!m_gpuQueryEnabled) {
+        OutputDebugStringW(L"[NitLink/Renderer] GPU timestamp queries unavailable; HUD will show GPU --\n");
+    }
+
     D3D11_SAMPLER_DESC samplerDesc{};
     samplerDesc.Filter         = D3D11_FILTER_ANISOTROPIC;
     samplerDesc.MaxAnisotropy  = 16;
@@ -1594,6 +1602,24 @@ void DX11Renderer::UpdateAspectTransform()
     }
 }
 
+bool DX11Renderer::CreateGpuTimingQueries()
+{
+    D3D11_QUERY_DESC disjointDesc{};
+    disjointDesc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+    D3D11_QUERY_DESC tsDesc{};
+    tsDesc.Query = D3D11_QUERY_TIMESTAMP;
+
+    for (int i = 0; i < kGpuQueryRingSize; ++i) {
+        HRESULT hr = m_device->CreateQuery(&disjointDesc, &m_gpuQueryDisjoint[i]);
+        if (FAILED(hr)) return false;
+        hr = m_device->CreateQuery(&tsDesc, &m_gpuQueryStart[i]);
+        if (FAILED(hr)) return false;
+        hr = m_device->CreateQuery(&tsDesc, &m_gpuQueryEnd[i]);
+        if (FAILED(hr)) return false;
+    }
+    return true;
+}
+
 void DX11Renderer::BeginFrame()
 {
     // ============== DXGI 1.3 LOW-LATENCY WAIT ==============
@@ -1621,6 +1647,45 @@ void DX11Renderer::BeginFrame()
     // here (just after the latency wait, the actual *start* of useful work)
     // until the Present completes at the bottom of EndFrame.
     QueryPerformanceCounter(&m_frameStartQpc);
+
+    // GPU timing readback: pull frame N-3's queries if the ring has filled.
+    // Reading at frame N+3 means the GPU has long since finished the work
+    // being measured, so GetData returns S_OK without forcing a flush.
+    if (m_gpuQueryEnabled
+        && m_gpuQueryFrameCount >= kGpuQueryRingSize
+        && m_gpuQueryIssued[m_gpuQueryWriteSlot])
+    {
+        const int readSlot = m_gpuQueryWriteSlot;
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj{};
+        UINT64 startTs = 0, endTs = 0;
+        HRESULT hrDj    = m_context->GetData(m_gpuQueryDisjoint[readSlot].Get(),
+                                              &dj, sizeof(dj), 0);
+        HRESULT hrStart = m_context->GetData(m_gpuQueryStart[readSlot].Get(),
+                                              &startTs, sizeof(startTs), 0);
+        HRESULT hrEnd   = m_context->GetData(m_gpuQueryEnd[readSlot].Get(),
+                                              &endTs, sizeof(endTs), 0);
+        if (hrDj == S_OK && hrStart == S_OK && hrEnd == S_OK
+            && !dj.Disjoint && dj.Frequency != 0
+            && endTs >= startTs)
+        {
+            m_lastGpuMs = (double)(endTs - startTs) * 1000.0 / (double)dj.Frequency;
+        }
+        // The disjoint flag set means the GPU clock disconnected during the
+        // measurement window (power-state change, etc). Skip the update;
+        // m_lastGpuMs retains its previous value rather than reading garbage.
+        m_gpuQueryIssued[readSlot] = false;
+    }
+
+    // Open this frame's GPU timing window. The disjoint query brackets the
+    // pair of timestamp queries; only the disjoint takes Begin/End, the
+    // timestamps only take End (they fire at the moment End is recorded
+    // onto the command stream).
+    m_gpuQueryActiveThisFrame = false;
+    if (m_gpuQueryEnabled) {
+        m_context->Begin(m_gpuQueryDisjoint[m_gpuQueryWriteSlot].Get());
+        m_context->End  (m_gpuQueryStart   [m_gpuQueryWriteSlot].Get());
+        m_gpuQueryActiveThisFrame = true;
+    }
 
     float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
@@ -1879,6 +1944,19 @@ void DX11Renderer::CompositeUI(ID3D11ShaderResourceView* uiSRV)
 
 void DX11Renderer::EndFrame()
 {
+    // Close this frame's GPU timing window BEFORE Present, so the measured
+    // span covers only the work issued between BeginFrame and here. Present
+    // itself is a mix of GPU and CPU/driver work and is not the per-frame
+    // shader cost being measured.
+    if (m_gpuQueryActiveThisFrame) {
+        m_context->End(m_gpuQueryEnd     [m_gpuQueryWriteSlot].Get());
+        m_context->End(m_gpuQueryDisjoint[m_gpuQueryWriteSlot].Get());
+        m_gpuQueryIssued[m_gpuQueryWriteSlot] = true;
+        m_gpuQueryActiveThisFrame             = false;
+        m_gpuQueryWriteSlot = (m_gpuQueryWriteSlot + 1) % kGpuQueryRingSize;
+        if (m_gpuQueryFrameCount < kGpuQueryRingSize) m_gpuQueryFrameCount++;
+    }
+
     m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
 
     // ============== FRAME-TIME TELEMETRY ==============

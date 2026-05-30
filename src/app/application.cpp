@@ -1804,6 +1804,7 @@ void Application::Run()
                 stats.captureLatencyMs = m_captureLatencyMs;
                 stats.renderLatencyMs  = m_renderLatencyMs;
                 stats.appIngestMs      = m_mfDeliveryLatencyMs;
+                stats.gpuMs            = m_renderer->GetLastGpuMs();
                 // Content fps comes from the frame differ (detects unique
                 // frames). When the scene is static the differ correctly
                 // reports 0, but a "0 fps" reading is misleading because
@@ -1956,6 +1957,7 @@ void Application::Run()
             stats.captureLatencyMs = m_captureLatencyMs;
             stats.renderLatencyMs  = m_renderLatencyMs;
             stats.appIngestMs      = m_mfDeliveryLatencyMs;
+            stats.gpuMs            = m_renderer->GetLastGpuMs();
             // Prefer the real game framerate (from FrameDiffer) over the
             // HDMI signal rate. They diverge for sub-60fps games: HDMI
             // duplicates frames at the signal level, so a 30fps game still

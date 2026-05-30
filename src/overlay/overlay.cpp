@@ -470,21 +470,26 @@ void Overlay::Render(const Stats& stats)
             m_textFormatUnit.Get(), ur, m_brushDim.Get());
     }
 
-    // ---- 4. Sub-metric: GPU upload time ------------------------------------
+    // ---- 4. Sub-metric: real GPU per-frame work ----------------------------
+    // Sourced from D3D11_QUERY_TIMESTAMP via DX11Renderer::GetLastGpuMs().
+    // Shows "GPU --" until the renderer's 3-slot query ring has filled, or
+    // permanently if the driver refused to create timestamp queries.
     {
+        const float gpu = sig ? (float)stats.gpuMs : 0.0f;
+        const bool  haveGpu = sig && gpu > 0.0f;
+
         std::wstringstream ss;
-        if (sig) ss << L"GPU " << std::fixed << std::setprecision(1) << totalLatency << L" ms";
-        else     ss << L"GPU --";
+        if (haveGpu) ss << L"GPU " << std::fixed << std::setprecision(1) << gpu << L" ms";
+        else         ss << L"GPU --";
         std::wstring s = ss.str();
         D2D1_RECT_F r = D2D1::RectF(panel.left + pad, panel.top + 82.0f,
                                      panel.right - pad, panel.top + 96.0f);
 
-        // Threshold color for GPU.
         ID2D1SolidColorBrush* gpuBrush = m_brushText.Get();
-        if (sig) {
-            if      (totalLatency <  5.0f)  gpuBrush = m_brushGood.Get();
-            else if (totalLatency <= 12.0f) gpuBrush = m_brushWarn.Get();
-            else                              gpuBrush = m_brushCrit.Get();
+        if (haveGpu) {
+            if      (gpu <  5.0f)  gpuBrush = m_brushGood.Get();
+            else if (gpu <= 12.0f) gpuBrush = m_brushWarn.Get();
+            else                   gpuBrush = m_brushCrit.Get();
         }
         m_d2dContext->DrawText(s.c_str(), (UINT32)s.size(),
             m_smallTextFormat.Get(), r, gpuBrush);

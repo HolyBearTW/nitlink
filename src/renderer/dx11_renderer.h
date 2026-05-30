@@ -111,6 +111,13 @@ public:
     // readout.
     double                GetAverageRenderMs() const { return m_lastReportedRenderMs; }
 
+    // Returns the most recent measured GPU per-frame work in milliseconds,
+    // sourced from D3D11_QUERY_TIMESTAMP bracketing the per-frame draws.
+    // Lags by ~3 frames because the readback uses a ring buffer to avoid
+    // forcing a GPU stall on GetData. Returns 0 until enough frames have
+    // elapsed for the first readback, or if query creation failed.
+    double                GetLastGpuMs() const { return m_lastGpuMs; }
+
     // The raw captured-frame SRV. For BGRA captures this is the full color
     // texture; for NV12 it's the Y plane (R8). Either way `.r` gives luma:
     // adequate for new-frame detection (FrameDiffer).
@@ -226,6 +233,7 @@ private:
     bool CreateCaptureResources(uint32_t width, uint32_t height, bool isNV12);
     bool CreateCaptureResourcesP010(uint32_t width, uint32_t height);
     bool CreateFullscreenQuad();
+    bool CreateGpuTimingQueries();
     void UpdateAspectTransform();
 
     // CaptureFormatKind is declared in the public section above so the
@@ -256,6 +264,22 @@ private:
     double                         m_renderMsSum = 0.0;
     uint32_t                       m_renderMsCount = 0;
     double                         m_lastReportedRenderMs = 0.0;
+
+    // Real GPU per-frame timing via D3D11_QUERY_TIMESTAMP queries.
+    // The ring exists so frame N's readback pulls frame N-3's data, which
+    // is guaranteed to be ready without forcing a stall. Three slots is the
+    // sweet spot for SetMaximumFrameLatency(1) plus the immediate-mode
+    // context's natural one-frame deferral.
+    static constexpr int           kGpuQueryRingSize = 3;
+    ComPtr<ID3D11Query>            m_gpuQueryDisjoint[kGpuQueryRingSize];
+    ComPtr<ID3D11Query>            m_gpuQueryStart   [kGpuQueryRingSize];
+    ComPtr<ID3D11Query>            m_gpuQueryEnd     [kGpuQueryRingSize];
+    bool                           m_gpuQueryIssued  [kGpuQueryRingSize] = { false, false, false };
+    int                            m_gpuQueryWriteSlot     = 0;
+    int                            m_gpuQueryFrameCount    = 0;
+    bool                           m_gpuQueryActiveThisFrame = false;
+    bool                           m_gpuQueryEnabled       = false; // false when CreateGpuTimingQueries failed
+    double                         m_lastGpuMs = 0.0;
 
     ComPtr<ID3D11RenderTargetView> m_rtv;
 
