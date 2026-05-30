@@ -62,41 +62,53 @@ float main(float4 pos : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
 }
 )";
 
-// Compute shader: SAD between two R8 textures, summed across the whole
-// 640x360 image. Single thread group of 256 threads, each processing
-// kWorkW * kWorkH / 256 = 900 pixels sequentially, then groupshared reduce.
+// Compute shader: per-TILE mean SAD between two R8 textures.
+//
+// The 640x360 luma is split into an 8x8 grid of 80x45 tiles. One thread group
+// per tile (Dispatch(8,8,1)); each group's 64 threads stride over the tile's
+// 3600 pixels, groupshared-reduce the sum, and write the tile's MEAN SAD to
+// g_result[tileX, tileY]. The CPU reads the 8x8 grid back one frame later and
+// takes both the MAX tile (localized-motion rescue signal) and the AVERAGE of
+// tiles. Because the tiles are equal-size, that average is exactly the old
+// frame-global mean SAD, so the established mean-based classifier is
+// unchanged and the max tile is a pure additive rescue.
+//
+// The TILES_*/TILE_* defines below MUST match kTilesX/kTilesY (frame_differ.h)
+// and kWorkW/kWorkH: 640/8 = 80, 360/8 = 45.
 static const char* g_diffCS = R"HLSL(
 Texture2D<float>  g_current  : register(t0);
 Texture2D<float>  g_previous : register(t1);
 RWTexture2D<float> g_result  : register(u0);
 
-#define THREADS 256
+#define TILES_X     8
+#define TILES_Y     8
+#define TILE_W      80               // kWorkW / TILES_X
+#define TILE_H      45               // kWorkH / TILES_Y
+#define TILE_PIXELS (TILE_W * TILE_H) // 3600
+#define THREADS     64
 
 groupshared float gs_partial[THREADS];
 
 [numthreads(THREADS, 1, 1)]
-void main(uint3 gtid : SV_GroupThreadID)
+void main(uint3 gid : SV_GroupID, uint3 gtid : SV_GroupThreadID)
 {
-    const uint kW = 640;
-    const uint kH = 360;
-    const uint kTotal = kW * kH;  // 230400
-    const uint perThread = (kTotal + THREADS - 1) / THREADS; // ceil-div: 900
+    // This group owns tile (gid.x, gid.y); its top-left pixel:
+    uint baseX = gid.x * TILE_W;
+    uint baseY = gid.y * TILE_H;
 
     float sum = 0.0;
-    uint start = gtid.x * perThread;
-    uint end   = min(start + perThread, kTotal);
-    for (uint idx = start; idx < end; idx++) {
-        uint x = idx % kW;
-        uint y = idx / kW;
-        float c = g_current.Load(int3(x, y, 0));
-        float p = g_previous.Load(int3(x, y, 0));
+    for (uint i = gtid.x; i < TILE_PIXELS; i += THREADS) {
+        uint lx = i % TILE_W;
+        uint ly = i / TILE_W;
+        float c = g_current.Load(int3(baseX + lx, baseY + ly, 0));
+        float p = g_previous.Load(int3(baseX + lx, baseY + ly, 0));
         sum += abs(c - p);
     }
 
     gs_partial[gtid.x] = sum;
     GroupMemoryBarrierWithGroupSync();
 
-    // Parallel reduction
+    // Parallel reduction within the tile's thread group.
     [unroll] for (uint stride = THREADS / 2; stride > 0; stride >>= 1) {
         if (gtid.x < stride) {
             gs_partial[gtid.x] += gs_partial[gtid.x + stride];
@@ -105,9 +117,8 @@ void main(uint3 gtid : SV_GroupThreadID)
     }
 
     if (gtid.x == 0) {
-        // Normalize by sample count so threshold is content-resolution-
-        // independent: 0 = identical, ~1.0 = every pixel maximally different.
-        g_result[uint2(0, 0)] = gs_partial[0] / kTotal;
+        // Tile MEAN SAD: 0 = identical, ~1.0 = every pixel maximally different.
+        g_result[uint2(gid.x, gid.y)] = gs_partial[0] / TILE_PIXELS;
     }
 }
 )HLSL";
@@ -231,8 +242,8 @@ bool FrameDiffer::CreateWorkingTextures(ID3D11Device* device)
 bool FrameDiffer::CreateResultBuffers(ID3D11Device* device)
 {
     D3D11_TEXTURE2D_DESC td{};
-    td.Width            = 1;
-    td.Height           = 1;
+    td.Width            = kTilesX;
+    td.Height           = kTilesY;
     td.MipLevels        = 1;
     td.ArraySize        = 1;
     td.Format           = DXGI_FORMAT_R32_FLOAT;
@@ -245,8 +256,8 @@ bool FrameDiffer::CreateResultBuffers(ID3D11Device* device)
     if (FAILED(hr)) { FDLogHr(L"result CreateUAV failed", hr); return false; }
 
     D3D11_TEXTURE2D_DESC sd{};
-    sd.Width            = 1;
-    sd.Height           = 1;
+    sd.Width            = kTilesX;
+    sd.Height           = kTilesY;
     sd.MipLevels        = 1;
     sd.ArraySize        = 1;
     sd.Format           = DXGI_FORMAT_R32_FLOAT;
@@ -317,8 +328,28 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
         D3D11_MAPPED_SUBRESOURCE mapped{};
         HRESULT hr = ctx->Map(m_resultStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
         if (SUCCEEDED(hr)) {
-            m_lastDiff = *reinterpret_cast<float*>(mapped.pData);
+            // Read the kTilesX x kTilesY grid of per-tile mean SADs. Take the
+            // max (localized-motion rescue signal) and the average. Because the
+            // tiles are equal-size, the average IS the old frame-global mean,
+            // so m_lastDiff keeps its exact prior meaning and the established
+            // classifier below is unchanged. Map gives a row pitch that may be
+            // padded past kTilesX floats, so index rows via RowPitch bytes.
+            const uint8_t* rowBase = reinterpret_cast<const uint8_t*>(mapped.pData);
+            float maxTile = 0.0f;
+            float sumTiles = 0.0f;
+            for (uint32_t ty = 0; ty < kTilesY; ++ty) {
+                const float* row =
+                    reinterpret_cast<const float*>(rowBase + ty * mapped.RowPitch);
+                for (uint32_t tx = 0; tx < kTilesX; ++tx) {
+                    const float v = row[tx];
+                    sumTiles += v;
+                    if (v > maxTile) maxTile = v;
+                }
+            }
             ctx->Unmap(m_resultStaging.Get(), 0);
+
+            m_lastMaxTile = maxTile;
+            m_lastDiff    = sumTiles / static_cast<float>(kTilesX * kTilesY);
 
             // Classification: two-stage. Stage 1 is hysteresis on the raw
             // diff value; stage 2 is a ring-buffer smoother over the stage-1
@@ -348,6 +379,20 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
                 rawNew = false;
             } else {
                 rawNew = m_wasNew; // sticky in deadband
+            }
+
+            // Rescue-OR (max-tile). Localized motion (a character idle
+            // animation in one corner, a small HUD element) produces real
+            // change concentrated in a few tiles but a tiny frame-global mean
+            // once averaged across the static majority, so the mean test above
+            // mislabels it a duplicate. If the strongest tile clears
+            // m_tileThreshold, promote the frame to new. This only ever flips
+            // false->true, so it cannot regress the mean-validated behavior:
+            // real duplicates are ~0 in every tile (max stays low), and
+            // full-frame motion already clears the mean test. See the header
+            // for the on-hardware tuning procedure for m_tileThreshold.
+            if (!rawNew && m_lastMaxTile >= m_tileThreshold) {
+                rawNew = true;
             }
 
             // Stage 2: pattern-aware smoother.
@@ -466,7 +511,7 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
         ctx->CSSetShaderResources(0, 2, srvs);
         UINT initCount = 0;
         ctx->CSSetUnorderedAccessViews(0, 1, m_resultUAV.GetAddressOf(), &initCount);
-        ctx->Dispatch(1, 1, 1);
+        ctx->Dispatch(kTilesX, kTilesY, 1); // one thread group per tile
 
         // Unbind compute resources
         ID3D11UnorderedAccessView* nullUAV = nullptr;

@@ -65,8 +65,16 @@ public:
     bool WasPreviousFrameNew() const { return m_wasNew; }
     float GetLastDiffValue()  const { return m_lastDiff; }
 
+    // Max-tile SAD from the previous Process() (see the tiled compute shader).
+    // Exposed alongside GetLastDiffValue (the frame-global mean) so the VRR
+    // pacing log can surface both while m_tileThreshold is being tuned.
+    float GetLastMaxTileValue() const { return m_lastMaxTile; }
+
     void  SetThreshold(float t) { m_threshold = t; }
     float GetThreshold() const  { return m_threshold; }
+
+    void  SetTileThreshold(float t) { m_tileThreshold = t; }
+    float GetTileThreshold() const  { return m_tileThreshold; }
 
 private:
     bool CompileShaders(ID3D11Device* device);
@@ -86,6 +94,19 @@ private:
     static constexpr uint32_t kWorkW = 640;
     static constexpr uint32_t kWorkH = 360;
 
+    // Tile grid for the max-tile SAD rescue term. The diff compute shader
+    // splits the kWorkW x kWorkH luma into kTilesX * kTilesY tiles, computes
+    // each tile's MEAN SAD, and the CPU reads back the grid to take both the
+    // max tile (localized-motion signal) and the average of tiles (which is
+    // exactly the old frame-global mean, since the tiles are equal-size).
+    //
+    // 8x8 must divide kWorkW/kWorkH evenly: 640/8 = 80, 360/8 = 45, so each
+    // tile is 80x45 = 3600 samples. If these change, the matching #defines in
+    // g_diffCS (frame_differ.cpp) MUST be updated to agree, because the shader can't
+    // see these constants (it's a separate HLSL string).
+    static constexpr uint32_t kTilesX = 8;
+    static constexpr uint32_t kTilesY = 8;
+
     // Pixel shader that samples any-format input -> luma value in R8.
     ComPtr<ID3D11VertexShader>       m_quadVS;
     ComPtr<ID3D11PixelShader>        m_lumaPS;
@@ -103,13 +124,15 @@ private:
     ComPtr<ID3D11Texture2D>          m_prevTex;
     ComPtr<ID3D11ShaderResourceView> m_prevSRV;
 
-    // Result of the diff: 1x1 R32_FLOAT + staging copy.
+    // Result of the diff: kTilesX x kTilesY R32_FLOAT (one mean SAD per tile)
+    // + a staging copy read back on the CPU one frame later.
     ComPtr<ID3D11Texture2D>            m_resultTex;
     ComPtr<ID3D11UnorderedAccessView>  m_resultUAV;
     ComPtr<ID3D11Texture2D>            m_resultStaging;
 
     bool   m_wasNew    = true;
-    float  m_lastDiff  = 0.0f;
+    float  m_lastDiff  = 0.0f;     // frame-global mean SAD (= average of tiles)
+    float  m_lastMaxTile = 0.0f;   // max per-tile mean SAD (localized motion)
     // Threshold tuned empirically with VRR present pacing on real HDR content
     // at 640x360 working resolution:
     //   - Active gameplay (60fps PS5): lastDiff = 0.010 to 0.025
@@ -120,6 +143,25 @@ private:
     // 0.0005 catches subtle idle motion while still rejecting the static-noise
     // floor.
     float  m_threshold = 0.0005f;
+
+    // Rescue-OR threshold for the max-tile metric. A frame whose global mean
+    // (m_lastDiff) falls below m_threshold but whose strongest tile exceeds
+    // this value is promoted to "new content": that signature is localized
+    // motion (e.g. a character idle animation in one corner) whose energy is
+    // diluted to near-zero when averaged across the static rest of the frame.
+    // The rescue only ever flips a duplicate verdict to new, never the
+    // reverse, so the mean-based behavior validated below is preserved exactly.
+    //
+    // STARTING VALUE, must be tuned on real hardware. The shipped value is a
+    // first guess; the max-of-64-tiles static-noise floor depends on the
+    // specific capture card's sensor noise, which can't be predicted offline.
+    // To tune: watch maxTile in the [NitLink/App] "VRR pacing" log and set
+    // this ABOVE the value seen on a truly static dashboard / paused screen,
+    // but BELOW the value seen during a subtle idle animation. If the static
+    // floor and the idle signal overlap at 8x8, drop kTilesX/kTilesY to 4x4
+    // (coarser tiles -> lower noise floor).
+    float  m_tileThreshold = 0.006f;
+
     bool   m_firstFrame = true;
     bool   m_havePrev   = false;
 
