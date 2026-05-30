@@ -102,7 +102,13 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     //   pipeline).
     //   Reference: learn.microsoft.com/en-us/windows/win32/medfound/mf-low-latency
     ComPtr<IMFAttributes> readerAttrs;
-    MFCreateAttributes(&readerAttrs, 2);
+    hr = MFCreateAttributes(&readerAttrs, 2);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"MFCreateAttributes failed with HRESULT 0x" << std::hex << hr;
+        DebugLog(ss.str());
+        return false;
+    }
     readerAttrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
     readerAttrs->SetUINT32(MF_LOW_LATENCY, TRUE);
 
@@ -241,7 +247,7 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     auto tryAttempts = [&](bool enforceOverrideDims) -> bool {
         for (const auto& attempt : attempts) {
             ComPtr<IMFMediaType> outputType;
-            MFCreateMediaType(&outputType);
+            if (FAILED(MFCreateMediaType(&outputType))) continue;
             outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
             outputType->SetGUID(MF_MT_SUBTYPE, attempt.subtype);
             outputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
@@ -500,7 +506,19 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         // === END HDR DIAGNOSTIC ===
     }
 
+    // Every format field is now finalized. Commit the negotiated working state
+    // (m_format) into the mutex-guarded published copy so GetOutputFormat()
+    // hands every other thread a complete, consistent struct. This is the
+    // single synchronization point for the published format.
+    PublishFormat();
+
     return true;
+}
+
+void CaptureDevice::PublishFormat()
+{
+    std::lock_guard<std::mutex> lock(m_formatMutex);
+    m_publishedFormat = m_format;
 }
 
 bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
@@ -770,7 +788,10 @@ bool CaptureDevice::StartCapture(FrameCallback callback)
 {
     if (m_capturing) return false;
 
-    m_callback = std::move(callback);
+    {
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        m_callback = std::move(callback);
+    }
     m_capturing = true;
     m_captureThread = std::thread(&CaptureDevice::CaptureLoop, this);
 
@@ -888,11 +909,12 @@ void CaptureDevice::CaptureLoop()
         hr = buffer->Lock(&rawData, &maxLen, &currentLen);
         if (SUCCEEDED(hr)) {
             if (!loggedFirstFrame) {
+                const CaptureFormat fmt = GetOutputFormat();
                 std::wstringstream ss;
                 ss << L"First frame received: " << currentLen << L" bytes for "
-                   << m_format.width << L"x" << m_format.height
-                   << L" (expected BGRA: " << (m_format.width * m_format.height * 4)
-                   << L", expected NV12: " << (m_format.width * m_format.height * 3 / 2) << L")";
+                   << fmt.width << L"x" << fmt.height
+                   << L" (expected BGRA: " << (fmt.width * fmt.height * 4)
+                   << L", expected NV12: " << (fmt.width * fmt.height * 3 / 2) << L")";
                 DebugLog(ss.str());
                 loggedFirstFrame = true;
             }
@@ -918,10 +940,15 @@ void CaptureDevice::CaptureLoop()
                 DebugLog(ss.str());
             }
 
-            if (m_callback) {
+            FrameCallback cb;
+            {
+                std::lock_guard<std::mutex> lock(m_callbackMutex);
+                cb = m_callback;
+            }
+            if (cb) {
                 const int64_t arrivalWallNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
-                m_callback(rawData, currentLen, timestamp, arrivalWallNs, deviceTs);
+                cb(rawData, currentLen, timestamp, arrivalWallNs, deviceTs);
             }
             buffer->Unlock();
         }

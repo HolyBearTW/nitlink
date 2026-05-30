@@ -20,6 +20,23 @@ public:
     };
 
     FrameBuffer(uint32_t width, uint32_t height, uint32_t stride);
+
+    // Lifetime / teardown contract:
+    //   The capture worker thread is the producer (calls Write() once per
+    //   captured frame); the render thread is the consumer (calls Read()).
+    //   Concurrent Write()/Read() is the whole point of the triple buffer and
+    //   is safe. What is NOT safe is destroying this object while the producer
+    //   can still call Write(): the worker would memcpy into freed storage and
+    //   lock a freed m_swapMutex, a use-after-free.
+    //
+    //   Every owner must therefore JOIN the capture worker first
+    //   (CaptureDevice::StopCapture joins the worker thread) BEFORE freeing the
+    //   FrameBuffer. Application enforces this at all teardown sites
+    //   (Application::Shutdown and ReconcileCaptureFormat), each guarded by
+    //   assert(!CaptureDevice::IsCapturing()). The worker self-exit path
+    //   (m_needsReopen) breaks from the no-frame failure branch, never
+    //   mid-Write, and is still joined by the following StopCapture before
+    //   the buffer is released or rebuilt.
     ~FrameBuffer() = default;
 
     // Producer (capture thread) writes frames

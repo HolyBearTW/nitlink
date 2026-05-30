@@ -8,6 +8,7 @@
 #include <string>
 #include <functional>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <cstdint>
 #include <vector>
@@ -121,7 +122,17 @@ public:
     // semantics: each call returns the current state and resets it to false.
     bool ConsumeNeedsReopen() { return m_needsReopen.exchange(false); }
 
-    CaptureFormat GetOutputFormat() const { return m_format; }
+    // Thread-safe snapshot of the negotiated output format. m_format itself is
+    // main-thread negotiation working state (written field-by-field across
+    // NegotiateFormat and Open); the finalized values are committed once at the
+    // end of a successful Open() under m_formatMutex. Every reader outside that
+    // negotiation (the render loop, the capture worker's first-frame
+    // diagnostic, the HUD stats path) goes through this accessor so it always
+    // sees a complete, consistent struct instead of a half-updated one.
+    CaptureFormat GetOutputFormat() const {
+        std::lock_guard<std::mutex> lock(m_formatMutex);
+        return m_publishedFormat;
+    }
     std::wstring  GetDeviceName()   const { return m_deviceName; }
     bool          IsCapturing()     const { return m_capturing; }
 
@@ -170,12 +181,42 @@ private:
     void CaptureLoop();
     bool NegotiateFormat(IMFMediaSource* source);
 
+    // Commit the finalized m_format into the mutex-guarded m_publishedFormat.
+    // Called once at the end of a successful Open(), after every format field
+    // has been negotiated. This is the single synchronization point that makes
+    // GetOutputFormat() safe to call from any thread.
+    void PublishFormat();
+
     ComPtr<IMFMediaSource>  m_source;
     ComPtr<IMFSourceReader> m_reader;
 
+    // Negotiation working state. Written field-by-field throughout
+    // NegotiateFormat() and Open()'s output-format negotiation, all on the main
+    // thread while no capture worker is running. Other threads do NOT read this
+    // directly; they read m_publishedFormat via GetOutputFormat().
     CaptureFormat   m_format;
+
+    // Thread-safe published copy of m_format, committed by PublishFormat() and
+    // read under m_formatMutex by GetOutputFormat(). Decouples the multi-field
+    // struct read from the scattered writes so readers never observe a torn
+    // (partially updated) value.
+    CaptureFormat        m_publishedFormat;
+    mutable std::mutex   m_formatMutex;
+
     std::wstring    m_deviceName;
-    FrameCallback   m_callback;
+
+    // The frame callback and a mutex guarding swaps of it. StartCapture
+    // assigns m_callback; the capture worker reads + invokes it once per
+    // frame. Today the join barrier in StopCapture (always called before any
+    // re-StartCapture, on the main thread) makes a torn swap unreachable, but
+    // that relies on an undocumented "lifecycle calls are main-thread-only"
+    // invariant. The mutex makes the swap robustly safe regardless: the worker
+    // copies m_callback into a local under the lock, releases, then invokes the
+    // local, so the lock is never held across the per-frame callback work.
+    // The lambda only captures `this`, so the copy fits std::function's small-
+    // buffer optimization and is allocation-free.
+    FrameCallback      m_callback;
+    mutable std::mutex m_callbackMutex;
     
     std::thread       m_captureThread;
     std::atomic<bool> m_capturing{false};

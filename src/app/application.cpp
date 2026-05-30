@@ -8,6 +8,7 @@
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <cassert>      // assert: frame-buffer teardown invariant (worker joined)
 #include <debugapi.h>
 #include <shlobj.h>
 #include <shellapi.h>   // ShellExecuteW: openScreenshotFolder dispatch
@@ -1999,6 +2000,18 @@ void Application::Shutdown()
     if (m_captureDevice) {
         m_captureDevice->StopCapture();
         m_captureDevice->Close();
+
+        // Frame-buffer teardown contract (see frame_buffer.h): the capture
+        // worker is the producer that calls m_frameBuffer->Write(). The buffer
+        // must not be freed while that worker can still write. StopCapture()
+        // above joined the worker, so IsCapturing() is now false and freeing
+        // the buffer here is safe. Do it explicitly at this known-good point
+        // rather than leaving it to member-destruction order, which would
+        // otherwise be the only thing standing between a future reorder and a
+        // use-after-free.
+        assert(!m_captureDevice->IsCapturing());
+        m_frameBuffer.reset();
+
         m_captureDevice.reset();
     }
 
@@ -2427,8 +2440,11 @@ bool Application::ReconcileCaptureFormat(bool force)
     // P010 needs 2x the bytes-per-row of NV12, so the buffer is rebuilt
     // after the new negotiated format is known. Release the old one
     // first so the capture worker can't possibly write into a buffer
-    // about to be discarded (StopCapture already joined the worker,
-    // this is belt-and-suspenders).
+    // about to be discarded. StopCapture above already joined the worker,
+    // so IsCapturing() is false here, and the assert encodes that frame-buffer
+    // teardown contract (see frame_buffer.h) so a future reorder that frees
+    // the buffer before the join trips loudly in debug builds.
+    assert(!m_captureDevice->IsCapturing());
     m_frameBuffer.reset();
 
     // Disable the Elgato hardware tonemap before re-Open. All HDR<->SDR
