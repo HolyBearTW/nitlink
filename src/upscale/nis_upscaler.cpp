@@ -150,7 +150,7 @@ bool NisUpscaler::CompileShader(ID3D11Device* device)
     // NISOptimizer with NVIDIA_Generic. The same values get baked into the
     // shader as macros below AND used at Dispatch() time, so the shader's
     // [numthreads(...)] and the groupsX/Y math stay in sync by construction.
-    NISOptimizer opt(true, NISGPUArchitecture::NVIDIA_Generic);
+    NISOptimizer opt(true, NISGPUArchitecture::NVIDIA_Generic_fp16);
     m_blockWidth      = opt.GetOptimalBlockWidth();
     m_blockHeight     = opt.GetOptimalBlockHeight();
     m_threadGroupSize = opt.GetOptimalThreadGroupSize();
@@ -161,9 +161,10 @@ bool NisUpscaler::CompileShader(ID3D11Device* device)
 
     // D3D_SHADER_MACRO array is null-terminated.
     D3D_SHADER_MACRO defines[] = {
-        { "NIS_HLSL",             "1" },
-        { "NIS_SCALER",           "1" },
-        { "NIS_HDR_MODE",         "0" },
+        { "NIS_HLSL",               "1" },
+        { "NIS_SCALER",             "1" },
+        { "NIS_HDR_MODE",           "0" },
+        { "NIS_USE_HALF_PRECISION", "1" },
         { "NIS_BLOCK_WIDTH",      bw.c_str() },
         { "NIS_BLOCK_HEIGHT",     bh.c_str() },
         { "NIS_THREAD_GROUP_SIZE", tg.c_str() },
@@ -226,16 +227,16 @@ bool NisUpscaler::CreateCoefficientTextures(ID3D11Device* device)
 
     // Flatten the row-major arrays into linear float vectors that DX11 can
     // accept as initial subresource data.
-    std::vector<float> scaleData(kPhases * kFilter);
-    std::vector<float> usmData  (kPhases * kFilter);
+    std::vector<uint16_t> scaleData(kPhases * kFilter);
+    std::vector<uint16_t> usmData  (kPhases * kFilter);
     for (int p = 0; p < kPhases; p++) {
         for (int f = 0; f < kFilter; f++) {
-            scaleData[p * kFilter + f] = coef_scale[p][f];
-            usmData  [p * kFilter + f] = coef_usm  [p][f];
+            scaleData[p * kFilter + f] = coef_scale_fp16[p][f];
+            usmData  [p * kFilter + f] = coef_usm_fp16  [p][f];
         }
     }
 
-    auto makeTex = [device](const std::vector<float>& data,
+    auto makeTex = [device](const std::vector<uint16_t>& data,
                              ComPtr<ID3D11ShaderResourceView>& srv,
                              const wchar_t* label) -> bool
     {
@@ -244,14 +245,14 @@ bool NisUpscaler::CreateCoefficientTextures(ID3D11Device* device)
         td.Height           = kPhases;
         td.MipLevels        = 1;
         td.ArraySize        = 1;
-        td.Format           = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        td.Format           = DXGI_FORMAT_R16G16B16A16_FLOAT;
         td.SampleDesc.Count = 1;
         td.Usage            = D3D11_USAGE_IMMUTABLE;
         td.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
 
         D3D11_SUBRESOURCE_DATA init{};
         init.pSysMem     = data.data();
-        init.SysMemPitch = kTexW * 4 * sizeof(float); // 2 texels * 4 floats * 4 bytes
+        init.SysMemPitch = kTexW * 4 * sizeof(uint16_t); // 2 texels * 4 halfs * 2 bytes
 
         ComPtr<ID3D11Texture2D> tex;
         HRESULT hr = device->CreateTexture2D(&td, &init, &tex);
