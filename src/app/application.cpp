@@ -1303,7 +1303,9 @@ void Application::Run()
         if (forceReopen) {
             AppLog(L"Capture worker signaled needs-reopen, forcing format reconcile");
         }
-        ReconcileCaptureFormat(forceReopen);
+        const bool force4KX = m_4kxForceReconcile;
+        m_4kxForceReconcile = false;
+        ReconcileCaptureFormat(forceReopen || force4KX);
 
         // HDR toggle sync: when the config flag flips, recreate the swap
         // chain in the new format. Same D2D-release / resize / D2D-recreate
@@ -1500,12 +1502,22 @@ void Application::Run()
         // both the HDR and SDR no-signal trigger sites.
         const bool showNoSignalNow = ShouldShowNoSignal();
 
-        // 4K X: read live source mode once each time the signal (re)locks. The XU
-        // read needs a LIVE signal so it can't run at init; this fires on the
-        // no-signal to signal edge and re-fires after resolution/HDR changes
-        // (which drop + relock). Bounded request/response; cost lands on lock only.
-        if (m_is4KX && m_prev4KXNoSignal && !showNoSignalNow) {
-            m_source4KProMode = Detect4KXSourceMode(m_currentDeviceInfo.name);
+        // 4K X: a background poller reads the live source mode off the render
+        // thread (Detect4KXSourceMode opens a DirectShow filter, ~50-100ms; too
+        // slow for this loop). Start is idempotent. On a source-mode change, force
+        // a reconcile so capture re-matches the source resolution/fps. A live PS5
+        // resolution change is too brief to trip the no-signal edge, so polling is
+        // what catches it.
+        if (m_is4KX) {
+            m_4kxPoller.Start(m_currentDeviceInfo.name, m_source4KProMode);
+            if (m_4kxPoller.AcceptUpdate(&m_source4KProMode)) {
+                m_4kxForceReconcile = true;
+                AppLog(L"4K X source mode: "
+                       + std::to_wstring(m_source4KProMode.width) + L"x"
+                       + std::to_wstring(m_source4KProMode.height) + L"@"
+                       + std::to_wstring(m_source4KProMode.fps)
+                       + (m_source4KProMode.hdrActive ? L" HDR" : L" SDR"));
+            }
         }
         m_prev4KXNoSignal = showNoSignalNow;
 
@@ -2591,6 +2603,28 @@ bool Application::ReconcileCaptureFormat(bool force)
                    std::to_wstring(ov.height) + L" down to 1920x1080");
             ov.width  = 1920;
             ov.height = 1080;
+        }
+
+        // 4K X follow-source: when the user has not pinned an explicit override
+        // (Auto == width/height 0), capture at the source's ACTUAL resolution and
+        // fps from Detect4KXSourceMode instead of the card's native-best (4K@144).
+        // The card otherwise upscales e.g. a 1080p source to 4K; matching the
+        // source is cheaper and lets NIS do the upscale to the display.
+        if (m_is4KX && m_source4KProMode.detected &&
+            ov.width == 0 && ov.height == 0) {
+            ov.width  = m_source4KProMode.width;
+            ov.height = m_source4KProMode.height;
+            ov.fps    = m_source4KProMode.fps;
+            AppLog(L"Reconcile: 4K X following source "
+                   + std::to_wstring(ov.width) + L"x" + std::to_wstring(ov.height)
+                   + L"@" + std::to_wstring(ov.fps));
+        }
+        // 4K X HDR fps clamp: the X publishes 4K P010 only at 30fps. When the HDR
+        // pipeline wants P010 at 4K, drop fps to 30 so negotiation succeeds (the X
+        // trades framerate for HDR, the way the 4K S trades resolution).
+        if (m_is4KX && wantP010 && ov.height >= 2160 && (ov.fps == 0 || ov.fps > 30)) {
+            AppLog(L"Reconcile: 4K X 4K HDR, clamping fps to 30 (4K P010 cap)");
+            ov.fps = 30;
         }
 
         m_captureDevice->SetFormatOverride(ov);

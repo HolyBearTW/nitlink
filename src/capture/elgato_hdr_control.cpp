@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iomanip>     // setw, setfill for hex dump
 #include <vector>      // Detect4KXSourceMode: exact-sized XU read buffers
+#include <chrono>      // Source4KXPoller: poll cadence timing
 
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "ole32.lib")
@@ -552,15 +553,6 @@ Source4KProMode Detect4KXSourceMode(const std::wstring& deviceName) {
                     }
                     result.sourceName = name;
                 }
-
-                {
-                    std::wstringstream ss;
-                    ss << L"Detect4KXSourceMode: " << result.width << L"x" << result.height
-                       << L"@" << result.fps << L" hdr=" << (result.hdrActive ? L"yes" : L"no")
-                       << L" source='" << result.sourceName << L"'"
-                       << (result.detected ? L"" : L" (no timing block)");
-                    Log(ss.str());
-                }
             }
         }
     }
@@ -569,6 +561,65 @@ Source4KProMode Detect4KXSourceMode(const std::wstring& deviceName) {
         CoUninitialize();
     }
     return result;
+}
+
+// ===========================================================================
+// Source4KXPoller: background 4K X source-mode monitor (see header). Mirrors
+// HDRSourcePoller's threading model: the worker is the sole writer to m_mode +
+// m_hasUpdate, writes m_mode (under m_mutex) strictly before setting the flag,
+// and the main thread test-and-clears via AcceptUpdate.
+// ===========================================================================
+void Source4KXPoller::Start(const std::wstring& deviceName, const Source4KProMode& initial) {
+    if (m_running.load(std::memory_order_acquire)) return;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_mode = initial;
+    }
+    m_hasUpdate.store(false, std::memory_order_release);
+    m_stop.store(false, std::memory_order_release);
+    m_running.store(true, std::memory_order_release);
+    m_thread = std::thread(&Source4KXPoller::PollerThreadMain, this, deviceName);
+}
+
+void Source4KXPoller::Stop() {
+    if (!m_running.load(std::memory_order_acquire) && !m_thread.joinable()) return;
+    m_stop.store(true, std::memory_order_release);
+    if (m_thread.joinable()) m_thread.join();
+    m_running.store(false, std::memory_order_release);
+}
+
+bool Source4KXPoller::AcceptUpdate(Source4KProMode* out) {
+    if (!m_hasUpdate.exchange(false, std::memory_order_acq_rel)) return false;
+    if (out) {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        *out = m_mode;
+    }
+    return true;
+}
+
+void Source4KXPoller::PollerThreadMain(std::wstring deviceName) {
+    using namespace std::chrono_literals;
+    // ~1.5s cadence, broken into 100ms chunks so Stop() returns promptly.
+    constexpr int  kChunks = 15;
+    constexpr auto kChunk  = 100ms;
+    while (!m_stop.load(std::memory_order_acquire)) {
+        Source4KProMode m = Detect4KXSourceMode(deviceName);
+        if (m.detected) {
+            bool changed = false;
+            {
+                std::lock_guard<std::mutex> lk(m_mutex);
+                changed = m.width      != m_mode.width  ||
+                          m.height     != m_mode.height ||
+                          m.fps        != m_mode.fps    ||
+                          m.hdrActive  != m_mode.hdrActive ||
+                          m.sourceName != m_mode.sourceName;
+                if (changed) m_mode = m;
+            }
+            if (changed) m_hasUpdate.store(true, std::memory_order_release);
+        }
+        for (int i = 0; i < kChunks && !m_stop.load(std::memory_order_acquire); ++i)
+            std::this_thread::sleep_for(kChunk);
+    }
 }
 
 } // namespace NitLink

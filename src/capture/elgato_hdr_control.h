@@ -26,6 +26,9 @@
 
 #include <string>
 #include <cstdint>
+#include <thread>
+#include <atomic>
+#include <mutex>
 
 namespace NitLink {
 
@@ -140,5 +143,47 @@ Source4KProMode Detect4KProSourceMode(const std::wstring& deviceName);
 // window-title / state path can consume either. Must be read on a LIVE, LOCKED
 // signal; returns detected=false on non-4K-X devices, no XU node, or no lock.
 Source4KProMode Detect4KXSourceMode(const std::wstring& deviceName);
+
+// Background-thread monitor for the Elgato 4K X live source mode.
+//
+// Detect4KXSourceMode opens a transient DirectShow filter (~50-100ms), too slow
+// to call from the render loop. This polls it about every 1.5s on a worker
+// thread and hands the latest Source4KProMode to the main thread via an atomic
+// flag plus a mutex-guarded struct. Mirrors HDRSourcePoller, but carries the
+// full mode (resolution/fps/HDR/source name) instead of a single HDR bool, so
+// the run loop can follow source resolution changes that the no-signal edge is
+// too brief to catch.
+//
+// Lifecycle: Start() is idempotent (safe to call every frame); the destructor
+// Stop()s and joins. HasUpdate / AcceptUpdate are safe to call from the main
+// thread during the run loop.
+class Source4KXPoller {
+public:
+    Source4KXPoller() = default;
+    ~Source4KXPoller() { Stop(); }
+    Source4KXPoller(const Source4KXPoller&) = delete;
+    Source4KXPoller& operator=(const Source4KXPoller&) = delete;
+
+    // Launch the poll thread. No-op if already running. `initial` seeds the
+    // last-known mode so the first probe that matches does not report a
+    // spurious change.
+    void Start(const std::wstring& deviceName, const Source4KProMode& initial);
+    // Signal the worker to exit and join. Idempotent; called by the destructor.
+    void Stop();
+    bool HasUpdate() const { return m_hasUpdate.load(std::memory_order_acquire); }
+    // Atomic test-and-clear of the update flag; on a pending update fills *out
+    // with the new mode. Safe to call unconditionally each iteration.
+    bool AcceptUpdate(Source4KProMode* out);
+
+private:
+    void PollerThreadMain(std::wstring deviceName);
+
+    std::thread       m_thread;
+    std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_running{false};
+    std::atomic<bool> m_hasUpdate{false};
+    std::mutex        m_mutex;     // guards m_mode
+    Source4KProMode   m_mode;
+};
 
 } // namespace NitLink

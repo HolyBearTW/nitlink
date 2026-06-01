@@ -286,6 +286,14 @@ private:
     // init.
     bool m_is4KX           = false;
     bool m_prev4KXNoSignal = true;
+    // Set by the Run-loop 4K X source read when the source resolution, fps, or
+    // HDR state changes; consumed (forced) by the next ReconcileCaptureFormat so
+    // capture re-matches the source.
+    bool m_4kxForceReconcile = false;
+    // Background poller reading the live 4K X source mode off the render thread
+    // (the XU read opens a DirectShow filter, ~50-100ms). Drives source-follow.
+    // Its destructor stops + joins the worker.
+    Source4KXPoller m_4kxPoller;
 
     // Source resolution + fps read from the 4K Pro Elgato custom
     // property set (props 210 + 208) after CaptureDevice::Open. Used
