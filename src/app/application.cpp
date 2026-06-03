@@ -597,7 +597,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // deliver full-range pixels (0-255) directly; for those the shader
     // is told to skip the expansion. Without this, full-range sources
     // render with crushed blacks.
-    if (m_renderer) m_renderer->SetSourceFullRange(format.fullRange);
+    if (m_renderer) {
+        m_lastMfFullRange   = format.fullRange;
+        m_lastCaptureIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
+        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+    }
 
     // Tell the renderer whether the data flowing through the capture buffer
     // is PQ-encoded HDR10. This is derived from the negotiated capture
@@ -1142,6 +1146,43 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
         });
 
+    // Alt+V: toggle VSync. Default off keeps the low-latency tearing-allowed
+    // present; on switches to a synced present so a VRR or fixed display can
+    // stop the tearing (most visible on camera pans).
+    m_hotkeyManager->Register("toggle_vsync", {VK_MENU, 'V'},
+        [this]() {
+            if (m_renderer) {
+                const bool on = !m_renderer->IsVSyncOn();
+                m_renderer->SetVSync(on);
+                AppLog(on ? L"VSync ON (Alt+V): synced present, no tearing"
+                          : L"VSync OFF (Alt+V): immediate present, lowest latency");
+            }
+        });
+
+    // Alt+L: toggle Low-Latency present mode. ON = present-on-arrival (wait for
+    // the swap chain at the TOP of the loop, then grab the freshest frame and
+    // present it). OFF = VRR/Smooth pacing (skip dup frames, panel follows the
+    // content rate). Lets us A/B the two back-to-back on the rig in one keypress.
+    m_hotkeyManager->Register("toggle_low_latency", {VK_MENU, 'L'},
+        [this]() {
+            m_lowLatency = !m_lowLatency;
+            AppLog(m_lowLatency ? L"Low-Latency ON (Alt+L): present-on-arrival"
+                                : L"Low-Latency OFF (Alt+L): VRR/Smooth pacing");
+        });
+
+    // Alt+R: override the source color-range expansion. MF reports HDR10 as
+    // "assume limited", which over-expands a full-range source and pushes skin
+    // tones orange. Cycles Auto (MF) -> force Full -> force Limited so the
+    // correct range can be found by eye, then locked in.
+    m_hotkeyManager->Register("cycle_color_range", {VK_MENU, 'R'},
+        [this]() {
+            m_sourceRangeOverride = (m_sourceRangeOverride + 1) % 3;
+            if (m_renderer) m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+            AppLog(m_sourceRangeOverride == 1 ? L"Color range: FULL forced (Alt+R)"
+                 : m_sourceRangeOverride == 2 ? L"Color range: LIMITED forced (Alt+R)"
+                 : L"Color range: AUTO from Media Foundation (Alt+R)");
+        });
+
     // Ctrl+F5: capture the current frame's placeholder fingerprint to the
     // debug-output channel. Use this while the Elgato NO SIGNAL placeholder
     // is on screen (HDMI unplugged / source powered off) to obtain the live
@@ -1332,6 +1373,19 @@ void Application::Run()
             }
         }
 
+        // LOW-LATENCY (present-on-arrival): wait for the swap chain HERE, at the
+        // top, while holding no frame; the Read below then grabs the freshest
+        // frame and presents it without the ~one-refresh wait aging it. In
+        // VRR/Smooth mode this is skipped and BeginFrame() does the wait as before.
+        //
+        // Gating this on FrameBuffer::WaitForFrame (arrival-driven present) to
+        // kill the frameAge beat regressed hard (frameAge unchanged, ~60% photon
+        // misses): the jitter is the capture(143Hz)-vs-display(144Hz) RATE beat;
+        // the freshest frame at any display instant is already 0-7 ms old by
+        // physics, so a second blocking wait only adds drops, it cannot make the
+        // frame fresher. The frame-ready event infra stays in place but unused.
+        if (m_lowLatency && m_renderer) m_renderer->WaitForFrameReady();
+
         auto captureStart = Clock::now();
 
         bool haveFreshFrame         = false;
@@ -1509,6 +1563,9 @@ void Application::Run()
         // resolution change is too brief to trip the no-signal edge, so polling is
         // what catches it.
         if (m_is4KX) {
+            // 4K X source poller: opens the XU once and holds it (Start is
+            // idempotent), reads resolution/fps/HDR/source name off the render
+            // thread via the readiness-poll + paced sequence the Elgato app uses.
             m_4kxPoller.Start(m_currentDeviceInfo.name, m_source4KProMode);
             if (m_4kxPoller.AcceptUpdate(&m_source4KProMode)) {
                 m_4kxForceReconcile = true;
@@ -1636,7 +1693,9 @@ void Application::Run()
                        << L" totalSkipped=" << m_skippedFrameCount
                        << L" consecutive=" << m_consecutiveSkips
                        << L" thisFrameNew=" << (isNewFrame ? L"Y" : L"N")
-                       << L" haveFresh=" << (haveFreshFrame ? L"Y" : L"N");
+                       << L" haveFresh=" << (haveFreshFrame ? L"Y" : L"N")
+                       << L" frameAge=" << m_frameAgeMs
+                       << L" renderMs=" << m_renderLatencyMs;
                     AppLog(ss.str());
                     lastDiffLog = now;
                 }
@@ -1709,6 +1768,11 @@ void Application::Run()
             shouldRender = false;
         }
 
+        // Low-Latency mode never skips a Present: it always shows the freshest
+        // frame (the wait already happened at the top, so it stays paired 1:1
+        // with Present). Trades VRR content-rate pacing for minimum latency.
+        if (m_lowLatency) shouldRender = true;
+
         if (!shouldRender) {
             // Duplicate frame detected, VRR pacing on: skip the entire
             // render+Present block. The monitor will hold the previous frame
@@ -1727,9 +1791,22 @@ void Application::Run()
         // Small sleep to avoid 100% CPU spin when running uncapped.
         // 1ms is short enough to be imperceptible but stops the render loop
         // from hammering at 3000+ fps doing nothing useful.
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // LATENCY TEST (2026-06-02): disabled -- cost ~1ms on every presented
+        // frame; the waitable swapchain already paces the loop, so this was
+        // redundant. Restore if idle-content CPU spin returns.
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         auto renderStart = Clock::now();
+
+        // Frame-age localizer: ms from MF delivering this frame to the moment
+        // rendering starts on it. arrivalWallNs and Clock both ride steady_clock,
+        // so the subtraction is real elapsed time. Guard on a fresh frame; a
+        // re-presented iteration leaves frame.arrivalWallNs at 0.
+        if (haveFreshFrame && frame.arrivalWallNs > 0) {
+            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                renderStart.time_since_epoch()).count();
+            m_frameAgeMs = (double)(nowNs - frame.arrivalWallNs) / 1.0e6;
+        }
 
         // HDR path renders the capture directly into the HDR10 PQ
         // backbuffer. D2D can't target R10G10B10A2 HDR10 backbuffers, so
@@ -1752,7 +1829,7 @@ void Application::Run()
         // marks the window as unresponsive and the WebView2 child can
         // get its compositing context torn down.
         if (m_settingsVisible) {
-            m_renderer->BeginFrame();   // clears to (0,0,0,1): solid black
+            m_renderer->BeginFrame(!m_lowLatency);   // clears to (0,0,0,1): solid black
             m_renderer->EndFrame();     // presents the black frame
             continue;                    // skip the rest of the pipeline
         }
@@ -1767,7 +1844,7 @@ void Application::Run()
             // into the unused intermediate, leaving the backbuffer black.
             m_renderer->SetPostInputEnabled(false);
 
-            m_renderer->BeginFrame();
+            m_renderer->BeginFrame(!m_lowLatency);
             m_renderer->DrawCaptureFrame();
 
             // HDR color-fidelity diagnostic overlay (Ctrl+F4). Draws known
@@ -1883,7 +1960,7 @@ void Application::Run()
         const bool nisActive = m_nisUpscaler && m_config && m_config->nisEnabled;
         m_renderer->SetPostInputEnabled(nisActive);
 
-        m_renderer->BeginFrame();
+        m_renderer->BeginFrame(!m_lowLatency);
         m_renderer->DrawCaptureFrame();
 
         if (nisActive && m_renderer->GetCaptureOutputSRV()) {
@@ -2711,7 +2788,9 @@ bool Application::ReconcileCaptureFormat(bool force)
 
     if (m_renderer) {
         m_renderer->SetSourceRowOrder(format.topDown);
-        m_renderer->SetSourceFullRange(format.fullRange);
+        m_lastMfFullRange   = format.fullRange;
+        m_lastCaptureIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
+        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
         // Push the shader's HDR-source flag based on the ACTUAL negotiated
         // capture format, not on m_sourceIsHDR10. See the long-form comment
         // in Initialize() for why these are different questions on the 4K S.

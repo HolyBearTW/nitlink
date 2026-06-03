@@ -1,4 +1,5 @@
 #include "frame_buffer.h"
+#include <windows.h>
 #include <algorithm>
 #include <cstring>
 
@@ -28,6 +29,27 @@ FrameBuffer::FrameBuffer(uint32_t width, uint32_t height, uint32_t stride)
     const uint32_t frameSize = std::max(strideFrameSize, maxPossibleFrameSize);
     for (int i = 0; i < kNumBuffers; ++i) {
         m_buffers[i].data.resize(frameSize);
+    }
+
+    // Auto-reset, initially non-signaled. Set on every Write(); the render loop
+    // blocks on it in WaitForFrame() for arrival-driven present.
+    m_frameReadyEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+}
+
+FrameBuffer::~FrameBuffer()
+{
+    // Owners join the capture worker before destroying the buffer (see the
+    // teardown contract in frame_buffer.h), so no Write() can race this close.
+    if (m_frameReadyEvent) {
+        CloseHandle((HANDLE)m_frameReadyEvent);
+        m_frameReadyEvent = nullptr;
+    }
+}
+
+void FrameBuffer::WaitForFrame(unsigned long timeoutMs)
+{
+    if (m_frameReadyEvent) {
+        WaitForSingleObject((HANDLE)m_frameReadyEvent, timeoutMs);
     }
 }
 
@@ -102,6 +124,12 @@ void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp,
 
     m_newFrameAvailable = true;
     m_framesWritten++;
+
+    // Wake the render loop's arrival-driven present (low-latency mode). The
+    // auto-reset event latches, so a Write that lands between the render
+    // thread's Read and its next WaitForFrame is not lost -- the wait returns
+    // immediately.
+    if (m_frameReadyEvent) SetEvent((HANDLE)m_frameReadyEvent);
 }
 
 bool FrameBuffer::Read(FrameData& outFrame)

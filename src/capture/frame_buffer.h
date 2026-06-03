@@ -37,7 +37,7 @@ public:
     //   (m_needsReopen) breaks from the no-frame failure branch, never
     //   mid-Write, and is still joined by the following StopCapture before
     //   the buffer is released or rebuilt.
-    ~FrameBuffer() = default;
+    ~FrameBuffer();
 
     // Producer (capture thread) writes frames
     void Write(const uint8_t* data, uint32_t size, int64_t timestamp,
@@ -46,6 +46,14 @@ public:
     // Consumer (render thread) reads latest frame
     // Returns true if a new frame is available since last read
     bool Read(FrameData& outFrame);
+
+    // Block the calling (render) thread until the next Write() delivers a fresh
+    // frame, or timeoutMs elapses. Powers the low-latency arrival-driven
+    // present: the render loop wakes the instant the capture thread hands over a
+    // frame, instead of on the swap chain's independent clock -- removing the
+    // capture-vs-present phase beat that ages frames up to ~one refresh. The
+    // timeout keeps the loop responsive if frames stop (signal loss).
+    void WaitForFrame(unsigned long timeoutMs);
 
     // Stats
     uint64_t GetFramesWritten()       const { return m_framesWritten; }
@@ -122,6 +130,11 @@ private:
     uint64_t              m_lastFrameHash      = 0;
     uint32_t              m_identicalCount     = 0;
     std::atomic<bool>     m_signalActive{false};
+
+    // Auto-reset Win32 Event (HANDLE, stored as void* to keep <windows.h> out of
+    // this header). Signaled by Write() on every captured frame; the render loop
+    // blocks on it via WaitForFrame() for low-latency arrival-driven present.
+    void* m_frameReadyEvent = nullptr;
 };
 
 } // namespace NitLink

@@ -304,6 +304,26 @@ private:
     // failed.
     Source4KProMode m_source4KProMode{};
 
+    // Source color-range override for the YUV->RGB range expansion. Media
+    // Foundation reports HDR10 as "not set, assuming limited", which over-
+    // expands a full-range source and pushes skin tones orange. The 4K X's
+    // HDR10 is actually full-range despite that label, so EffectiveSourceFullRange
+    // corrects it; Alt+R cycles a manual override on top: 0 = Auto, 1 = force
+    // full, 2 = force limited.
+    int  m_sourceRangeOverride = 0;
+    bool m_lastMfFullRange     = false;  // last range MF reported (for Auto)
+    bool m_lastCaptureIsP010   = false;  // last capture was HDR10 PQ (for Auto)
+
+    // Effective source color range: manual override wins; else the 4K X HDR10
+    // correction (MF mislabels its full-range source as limited); else MF's
+    // value. The 4K Pro and every other source keep MF's value unchanged.
+    bool EffectiveSourceFullRange() const {
+        if (m_sourceRangeOverride == 1) return true;
+        if (m_sourceRangeOverride == 2) return false;
+        if (m_is4KX && m_lastCaptureIsP010) return true;
+        return m_lastMfFullRange;
+    }
+
     // Detected HDMI source identifier from the 4K S vendor HID. Populated
     // once per app process by Detect4KSHdmiSource(). When the label
     // matches a known HDR-capable console (Is4KSHdmiSourceHdrCapable
@@ -324,6 +344,8 @@ private:
     // Performance tracking
     double m_captureLatencyMs = 0.0;
     double m_renderLatencyMs = 0.0;
+    double m_frameAgeMs = 0.0;   // MF-delivery -> render-start, ms (rig localizer)
+    bool m_lowLatency = false;  // present-on-arrival (wait-then-read) vs VRR pacing; toggle Alt+L
 
     // App ingest: live card-driver-to-app-callback delivery time, computed
     // each frame as arrivalWallNs - (frame.deviceTimestamp * 100) in ns

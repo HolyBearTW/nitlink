@@ -436,127 +436,149 @@ Source4KProMode Detect4KProSourceMode(const std::wstring& deviceName) {
 // HID or processing path, so it is safe. Register map is firmware-specific
 // (see header).
 // ===========================================================================
+// Locate the 4K X XU node (KSNODETYPE_DEV_SPECIFIC) on an already-open capture
+// filter and bind its IKsControl. Returns the node index, or -1 when the filter
+// is not a 4K X or exposes no XU node; on success outCtrl holds the bound control
+// interface. Split out so the poll thread can open the filter once and reuse it.
+// Reopening a DirectShow filter every poll churned the device and destabilized
+// USB enumeration; the Elgato app keeps one handle open for its whole session.
+static LONG FindXuNode(IBaseFilter* filter, CComPtr<IKsControlLocal>& outCtrl) {
+    if (!filter) return -1;
+    CComPtr<IKsControlLocal>      ctrl;
+    CComPtr<IKsTopologyInfoLocal> topo;
+    if (FAILED(filter->QueryInterface(kIID_IKsControl,
+                   reinterpret_cast<void**>(&ctrl))) || !ctrl ||
+        FAILED(filter->QueryInterface(kIID_IKsTopologyInfo,
+                   reinterpret_cast<void**>(&topo))) || !topo) {
+        return -1;
+    }
+    // The XU is the KSNODETYPE_DEV_SPECIFIC topology node.
+    static const GUID kDevSpecific =
+        { 0x941C7AC0, 0xC559, 0x11D0, { 0x8A, 0x2B, 0x00, 0xA0, 0xC9, 0x25, 0x5A, 0xC1 } };
+    DWORD numNodes = 0; topo->get_NumNodes(&numNodes);
+    for (DWORD i = 0; i < numNodes; ++i) {
+        GUID nt{};
+        if (SUCCEEDED(topo->get_NodeType(i, &nt)) && IsEqualGUID(nt, kDevSpecific)) {
+            outCtrl = ctrl;
+            return static_cast<LONG>(i);
+        }
+    }
+    return -1;
+}
+
+// Read the 4K X source mode over an ALREADY-OPEN XU handle. Issues the app's
+// readiness poll (reg 0x67 via the a0 opcode) first, then the timing, HDR, and
+// SPD register reads, paced, with every write confined to the XU command port
+// (entity 0x04, sel 0x01/0x02). Opens and closes no device handle, so it runs
+// repeatedly on one held connection without the reopen churn. Decoded from the
+// app's request set: reg 0x37 -> 0x2A timing block (resolution + fps), reg 0x65
+// -> 0x22 HDR DRM InfoFrame (byte4 == 0x87 when HDR), reg 0x4b -> 0x1E SPD
+// InfoFrame (source product). Register map verified on firmware 250815, 241210,
+// and 250210.
+static bool ReadXuBlocks(IKsControlLocal* ctrl, LONG node, Source4KProMode& result) {
+    if (!ctrl || node < 0) return false;
+
+    auto np = [&](ULONG sel, ULONG flag, void* d, ULONG l, ULONG* r) -> HRESULT {
+        KSP_NODE kp{};
+        kp.Property.Set   = k4KXExtensionUnit;
+        kp.Property.Id    = sel;
+        kp.Property.Flags = flag | KSPROPERTY_TYPE_TOPOLOGY;
+        kp.NodeId         = static_cast<ULONG>(node);
+        return ctrl->KsProperty(reinterpret_cast<PKSPROPERTY>(&kp),
+                                sizeof(kp), d, l, r);
+    };
+    auto rdU16 = [](const uint8_t* p) -> uint16_t {
+        return static_cast<uint16_t>(p[0] | (p[1] << 8));
+    };
+
+    // One request/response round against the XU mailbox: write the app's request
+    // to the command port, poll the 2-byte header for the reply length, read the
+    // reply at EXACT size. Fills 'out' on success.
+    auto readBlock = [&](const uint8_t* reqBytes, int reqLen,
+                         std::vector<uint8_t>& out) -> bool {
+        ULONG    w = 0;
+        uint16_t rl = static_cast<uint16_t>(reqLen);
+        np(kXuSelTrigger, KSPROPERTY_TYPE_SET, &rl, sizeof(rl), &w);
+        Sleep(3);
+        np(kXuSelValue, KSPROPERTY_TYPE_SET,
+           const_cast<uint8_t*>(reqBytes), static_cast<ULONG>(reqLen), &w);
+        Sleep(3);
+        uint16_t len = 0;
+        for (int p = 0; p < 16 && len == 0; ++p) {
+            uint8_t hdr[2] = {0}; ULONG hn = 0;
+            if (SUCCEEDED(np(kXuSelTrigger, KSPROPERTY_TYPE_GET, hdr, sizeof(hdr), &hn))
+                && hn >= 2) {
+                len = rdU16(hdr);
+            }
+            if (len == 0) Sleep(4);
+        }
+        if (len == 0 || len > 256) return false;
+        out.assign(len, 0); ULONG rn = 0;
+        if (FAILED(np(kXuSelValue, KSPROPERTY_TYPE_GET, out.data(), len, &rn))
+            || rn < 2) {
+            return false;
+        }
+        out.resize(rn);
+        return true;
+    };
+
+    // Readiness poll the app issues before each read cycle (reg 0x67). The reply
+    // is not decoded; sending it mirrors the app's handshake so the card is in
+    // the state it expects before the register reads.
+    static const uint8_t kReqReady[9] =
+        { 0xA0,0x06,0x00,0x00,0x67,0x00,0x00,0x00,0xF3 };
+    std::vector<uint8_t> rdy;
+    readBlock(kReqReady, 9, rdy);
+
+    // Resolution + fps: request 0x37 -> 0x2A timing block.
+    static const uint8_t kReqTiming[9] =
+        { 0xA1,0x06,0x00,0x00,0x37,0x00,0x00,0x00,0x22 };
+    std::vector<uint8_t> tb;
+    if (readBlock(kReqTiming, 9, tb) && tb.size() >= 20 && tb[1] == 0x2A) {
+        result.height   = rdU16(&tb[10]);
+        result.width    = rdU16(&tb[12]);
+        result.fps      = (rdU16(&tb[18]) + 50) / 100;  // Hz*100, rounded
+        result.detected = (result.width != 0 && result.height != 0);
+    }
+
+    // HDR: request 0x65 -> 0x22 DRM InfoFrame. byte4 == 0x87 => HDR on.
+    static const uint8_t kReqHdr[9] =
+        { 0xA1,0x06,0x00,0x00,0x65,0x00,0x00,0x00,0xF4 };
+    std::vector<uint8_t> hb;
+    if (readBlock(kReqHdr, 9, hb) && hb.size() >= 5 && hb[1] == 0x22) {
+        result.hdrActive = (hb[4] == 0x87);
+    }
+
+    // Source device: request 0x4b -> 0x1E SPD InfoFrame. The product description
+    // is 16 bytes of ASCII at offset 15 (e.g. "PS5").
+    static const uint8_t kReqSpd[9] =
+        { 0xA1,0x06,0x00,0x00,0x4B,0x00,0x00,0x00,0x0E };
+    std::vector<uint8_t> sb;
+    if (readBlock(kReqSpd, 9, sb) && sb.size() >= 31 && sb[1] == 0x1E) {
+        std::wstring name;
+        for (int i = 0; i < 16; ++i) {
+            uint8_t c = sb[15 + i];
+            if (c == 0) break;
+            if (c >= 32 && c < 127) name += static_cast<wchar_t>(c);
+        }
+        result.sourceName = name;
+    }
+    return result.detected;
+}
+
 Source4KProMode Detect4KXSourceMode(const std::wstring& deviceName) {
     Source4KProMode result;
 
     HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool comOwnedHere = SUCCEEDED(comHr) && comHr != S_FALSE;
-
     {
-        CComPtr<IBaseFilter> filter = FindDeviceFilter(deviceName, /*quiet=*/true);
-        CComPtr<IKsControlLocal>      ctrl;
-        CComPtr<IKsTopologyInfoLocal> topo;
-        if (filter &&
-            SUCCEEDED(filter->QueryInterface(kIID_IKsControl,
-                          reinterpret_cast<void**>(&ctrl))) && ctrl &&
-            SUCCEEDED(filter->QueryInterface(kIID_IKsTopologyInfo,
-                          reinterpret_cast<void**>(&topo))) && topo) {
-
-            // The XU is the KSNODETYPE_DEV_SPECIFIC topology node.
-            static const GUID kDevSpecific =
-                { 0x941C7AC0, 0xC559, 0x11D0, { 0x8A, 0x2B, 0x00, 0xA0, 0xC9, 0x25, 0x5A, 0xC1 } };
-            DWORD numNodes = 0; topo->get_NumNodes(&numNodes);
-            LONG node = -1;
-            for (DWORD i = 0; i < numNodes; ++i) {
-                GUID nt{};
-                if (SUCCEEDED(topo->get_NodeType(i, &nt)) && IsEqualGUID(nt, kDevSpecific)) {
-                    node = static_cast<LONG>(i);
-                    break;
-                }
-            }
-
-            if (node >= 0) {
-                auto np = [&](ULONG sel, ULONG flag, void* d, ULONG l, ULONG* r) -> HRESULT {
-                    KSP_NODE kp{};
-                    kp.Property.Set   = k4KXExtensionUnit;
-                    kp.Property.Id    = sel;
-                    kp.Property.Flags = flag | KSPROPERTY_TYPE_TOPOLOGY;
-                    kp.NodeId         = static_cast<ULONG>(node);
-                    return ctrl->KsProperty(reinterpret_cast<PKSPROPERTY>(&kp),
-                                            sizeof(kp), d, l, r);
-                };
-
-                // Read source mode from the XU via the app's request set, decoded
-                // on THIS firmware from a full replay dump:
-                //   request 0x37 -> 0x2A block = video timing (resolution + fps)
-                //   request 0x65 -> 0x22 block = HDR DRM InfoFrame (byte4 == 0x87)
-                //   request 0x4b -> 0x1E block = SPD InfoFrame (vendor + product)
-                // Every request is the app's exact bytes, written ONLY to the XU
-                // command port (entity 0x04, sel 0x01/0x02), verified safe by
-                // wire inspection. The register map differs by firmware; these values
-                // are for the current (post-downgrade) firmware on this card.
-                auto rdU16 = [](const uint8_t* p) -> uint16_t {
-                    return static_cast<uint16_t>(p[0] | (p[1] << 8));
-                };
-
-                // One request/response round against the XU mailbox: write the
-                // app's request to the command port, poll the 2-byte header for the
-                // reply length, read the reply at EXACT size. Fills 'out' on success.
-                auto readBlock = [&](const uint8_t* reqBytes, int reqLen,
-                                     std::vector<uint8_t>& out) -> bool {
-                    ULONG    w = 0;
-                    uint16_t rl = static_cast<uint16_t>(reqLen);
-                    np(kXuSelTrigger, KSPROPERTY_TYPE_SET, &rl, sizeof(rl), &w);
-                    Sleep(3);
-                    np(kXuSelValue, KSPROPERTY_TYPE_SET,
-                       const_cast<uint8_t*>(reqBytes), static_cast<ULONG>(reqLen), &w);
-                    Sleep(3);
-                    uint16_t len = 0;
-                    for (int p = 0; p < 16 && len == 0; ++p) {
-                        uint8_t hdr[2] = {0}; ULONG hn = 0;
-                        if (SUCCEEDED(np(kXuSelTrigger, KSPROPERTY_TYPE_GET, hdr, sizeof(hdr), &hn))
-                            && hn >= 2) {
-                            len = rdU16(hdr);
-                        }
-                        if (len == 0) Sleep(4);
-                    }
-                    if (len == 0 || len > 256) return false;
-                    out.assign(len, 0); ULONG rn = 0;
-                    if (FAILED(np(kXuSelValue, KSPROPERTY_TYPE_GET, out.data(), len, &rn))
-                        || rn < 2) {
-                        return false;
-                    }
-                    out.resize(rn);
-                    return true;
-                };
-
-                // Resolution + fps: request 0x37 -> 0x2A timing block.
-                static const uint8_t kReqTiming[9] =
-                    { 0xA1,0x06,0x00,0x00,0x37,0x00,0x00,0x00,0x22 };
-                std::vector<uint8_t> tb;
-                if (readBlock(kReqTiming, 9, tb) && tb.size() >= 20 && tb[1] == 0x2A) {
-                    result.height   = rdU16(&tb[10]);
-                    result.width    = rdU16(&tb[12]);
-                    result.fps      = (rdU16(&tb[18]) + 50) / 100;  // Hz*100, rounded
-                    result.detected = (result.width != 0 && result.height != 0);
-                }
-
-                // HDR: request 0x65 -> 0x22 DRM InfoFrame. byte4 == 0x87 => HDR on.
-                static const uint8_t kReqHdr[9] =
-                    { 0xA1,0x06,0x00,0x00,0x65,0x00,0x00,0x00,0xF4 };
-                std::vector<uint8_t> hb;
-                if (readBlock(kReqHdr, 9, hb) && hb.size() >= 5 && hb[1] == 0x22) {
-                    result.hdrActive = (hb[4] == 0x87);
-                }
-
-                // Source device: request 0x4b -> 0x1E SPD InfoFrame. The product
-                // description is 16 bytes of ASCII at offset 15 (e.g. "PS5").
-                static const uint8_t kReqSpd[9] =
-                    { 0xA1,0x06,0x00,0x00,0x4B,0x00,0x00,0x00,0x0E };
-                std::vector<uint8_t> sb;
-                if (readBlock(kReqSpd, 9, sb) && sb.size() >= 31 && sb[1] == 0x1E) {
-                    std::wstring name;
-                    for (int i = 0; i < 16; ++i) {
-                        uint8_t c = sb[15 + i];
-                        if (c == 0) break;
-                        if (c >= 32 && c < 127) name += static_cast<wchar_t>(c);
-                    }
-                    result.sourceName = name;
-                }
-            }
+        CComPtr<IBaseFilter>     filter = FindDeviceFilter(deviceName, /*quiet=*/true);
+        CComPtr<IKsControlLocal> ctrl;
+        LONG node = FindXuNode(filter, ctrl);
+        if (node >= 0) {
+            ReadXuBlocks(ctrl, node, result);
         }
     }
-
     if (comOwnedHere) {
         CoUninitialize();
     }
@@ -599,26 +621,44 @@ bool Source4KXPoller::AcceptUpdate(Source4KProMode* out) {
 
 void Source4KXPoller::PollerThreadMain(std::wstring deviceName) {
     using namespace std::chrono_literals;
-    // ~1.5s cadence, broken into 100ms chunks so Stop() returns promptly.
-    constexpr int  kChunks = 15;
+
+    HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool comOwned = SUCCEEDED(comHr) && comHr != S_FALSE;
+
+    // Open the XU connection ONCE and hold it for the thread lifetime. The prior
+    // path reopened a DirectShow filter every poll; that churn destabilized the
+    // card's USB enumeration. The Elgato app keeps one handle open for its whole
+    // session and reads the same registers continuously, mirrored here.
+    CComPtr<IBaseFilter>     filter = FindDeviceFilter(deviceName, /*quiet=*/true);
+    CComPtr<IKsControlLocal> ctrl;
+    LONG node = FindXuNode(filter, ctrl);
+
+    // ~2.0s cadence, broken into 100ms chunks so Stop() returns promptly.
+    constexpr int  kChunks = 20;
     constexpr auto kChunk  = 100ms;
     while (!m_stop.load(std::memory_order_acquire)) {
-        Source4KProMode m = Detect4KXSourceMode(deviceName);
-        if (m.detected) {
-            bool changed = false;
-            {
-                std::lock_guard<std::mutex> lk(m_mutex);
-                changed = m.width      != m_mode.width  ||
-                          m.height     != m_mode.height ||
-                          m.fps        != m_mode.fps    ||
-                          m.hdrActive  != m_mode.hdrActive ||
-                          m.sourceName != m_mode.sourceName;
-                if (changed) m_mode = m;
+        if (node >= 0 && ctrl) {
+            Source4KProMode m;
+            if (ReadXuBlocks(ctrl, node, m) && m.detected) {
+                bool changed = false;
+                {
+                    std::lock_guard<std::mutex> lk(m_mutex);
+                    changed = m.width      != m_mode.width  ||
+                              m.height     != m_mode.height ||
+                              m.fps        != m_mode.fps    ||
+                              m.hdrActive  != m_mode.hdrActive ||
+                              m.sourceName != m_mode.sourceName;
+                    if (changed) m_mode = m;
+                }
+                if (changed) m_hasUpdate.store(true, std::memory_order_release);
             }
-            if (changed) m_hasUpdate.store(true, std::memory_order_release);
         }
         for (int i = 0; i < kChunks && !m_stop.load(std::memory_order_acquire); ++i)
             std::this_thread::sleep_for(kChunk);
+    }
+
+    if (comOwned) {
+        CoUninitialize();
     }
 }
 

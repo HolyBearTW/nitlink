@@ -3,8 +3,11 @@
 #include <sstream>
 #include <vector>
 #include <algorithm>
+#include <cmath>
 #include <debugapi.h>
+#include <wincodec.h>
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace NitLink {
 
@@ -596,20 +599,17 @@ float3 yuv2020ToRgb_Full(float y, float u, float v) {
     return float3(r, g, b);
 }
 
-// Limited-range BT.2020 10-bit YUV -> RGB. P010 samples come from
-// R16_UNORM / R16G16_UNORM with the 10-bit data in the high bits, mapped
-// to [0..1] by the sampler. For limited range, valid Y lives in
-// [64/1023..940/1023] (range 876/1023) and valid chroma in
-// [64/1023..960/1023] (range 896/1023, centered at 512/1023, about 0.5).
-// Expand to [0..1] for Y and [-0.5..0.5] for chroma, then run the
-// same full-range matrix.
+// Limited-range LUMA, full-range CHROMA BT.2020 10-bit YUV -> RGB. P010 samples
+// come from R16_UNORM / R16G16_UNORM with the 10-bit data in the high bits,
+// mapped to [0..1] by the sampler. The HDR10 sources seen here carry limited-
+// range luma (valid Y in [64/1023..940/1023], range 876) but full-range chroma.
+// Confirmed on the Elgato 4K Pro against the PS5 shown native on the TV
+// passthrough: full chroma matches the color exactly, while expanding the chroma
+// as if limited over-saturates it (orange skin tones). Leaving the luma
+// unexpanded separately lifts blacks to a milky grey, so expand only the luma.
 float3 yuv2020ToRgb_Limited(float y, float u, float v) {
-    float y_full = (y * 1023.0 -  64.0) / 876.0;
-    float u_full = (u * 1023.0 -  64.0) / 896.0;
-    float v_full = (v * 1023.0 -  64.0) / 896.0;
-    // u_full / v_full are now in [0..1] with neutral at 448/896, about 0.5.
-    // The Full helper subtracts 0.5 internally, so pass them through.
-    return yuv2020ToRgb_Full(y_full, u_full, v_full);
+    float y_full = (y * 1023.0 - 64.0) / 876.0;
+    return yuv2020ToRgb_Full(y_full, u, v);
 }
 
 // ============== HDR-to-SDR tonemap helpers (P010 SDR-output path) ==============
@@ -1620,7 +1620,17 @@ bool DX11Renderer::CreateGpuTimingQueries()
     return true;
 }
 
-void DX11Renderer::BeginFrame()
+void DX11Renderer::WaitForFrameReady()
+{
+    // The DXGI 1.3 low-latency wait, callable on its own so the Low-Latency
+    // loop can wait at the TOP of the iteration, then read the freshest capture
+    // frame, then call BeginFrame(false) (the wait has already happened).
+    if (m_frameLatencyWaitable) {
+        WaitForSingleObjectEx(m_frameLatencyWaitable, 1000, TRUE);
+    }
+}
+
+void DX11Renderer::BeginFrame(bool doWait)
 {
     // ============== DXGI 1.3 LOW-LATENCY WAIT ==============
     // Block until DXGI says "ready for your next frame." If the previous
@@ -1638,8 +1648,9 @@ void DX11Renderer::BeginFrame()
     // happen BEFORE the first Present too, otherwise the queue starts at
     // +1 and the latency saving is never recovered. Since BeginFrame runs
     // before EndFrame's Present in every iteration including the first,
-    // the ordering is already correct here.
-    if (m_frameLatencyWaitable) {
+    // the ordering is already correct here. Skipped when doWait==false: the
+    // Low-Latency loop already waited via WaitForFrameReady() at the top.
+    if (doWait && m_frameLatencyWaitable) {
         WaitForSingleObjectEx(m_frameLatencyWaitable, 1000, TRUE);
     }
 
@@ -1957,7 +1968,15 @@ void DX11Renderer::EndFrame()
         if (m_gpuQueryFrameCount < kGpuQueryRingSize) m_gpuQueryFrameCount++;
     }
 
-    m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+    if (m_vsync) {
+        // Synced present: no tearing. On a VRR display the panel still drives
+        // its refresh from this present, so gameplay stays smooth.
+        m_swapChain->Present(1, 0);
+    } else {
+        // Immediate present, tearing allowed: lowest latency, relies on the
+        // display's VRR to avoid tearing within its refresh range.
+        m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+    }
 
     // ============== FRAME-TIME TELEMETRY ==============
     // Measure BeginFrame -> Present-returned time and roll it into a sliding
@@ -1989,6 +2008,155 @@ void DX11Renderer::EndFrame()
     }
 }
 
+// HDR10 screenshot tonemap: convert one R10G10B10A2_UNORM backbuffer pixel
+// (PQ-encoded BT.2020 RGB, the HDR10 swap chain format) into 8-bit sRGB BGRA.
+// Mirrors the capture shader's SDR-from-HDR pipeline (PqToLinear,
+// Bt2020ToBt709_Linear, ReinhardWithWhitepoint at a 1000 nit whitepoint,
+// LinearToSrgb) so a saved frame matches the SDR tonemap the renderer would
+// display. Per-pixel on the CPU, which is fine for a one-shot screenshot.
+static void Hdr10PixelToBgra8(uint32_t px, uint8_t* outBgra)
+{
+    // SMPTE ST.2084 (PQ) inverse EOTF, one channel. Output 1.0 == 10000 nits.
+    auto pqToLinear = [](float pq) -> float {
+        const float m1 = 0.1593017578125f;
+        const float m2 = 78.84375f;
+        const float c1 = 0.8359375f;
+        const float c2 = 18.8515625f;
+        const float c3 = 18.6875f;
+        float p   = std::pow(pq < 0.0f ? 0.0f : pq, 1.0f / m2);
+        float num = p - c1; if (num < 0.0f) num = 0.0f;
+        float den = c2 - c3 * p;
+        return std::pow(num / den, 1.0f / m1);
+    };
+    // Extended Reinhard, 1000 nit whitepoint, anchored to 100 nit paper-white.
+    // Matches ReinhardWithWhitepoint(x, 1000.0) in the capture shader.
+    auto reinhard = [](float x) -> float {
+        float L   = x * 100.0f;            // 100 nits maps to 1.0
+        float den = 1.0f + L;
+        return (L * (1.0f + L / 100.0f)) / (den < 1e-6f ? 1e-6f : den);
+    };
+    // Linear to sRGB gamma (IEC 61966-2-1), one channel, clamped to [0, 1].
+    auto linearToSrgb = [](float lin) -> float {
+        if (lin < 0.0f) lin = 0.0f; else if (lin > 1.0f) lin = 1.0f;
+        return (lin <= 0.0031308f) ? lin * 12.92f
+                                   : 1.055f * std::pow(lin, 1.0f / 2.4f) - 0.055f;
+    };
+
+    // Unpack R10G10B10A2_UNORM: R bits 0..9, G bits 10..19, B bits 20..29.
+    float pqR = ((px      ) & 0x3FF) / 1023.0f;
+    float pqG = ((px >> 10) & 0x3FF) / 1023.0f;
+    float pqB = ((px >> 20) & 0x3FF) / 1023.0f;
+
+    float r = pqToLinear(pqR);
+    float g = pqToLinear(pqG);
+    float b = pqToLinear(pqB);
+
+    // BT.2020 to BT.709 primaries in linear light (ITU-R BT.2087-0).
+    float r709 =  1.6605f * r - 0.5876f * g - 0.0728f * b;
+    float g709 = -0.1246f * r + 1.1329f * g - 0.0083f * b;
+    float b709 = -0.0182f * r - 0.1006f * g + 1.1187f * b;
+
+    float sr = linearToSrgb(reinhard(r709));
+    float sg = linearToSrgb(reinhard(g709));
+    float sb = linearToSrgb(reinhard(b709));
+
+    int R8 = (int)(sr * 255.0f + 0.5f); if (R8 < 0) R8 = 0; if (R8 > 255) R8 = 255;
+    int G8 = (int)(sg * 255.0f + 0.5f); if (G8 < 0) G8 = 0; if (G8 > 255) G8 = 255;
+    int B8 = (int)(sb * 255.0f + 0.5f); if (B8 < 0) B8 = 0; if (B8 > 255) B8 = 255;
+
+    // BGRA byte order, matching the BMP BITMAPV4HEADER masks and the SDR path.
+    outBgra[0] = (uint8_t)B8;
+    outBgra[1] = (uint8_t)G8;
+    outBgra[2] = (uint8_t)R8;
+    outBgra[3] = 0xFF;
+}
+
+// Encode a top-down BGRA8 buffer to a PNG via Windows Imaging Component.
+// PNG keeps the screenshot lossless but compressed and shareable anywhere
+// (a raw BMP of a 4K frame is about 33 MB and many apps will not preview or
+// accept it). COM is already initialized on the render thread by the app host.
+static bool WritePngBgra8(const std::wstring& path, const uint8_t* pixels,
+                          uint32_t width, uint32_t height, uint32_t stride)
+{
+    ComPtr<IWICImagingFactory> factory;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                  CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) return false;
+
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream))) return false;
+    if (FAILED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE))) return false;
+
+    ComPtr<IWICBitmapEncoder> encoder;
+    if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder))) return false;
+    if (FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) return false;
+
+    ComPtr<IWICBitmapFrameEncode> frame;
+    ComPtr<IPropertyBag2> props;
+    if (FAILED(encoder->CreateNewFrame(&frame, &props))) return false;
+    if (FAILED(frame->Initialize(props.Get()))) return false;
+    if (FAILED(frame->SetSize(width, height))) return false;
+
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+    if (FAILED(frame->SetPixelFormat(&fmt))) return false;
+
+    if (FAILED(frame->WritePixels(height, stride, stride * height,
+                                  const_cast<BYTE*>(pixels)))) return false;
+
+    if (FAILED(frame->Commit()))   return false;
+    if (FAILED(encoder->Commit())) return false;
+    return true;
+}
+
+// Encode a top-down R10G10B10A2 (PQ BT.2020 HDR10) buffer to a JPEG XR (.jxr)
+// via Windows Imaging Component. JXR preserves the full 10-bit HDR; the PNG path
+// can only hold the tonemapped 8-bit SDR view. The pixel format matches the HDR10
+// swap chain bit-for-bit (DXGI_FORMAT_R10G10B10A2_UNORM maps to
+// WICPixelFormat32bppRGBA1010102), so the PQ codes pass through unaltered.
+static bool WriteJxrHdr10(const std::wstring& path, const uint8_t* pixels,
+                          uint32_t width, uint32_t height, uint32_t stride)
+{
+    ComPtr<IWICImagingFactory> factory;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) return false;
+
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(&stream))) return false;
+    if (FAILED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE))) return false;
+
+    ComPtr<IWICBitmapEncoder> encoder;
+    if (FAILED(factory->CreateEncoder(GUID_ContainerFormatWmp, nullptr, &encoder))) return false;
+    if (FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) return false;
+
+    ComPtr<IWICBitmapFrameEncode> frame;
+    ComPtr<IPropertyBag2> props;
+    if (FAILED(encoder->CreateNewFrame(&frame, &props))) return false;
+
+    // Highest quality so the 10-bit HDR survives the encode.
+    if (props) {
+        PROPBAG2 opt{};
+        opt.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+        VARIANT v; VariantInit(&v); v.vt = VT_R4; v.fltVal = 1.0f;
+        props->Write(1, &opt, &v);
+        VariantClear(&v);
+    }
+    if (FAILED(frame->Initialize(props.Get()))) return false;
+    if (FAILED(frame->SetSize(width, height))) return false;
+
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppRGBA1010102;
+    if (FAILED(frame->SetPixelFormat(&fmt))) return false;
+    // Require the exact 10-bit format: if the codec substituted a different one,
+    // the raw codes would be misread, so skip the JXR rather than save garbage.
+    if (fmt != GUID_WICPixelFormat32bppRGBA1010102) return false;
+
+    if (FAILED(frame->WritePixels(height, stride, stride * height,
+                                  const_cast<BYTE*>(pixels)))) return false;
+
+    if (FAILED(frame->Commit()))   return false;
+    if (FAILED(encoder->Commit())) return false;
+    return true;
+}
+
 bool DX11Renderer::SaveScreenshot(const std::wstring& path)
 {
     if (!m_swapChain) {
@@ -2010,12 +2178,13 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     D3D11_TEXTURE2D_DESC srcDesc{};
     backBuffer->GetDesc(&srcDesc);
 
-    // Only the SDR BGRA8 backbuffer can be saved directly. HDR mode
-    // reconfigures the swap chain to R10G10B10A2 with BT.2020 PQ
-    // encoding; an 8-bit BMP write would require a tone-map pass that
-    // is not wired into this path.
-    if (srcDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: HDR backbuffer not supported (toggle Alt+H to SDR first)\n");
+    // SDR uses a BGRA8 backbuffer and copies straight through. HDR mode
+    // reconfigures the swap chain to R10G10B10A2_UNORM with BT.2020 PQ; that
+    // case tonemaps every pixel to 8-bit sRGB during readback below (see
+    // Hdr10PixelToBgra8). Any other format is unexpected, so bail.
+    const bool srcIsHdr10 = (srcDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM);
+    if (srcDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && !srcIsHdr10) {
+        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: unsupported backbuffer format\n");
         return false;
     }
 
@@ -2051,74 +2220,73 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     uint8_t*       dst = pixelData.data();
     const size_t   srcPitch = mapped.RowPitch;
 
-    // Backbuffer is already full-range display sRGB. Direct row copy.
-    for (uint32_t y = 0; y < height; y++) {
-        const uint8_t* sRow = src + y * srcPitch;
-        uint8_t*       dRow = dst + y * rowBytes;
-        memcpy(dRow, sRow, rowBytes);
+    // True-HDR export buffer: in HDR mode this holds the raw R10G10B10A2 PQ
+    // BT.2020 backbuffer, encoded to a .jxr beside the tonemapped SDR PNG so the
+    // full 10-bit HDR is preserved, not only the 8-bit SDR view.
+    std::vector<uint8_t> hdrData;
+    if (srcIsHdr10) {
+        try { hdrData.resize((size_t)width * height * 4); } catch (...) { hdrData.clear(); }
+        // HDR10 backbuffer: tonemap each PQ BT.2020 pixel to 8-bit sRGB BGRA so
+        // the saved frame matches the in-shader SDR-from-HDR look, and keep the
+        // raw row for the true-HDR .jxr.
+        for (uint32_t y = 0; y < height; y++) {
+            const uint8_t* sRow = src + y * srcPitch;
+            uint8_t*       dRow = dst + y * rowBytes;
+            if (!hdrData.empty())
+                memcpy(hdrData.data() + (size_t)y * rowBytes, sRow, rowBytes);
+            for (uint32_t x = 0; x < width; x++) {
+                uint32_t px;
+                memcpy(&px, sRow + (size_t)x * 4, sizeof(px));
+                Hdr10PixelToBgra8(px, dRow + (size_t)x * 4);
+            }
+        }
+    } else {
+        // SDR backbuffer is already full-range display sRGB BGRA8. Direct copy.
+        for (uint32_t y = 0; y < height; y++) {
+            const uint8_t* sRow = src + y * srcPitch;
+            uint8_t*       dRow = dst + y * rowBytes;
+            memcpy(dRow, sRow, rowBytes);
+        }
     }
 
     m_context->Unmap(stagingTex.Get(), 0);
     stagingTex.Reset();
 
-#pragma pack(push, 1)
-    struct BmpFileHeader {
-        uint16_t signature;
-        uint32_t fileSize;
-        uint16_t reserved1;
-        uint16_t reserved2;
-        uint32_t dataOffset;
-    };
-#pragma pack(pop)
-
-    // Negative bV4Height signals a top-down DIB: rows stored from the top
-    // of the image to the bottom. The swap chain backbuffer is already
-    // top-down, so the staging readback bytes land in that order. A
-    // positive height would tell BMP readers the rows are bottom-up and
-    // they would flip the image vertically on display.
-    BITMAPV4HEADER hdr{};
-    hdr.bV4Size          = sizeof(BITMAPV4HEADER);
-    hdr.bV4Width         = (LONG)width;
-    hdr.bV4Height        = -(LONG)height;
-    hdr.bV4Planes        = 1;
-    hdr.bV4BitCount      = 32;
-    hdr.bV4V4Compression = BI_BITFIELDS;
-    hdr.bV4SizeImage     = width * height * 4;
-    hdr.bV4RedMask       = 0x00FF0000;
-    hdr.bV4GreenMask     = 0x0000FF00;
-    hdr.bV4BlueMask      = 0x000000FF;
-    hdr.bV4AlphaMask     = 0xFF000000;
-    hdr.bV4CSType        = 0x73524742;
-
-    BmpFileHeader fh{};
-    fh.signature  = 0x4D42;
-    fh.dataOffset = sizeof(BmpFileHeader) + sizeof(BITMAPV4HEADER);
-    fh.fileSize   = fh.dataOffset + hdr.bV4SizeImage;
-
-    std::wstring bmpPath = path;
-    size_t dot = bmpPath.find_last_of(L'.');
+    // Save as PNG: lossless but compressed and shareable anywhere (a raw BMP
+    // of a 4K frame is about 33 MB and chat clients will not preview or accept
+    // it). pixelData is top-down BGRA8, the natural row order WIC expects.
+    std::wstring pngPath = path;
+    size_t dot = pngPath.find_last_of(L'.');
     if (dot != std::wstring::npos) {
-        bmpPath.replace(dot, std::wstring::npos, L".bmp");
+        pngPath.replace(dot, std::wstring::npos, L".png");
     } else {
-        bmpPath += L".bmp";
+        pngPath += L".png";
     }
 
-    HANDLE file = CreateFileW(bmpPath.c_str(), GENERIC_WRITE, 0, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return false;
-
-    DWORD written = 0;
-    bool ok = true;
-    ok &= !!WriteFile(file, &fh,  sizeof(fh),  &written, nullptr) && written == sizeof(fh);
-    ok &= !!WriteFile(file, &hdr, sizeof(hdr), &written, nullptr) && written == sizeof(hdr);
-    ok &= !!WriteFile(file, pixelData.data(), (DWORD)pixelData.size(), &written, nullptr)
-          && written == pixelData.size();
-    CloseHandle(file);
+    bool ok = WritePngBgra8(pngPath, pixelData.data(), width, height, rowBytes);
 
     if (ok) {
         std::wstringstream ss;
-        ss << L"[NitLink/Renderer] Screenshot saved: " << bmpPath << L"\n";
+        ss << L"[NitLink/Renderer] Screenshot saved: " << pngPath << L"\n";
         OutputDebugStringW(ss.str().c_str());
+    } else {
+        OutputDebugStringW(L"[NitLink/Renderer] Screenshot: PNG encode failed\n");
+    }
+
+    // True-HDR sidecar: in HDR mode also write the raw R10G10B10A2 PQ BT.2020
+    // backbuffer to a .jxr (JPEG XR), preserving the HDR the SDR PNG cannot.
+    if (srcIsHdr10 && !hdrData.empty()) {
+        std::wstring jxrPath = path;
+        size_t jdot = jxrPath.find_last_of(L'.');
+        if (jdot != std::wstring::npos) jxrPath.replace(jdot, std::wstring::npos, L".jxr");
+        else                            jxrPath += L".jxr";
+        if (WriteJxrHdr10(jxrPath, hdrData.data(), width, height, rowBytes)) {
+            std::wstringstream ss;
+            ss << L"[NitLink/Renderer] HDR screenshot saved: " << jxrPath << L"\n";
+            OutputDebugStringW(ss.str().c_str());
+        } else {
+            OutputDebugStringW(L"[NitLink/Renderer] Screenshot: JXR encode failed\n");
+        }
     }
     return ok;
 }

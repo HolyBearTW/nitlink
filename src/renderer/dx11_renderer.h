@@ -18,7 +18,14 @@ public:
     bool Initialize(HWND hwnd, uint32_t width, uint32_t height);
     void Resize(uint32_t width, uint32_t height);
 
-    void BeginFrame();
+    // doWait=true (default): BeginFrame blocks on the DXGI frame-latency
+    // waitable at its start -- the VRR/"Smooth" path. doWait=false: the caller
+    // already waited via WaitForFrameReady() at the top of the loop (the
+    // Low-Latency present-on-arrival path), so BeginFrame must not wait again.
+    void BeginFrame(bool doWait = true);
+    // Block on the frame-latency waitable WITHOUT starting the frame, so the
+    // Low-Latency loop can wait first, THEN read the freshest capture frame.
+    void WaitForFrameReady();
     void DrawCaptureFrame();
     void EndFrame();
 
@@ -100,6 +107,13 @@ public:
     void DrawHDRDiagnostics();
     bool IsHDRDiagModeOn() const { return m_hdrDiagMode; }
     void SetHDRDiagMode(bool on) { m_hdrDiagMode = on; }
+
+    // VSync present mode. When on, EndFrame presents with sync (Present(1, 0))
+    // instead of the default immediate ALLOW_TEARING present, letting a VRR or
+    // fixed-refresh display handle tearing. Trades a little latency for none.
+    bool IsVSyncOn() const { return m_vsync; }
+    void SetVSync(bool on) { m_vsync = on; }
+    bool m_vsync = false;
 
     ID3D11Device*        GetDevice()    const { return m_device.Get(); }
     ID3D11DeviceContext* GetContext()   const { return m_context.Get(); }
