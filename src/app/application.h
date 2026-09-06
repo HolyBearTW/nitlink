@@ -133,6 +133,20 @@ private:
     // the same switch.
     bool SwitchCaptureDevice(const std::wstring& deviceName);
 
+    // Rebuild the renderer and every object that holds D3D11 resources created
+    // from its device (overlay, NIS upscaler, frame differ) after the graphics
+    // device was lost (TDR, GPU driver upgrade, device reset). The capture
+    // device and frame buffer are left untouched: capture writes to CPU memory
+    // and is unaffected by GPU loss, so frames keep flowing and the next
+    // UpdateCaptureTexture re-uploads them. Live renderer toggle state (vsync,
+    // HDR, diag, post-input) and the current capture source format are
+    // re-applied to the fresh renderer.
+    //
+    // Returns false if the rebuild itself fails; the run loop backs off and
+    // retries on a later iteration. MUST be called on the main thread only
+    // (driven by DX11Renderer::ConsumeDeviceLost in the run loop).
+    bool RecoverFromDeviceLost();
+
     // Signal-loss debounce. PS5 boot logos, source switches, and
     // SDR<->HDR handshakes all produce brief windows (typically 0.5 to
     // 2.0 s) where the HDMI link is renegotiating and no fresh frames
@@ -304,25 +318,32 @@ private:
     // failed.
     Source4KProMode m_source4KProMode{};
 
-    // Source color-range override for the YUV->RGB range expansion. Media
-    // Foundation reports HDR10 as "not set, assuming limited", which over-
-    // expands a full-range source and pushes skin tones orange. The 4K X's
-    // HDR10 is actually full-range despite that label, so EffectiveSourceFullRange
-    // corrects it; Alt+R cycles a manual override on top: 0 = Auto, 1 = force
-    // full, 2 = force limited.
+    // Manual source color-range override (Alt+R), layered on top of Media
+    // Foundation's reported nominal range. 0 = Auto (trust MF), 1 = force
+    // full, 2 = force limited. The Elgato cards (4K Pro / 4K S / 4K X) all
+    // deliver limited-range HDR10 (luma black at code ~64) and MF reports
+    // that correctly, so Auto is right on every card; the override is for
+    // third-party cards and edge cases.
     int  m_sourceRangeOverride = 0;
     bool m_lastMfFullRange     = false;  // last range MF reported (for Auto)
-    bool m_lastCaptureIsP010   = false;  // last capture was HDR10 PQ (for Auto)
+    bool m_lastCaptureIsP010   = false;  // last negotiated capture was P010 (HDR)
 
-    // Effective source color range: manual override wins; else the 4K X HDR10
-    // correction (MF mislabels its full-range source as limited); else MF's
-    // value. The 4K Pro and every other source keep MF's value unchanged.
+    // Effective source color range: a manual Alt+R override wins; otherwise
+    // trust Media Foundation's nominal range, which is correct for every
+    // supported card (all deliver limited-range HDR10). No per-card override
+    // is needed.
     bool EffectiveSourceFullRange() const {
         if (m_sourceRangeOverride == 1) return true;
         if (m_sourceRangeOverride == 2) return false;
-        if (m_is4KX && m_lastCaptureIsP010) return true;
         return m_lastMfFullRange;
     }
+
+    // HDR levels readout (Ctrl+F6). When on, the run loop measures the
+    // captured frame's luma/chroma code range each ~250 ms and shows it as an
+    // on-screen toast, so the correct per-card color range is read off the
+    // signal (luma floor ~64 = limited-range, ~0 = full) instead of eyeballed.
+    bool                                  m_levelsDiagOn = false;
+    std::chrono::steady_clock::time_point m_lastLevelsCompute{};
 
     // Detected HDMI source identifier from the 4K S vendor HID. Populated
     // once per app process by Detect4KSHdmiSource(). When the label
@@ -345,7 +366,7 @@ private:
     double m_captureLatencyMs = 0.0;
     double m_renderLatencyMs = 0.0;
     double m_frameAgeMs = 0.0;   // MF-delivery -> render-start, ms (rig localizer)
-    bool m_lowLatency = false;  // present-on-arrival (wait-then-read) vs VRR pacing; toggle Alt+L
+    bool m_lowLatency = true;   // present-on-arrival (wait-then-read) vs VRR pacing; default ON, toggle Alt+L / F1
 
     // App ingest: live card-driver-to-app-callback delivery time, computed
     // each frame as arrivalWallNs - (frame.deviceTimestamp * 100) in ns

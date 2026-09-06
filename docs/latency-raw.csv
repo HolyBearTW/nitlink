@@ -1,0 +1,601 @@
+date,card,source_mode,application,sample,latency_us,latency_ms
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",1,50639,50.639
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",2,33810,33.810
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",3,46194,46.194
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",4,36953,36.953
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",5,34140,34.140
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",6,37446,37.446
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",7,32574,32.574
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",8,43463,43.463
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",9,33300,33.300
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",10,43332,43.332
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",11,39840,39.840
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",12,39036,39.036
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",13,40398,40.398
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",14,34728,34.728
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",15,41814,41.814
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",16,37571,37.571
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",17,31590,31.590
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",18,40367,40.367
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",19,36102,36.102
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",20,41538,41.538
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",21,31488,31.488
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",22,34991,34.991
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",23,35712,35.712
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",24,38610,38.610
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",25,40481,40.481
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",26,36342,36.342
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",27,33576,33.576
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",28,38381,38.381
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",29,45090,45.090
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",30,33396,33.396
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",31,37074,37.074
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",32,35160,35.160
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",33,40913,40.913
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",34,41172,41.172
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",35,40415,40.415
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",36,34632,34.632
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",37,37763,37.763
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",38,33624,33.624
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",39,40062,40.062
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",40,45420,45.420
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",41,35927,35.927
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",42,43553,43.553
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",43,34362,34.362
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",44,39365,39.365
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",45,45696,45.696
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",46,39558,39.558
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",47,34896,34.896
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",48,39072,39.072
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",49,33564,33.564
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",50,37103,37.103
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",51,35603,35.603
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",52,39420,39.420
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",53,46248,46.248
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",54,40889,40.889
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",55,38123,38.123
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",56,41147,41.147
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",57,39599,39.599
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",58,36576,36.576
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",59,43464,43.464
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",60,31548,31.548
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",61,38874,38.874
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",62,33978,33.978
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",63,40590,40.590
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",64,45654,45.654
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",65,34602,34.602
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",66,36696,36.696
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",67,38232,38.232
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",68,32730,32.730
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",69,45149,45.149
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",70,30288,30.288
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",71,39546,39.546
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",72,35861,35.861
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",73,35897,35.897
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",74,42750,42.750
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",75,34230,34.230
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",76,44916,44.916
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",77,34716,34.716
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",78,45059,45.059
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",79,50201,50.201
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",80,45467,45.467
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",81,42425,42.425
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",82,35675,35.675
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",83,44292,44.292
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",84,42575,42.575
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",85,34056,34.056
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",86,33245,33.245
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",87,48593,48.593
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",88,51084,51.084
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",89,35742,35.742
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",90,38832,38.832
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",91,38363,38.363
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",92,43673,43.673
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",93,37554,37.554
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",94,32406,32.406
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",95,42186,42.186
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",96,31110,31.110
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",97,35657,35.657
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",98,44417,44.417
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",99,41238,41.238
+2026-06-05,Elgato 4K Pro,1080p144,"NitLink (Low-Latency, 117 Hz cap)",100,36672,36.672
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,1,52157,52.157
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,2,42065,42.065
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,3,38952,38.952
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,4,46938,46.938
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,5,40662,40.662
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,6,48318,48.318
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,7,50346,50.346
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,8,40943,40.943
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,9,41298,41.298
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,10,47609,47.609
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,11,43086,43.086
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,12,34596,34.596
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,13,35633,35.633
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,14,43115,43.115
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,15,45720,45.720
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,16,44454,44.454
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,17,44340,44.340
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,18,48054,48.054
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,19,50736,50.736
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,20,38892,38.892
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,21,38891,38.891
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,22,44117,44.117
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,23,48432,48.432
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,24,49188,49.188
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,25,40595,40.595
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,26,38688,38.688
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,27,41562,41.562
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,28,48809,48.809
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,29,41771,41.771
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,30,45756,45.756
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,31,39263,39.263
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,32,45234,45.234
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,33,46913,46.913
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,34,46020,46.020
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,35,43116,43.116
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,36,43218,43.218
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,37,47616,47.616
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,38,43938,43.938
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,39,44142,44.142
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,40,45401,45.401
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,41,46224,46.224
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,42,44549,44.549
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,43,39299,39.299
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,44,43577,43.577
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,45,52200,52.200
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,46,47268,47.268
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,47,53069,53.069
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,48,40386,40.386
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,49,43733,43.733
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,50,45660,45.660
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,51,39780,39.780
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,52,40644,40.644
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,53,43721,43.721
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,54,44328,44.328
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,55,38465,38.465
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,56,41645,41.645
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,57,45917,45.917
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,58,42576,42.576
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,59,42137,42.137
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,60,49374,49.374
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,61,41003,41.003
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,62,44520,44.520
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,63,49854,49.854
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,64,52500,52.500
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,65,41160,41.160
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,66,48551,48.551
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,67,50333,50.333
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,68,46164,46.164
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,69,39504,39.504
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,70,50088,50.088
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,71,37764,37.764
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,72,41219,41.219
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,73,46475,46.475
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,74,42233,42.233
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,75,47952,47.952
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,76,48587,48.587
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,77,43680,43.680
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,78,44880,44.880
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,79,44670,44.670
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,80,49374,49.374
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,81,41747,41.747
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,82,39557,39.557
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,83,40385,40.385
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,84,39767,39.767
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,85,41963,41.963
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,86,41135,41.135
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,87,48551,48.551
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,88,49236,49.236
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,89,42036,42.036
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,90,44483,44.483
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,91,46680,46.680
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,92,44352,44.352
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,93,48246,48.246
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,94,41021,41.021
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,95,43950,43.950
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,96,46752,46.752
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,97,48929,48.929
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,98,42215,42.215
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,99,43151,43.151
+2026-06-05,Elgato 4K Pro,1080p144,Elgato 4K Capture Utility,100,44429,44.429
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",1,64625,64.625
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",2,49740,49.740
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",3,41850,41.850
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",4,58511,58.511
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",5,40794,40.794
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",6,52026,52.026
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",7,49002,49.002
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",8,49607,49.607
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",9,47417,47.417
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",10,44598,44.598
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",11,46836,46.836
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",12,44843,44.843
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",13,44880,44.880
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",14,59238,59.238
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",15,47549,47.549
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",16,45341,45.341
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",17,51731,51.731
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",18,51779,51.779
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",19,40439,40.439
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",20,52536,52.536
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",21,44724,44.724
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",22,56112,56.112
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",23,49398,49.398
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",24,47693,47.693
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",25,49446,49.446
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",26,45270,45.270
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",27,53435,53.435
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",28,53478,53.478
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",29,47910,47.910
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",30,45294,45.294
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",31,42438,42.438
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",32,44364,44.364
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",33,49032,49.032
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",34,47753,47.753
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",35,40980,40.980
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",36,47646,47.646
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",37,43703,43.703
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",38,45959,45.959
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",39,47772,47.772
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",40,40247,40.247
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",41,41226,41.226
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",42,53286,53.286
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",43,42383,42.383
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",44,50027,50.027
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",45,42263,42.263
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",46,48192,48.192
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",47,46590,46.590
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",48,62406,62.406
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",49,52463,52.463
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",50,49835,49.835
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",51,43007,43.007
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",52,60912,60.912
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",53,41513,41.513
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",54,60839,60.839
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",55,47777,47.777
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",56,47753,47.753
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",57,51144,51.144
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",58,45923,45.923
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",59,49421,49.421
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",60,50147,50.147
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",61,48414,48.414
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",62,45378,45.378
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",63,44508,44.508
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",64,50675,50.675
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",65,57239,57.239
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",66,46038,46.038
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",67,48113,48.113
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",68,44322,44.322
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",69,54035,54.035
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",70,53382,53.382
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",71,50160,50.160
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",72,49001,49.001
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",73,47496,47.496
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",74,47315,47.315
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",75,36288,36.288
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",76,50370,50.370
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",77,41232,41.232
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",78,42677,42.677
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",79,44310,44.310
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",80,42474,42.474
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",81,53670,53.670
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",82,49037,49.037
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",83,55248,55.248
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",84,42552,42.552
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",85,45035,45.035
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",86,53184,53.184
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",87,45558,45.558
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",88,47255,47.255
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",89,36953,36.953
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",90,44897,44.897
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",91,48918,48.918
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",92,44436,44.436
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",93,45282,45.282
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",94,42564,42.564
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",95,46752,46.752
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",96,50340,50.340
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",97,42503,42.503
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",98,56783,56.783
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",99,42635,42.635
+2026-06-05,Elgato 4K X,4K120,"NitLink (Low-Latency, 117 Hz cap)",100,55457,55.457
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,1,69185,69.185
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,2,58229,58.229
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,3,52374,52.374
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,4,54209,54.209
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,5,57119,57.119
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,6,56898,56.898
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,7,53388,53.388
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,8,50615,50.615
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,9,53916,53.916
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,10,50916,50.916
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,11,55913,55.913
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,12,55643,55.643
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,13,58619,58.619
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,14,59538,59.538
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,15,56909,56.909
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,16,56369,56.369
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,17,54869,54.869
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,18,51444,51.444
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,19,53058,53.058
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,20,53280,53.280
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,21,58656,58.656
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,22,46218,46.218
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,23,49002,49.002
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,24,62783,62.783
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,25,55787,55.787
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,26,49487,49.487
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,27,50148,50.148
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,28,53256,53.256
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,29,44861,44.861
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,30,44609,44.609
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,31,49709,49.709
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,32,50334,50.334
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,33,57089,57.089
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,34,45911,45.911
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,35,56483,56.483
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,36,47226,47.226
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,37,48504,48.504
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,38,42077,42.077
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,39,46488,46.488
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,40,48000,48.000
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,41,41730,41.730
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,42,43848,43.848
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,43,47820,47.820
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,44,49014,49.014
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,45,45096,45.096
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,46,49494,49.494
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,47,48779,48.779
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,48,45894,45.894
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,49,42702,42.702
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,50,44885,44.885
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,51,48857,48.857
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,52,49866,49.866
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,53,48012,48.012
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,54,50603,50.603
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,55,46152,46.152
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,56,42137,42.137
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,57,45857,45.857
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,58,51299,51.299
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,59,48816,48.816
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,60,43554,43.554
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,61,45318,45.318
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,62,48377,48.377
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,63,47040,47.040
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,64,46583,46.583
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,65,45684,45.684
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,66,55560,55.560
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,67,42558,42.558
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,68,42683,42.683
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,69,46518,46.518
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,70,43416,43.416
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,71,42491,42.491
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,72,44910,44.910
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,73,46301,46.301
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,74,50873,50.873
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,75,48143,48.143
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,76,45738,45.738
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,77,49139,49.139
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,78,47922,47.922
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,79,44028,44.028
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,80,49679,49.679
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,81,45911,45.911
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,82,50507,50.507
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,83,47958,47.958
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,84,47340,47.340
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,85,46140,46.140
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,86,49182,49.182
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,87,44214,44.214
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,88,43668,43.668
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,89,42185,42.185
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,90,49518,49.518
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,91,44411,44.411
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,92,54132,54.132
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,93,47555,47.555
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,94,45809,45.809
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,95,42510,42.510
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,96,50393,50.393
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,97,47741,47.741
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,98,46038,46.038
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,99,43902,43.902
+2026-06-05,Elgato 4K X,4K120,Elgato 4K Capture Utility,100,49782,49.782
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",1,101843,101.843
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",2,78437,78.437
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",3,75690,75.690
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",4,67680,67.680
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",5,64368,64.368
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",6,78941,78.941
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",7,74478,74.478
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",8,64283,64.283
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",9,68027,68.027
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",10,79308,79.308
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",11,66936,66.936
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",12,64031,64.031
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",13,65393,65.393
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",14,67728,67.728
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",15,59358,59.358
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",16,66396,66.396
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",17,70020,70.020
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",18,64242,64.242
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",19,97691,97.691
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",20,74814,74.814
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",21,73284,73.284
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",22,73224,73.224
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",23,63323,63.323
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",24,83759,83.759
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",25,75576,75.576
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",26,69006,69.006
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",27,59232,59.232
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",28,64956,64.956
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",29,67740,67.740
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",30,63132,63.132
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",31,72024,72.024
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",32,77309,77.309
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",33,60905,60.905
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",34,76656,76.656
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",35,70397,70.397
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",36,64997,64.997
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",37,74879,74.879
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",38,77117,77.117
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",39,76889,76.889
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",40,67103,67.103
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",41,62886,62.886
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",42,73127,73.127
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",43,57912,57.912
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",44,79146,79.146
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",45,55506,55.506
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",46,56982,56.982
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",47,65885,65.885
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",48,64685,64.685
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",49,70685,70.685
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",50,62423,62.423
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",51,74826,74.826
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",52,73464,73.464
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",53,78839,78.839
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",54,65225,65.225
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",55,74490,74.490
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",56,67728,67.728
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",57,57473,57.473
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",58,60935,60.935
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",59,65430,65.430
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",60,69005,69.005
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",61,67643,67.643
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",62,71549,71.549
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",63,67049,67.049
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",64,75545,75.545
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",65,76019,76.019
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",66,76631,76.631
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",67,61601,61.601
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",68,65279,65.279
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",69,69390,69.390
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",70,64578,64.578
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",71,75786,75.786
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",72,71963,71.963
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",73,76392,76.392
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",74,71040,71.040
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",75,68537,68.537
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",76,61218,61.218
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",77,71778,71.778
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",78,57876,57.876
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",79,75215,75.215
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",80,64668,64.668
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",81,76265,76.265
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",82,73475,73.475
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",83,61884,61.884
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",84,72192,72.192
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",85,67002,67.002
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",86,56969,56.969
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",87,60558,60.558
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",88,57708,57.708
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",89,63834,63.834
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",90,68502,68.502
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",91,67895,67.895
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",92,71178,71.178
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",93,66276,66.276
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",94,61451,61.451
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",95,56148,56.148
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",96,61914,61.914
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",97,70188,70.188
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",98,60245,60.245
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",99,57144,57.144
+2026-06-05,Elgato 4K S,4K60,"NitLink (Low-Latency, 117 Hz cap)",100,74694,74.694
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,1,112469,112.469
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,2,82571,82.571
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,3,71111,71.111
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,4,74153,74.153
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,5,75263,75.263
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,6,75900,75.900
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,7,72030,72.030
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,8,96923,96.923
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,9,81773,81.773
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,10,63485,63.485
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,11,67104,67.104
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,12,86544,86.544
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,13,77130,77.130
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,14,73800,73.800
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,15,83856,83.856
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,16,76925,76.925
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,17,87024,87.024
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,18,84407,84.407
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,19,75438,75.438
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,20,77915,77.915
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,21,62424,62.424
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,22,74825,74.825
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,23,80609,80.609
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,24,80016,80.016
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,25,78869,78.869
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,26,90527,90.527
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,27,78917,78.917
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,28,79668,79.668
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,29,85584,85.584
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,30,77975,77.975
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,31,79524,79.524
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,32,65471,65.471
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,33,75119,75.119
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,34,77477,77.477
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,35,64932,64.932
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,36,77153,77.153
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,37,77220,77.220
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,38,73380,73.380
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,39,75780,75.780
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,40,72198,72.198
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,41,67853,67.853
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,42,86778,86.778
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,43,62363,62.363
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,44,65753,65.753
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,45,79511,79.511
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,46,63209,63.209
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,47,76518,76.518
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,48,75492,75.492
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,49,73050,73.050
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,50,75024,75.024
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,51,64266,64.266
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,52,67980,67.980
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,53,85860,85.860
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,54,69239,69.239
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,55,66911,66.911
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,56,76584,76.584
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,57,85097,85.097
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,58,90749,90.749
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,59,65376,65.376
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,60,76626,76.626
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,61,65646,65.646
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,62,62232,62.232
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,63,64055,64.055
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,64,73884,73.884
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,65,70374,70.374
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,66,79619,79.619
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,67,77297,77.297
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,68,77213,77.213
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,69,70109,70.109
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,70,68286,68.286
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,71,72612,72.612
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,72,68208,68.208
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,73,65231,65.231
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,74,67944,67.944
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,75,76577,76.577
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,76,83214,83.214
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,77,79830,79.830
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,78,69983,69.983
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,79,69059,69.059
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,80,78749,78.749
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,81,69582,69.582
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,82,66312,66.312
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,83,70979,70.979
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,84,72533,72.533
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,85,62435,62.435
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,86,65981,65.981
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,87,64500,64.500
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,88,72594,72.594
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,89,65777,65.777
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,90,76487,76.487
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,91,66354,66.354
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,92,70631,70.631
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,93,79073,79.073
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,94,78635,78.635
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,95,71748,71.748
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,96,81378,81.378
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,97,73698,73.698
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,98,78473,78.473
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,99,74712,74.712
+2026-06-05,Elgato 4K S,4K60,Elgato 4K Capture Utility,100,75828,75.828

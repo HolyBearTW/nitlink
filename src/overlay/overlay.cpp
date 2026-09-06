@@ -735,7 +735,7 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             cardX + ipx + S(64.0f), brandY + S(5.0f),
             cardX + ipx + S(180.0f), brandY + S(22.0f));
         fBrandTag->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* tag = L"v1.0.0-rc1";
+        const wchar_t* tag = L"v1.1.0";
         m_d2dContext->DrawText(tag, (UINT32)wcslen(tag),
             fBrandTag.Get(), rTag, bFgMuted.Get());
     }

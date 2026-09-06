@@ -13,7 +13,7 @@ REM ============================================================================
 setlocal EnableDelayedExpansion
 
 REM --- Configuration ---------------------------------------------------------
-set VERSION=1.0.0-rc3
+set VERSION=1.1.0
 set BUILD_DIR=out\build\x64-Release
 set BUILD_DIR_ALT=build\Release
 set STAGING_DIR=NitLink-%VERSION%-win64
@@ -153,8 +153,7 @@ echo NitLink v%VERSION%
 echo =================
 echo.
 echo Low-latency 4K HDR capture card viewer for Windows.
-echo Built and tested against the Elgato 4K Pro and 4K S. 4K X is untested
-echo but uses the same Media Foundation path.
+echo Built and tested against the Elgato 4K Pro, 4K S, and 4K X.
 echo.
 echo HOW TO RUN
 echo ----------
@@ -179,6 +178,8 @@ echo HOTKEYS
 echo -------
 echo F1  Open / close settings menu
 echo Alt+H  Toggle HDR
+echo Alt+R  Cycle color-range override ^(Auto / Full / Limited^)
+echo Alt+L  Toggle low-latency mode
 echo Alt+Enter  Toggle fullscreen
 echo Alt+P  Toggle picture-in-picture
 echo Ctrl+F3  Toggle HUD overlay

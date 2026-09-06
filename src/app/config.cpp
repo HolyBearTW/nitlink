@@ -133,6 +133,7 @@ bool Config::Load(const std::string& path)
         if (key == "hdr_enabled")     hdrEnabled   = ParseBool(val);
         if (key == "hdr_auto_from_source") hdrAutoFromSource = ParseBool(val);
         if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
+        if (key == "low_latency")     lowLatency = ParseBool(val);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
         if (key == "show_overlay")    showOverlay   = ParseBool(val);
         if (key == "current_game")    currentGameId = val;
@@ -315,6 +316,14 @@ bool Config::Save(const std::string& path)
     file << "# and gating Present on that collapses visible cadence into the single\n";
     file << "# digits. Default false; toggle from the F1 settings panel.\n";
     file << "vrr_present_pacing = " << (vrrPresentPacing ? "true" : "false") << "\n\n";
+
+    file << "# Low-latency present mode (Alt+L, default true)\n";
+    file << "# When true, present each frame the instant it arrives for the\n";
+    file << "# lowest input lag. When false, the frame is held after capture and\n";
+    file << "# the swap-chain wait moves before present, so the picture is up to\n";
+    file << "# one refresh older. The present is tearing-allowed either way;\n";
+    file << "# false only adds input lag. Toggle from the F1 panel or with Alt+L.\n";
+    file << "low_latency = " << (lowLatency ? "true" : "false") << "\n\n";
 
     file << "# Shaders\n";
     file << "enable_shaders = " << (enableShaders ? "true" : "false") << "\n\n";

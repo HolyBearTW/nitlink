@@ -147,7 +147,24 @@ void DiscordRPC::Disconnect()
 {
     if (!m_running.exchange(false)) return;
 
-    if (m_worker.joinable()) m_worker.join();
+    if (m_worker.joinable()) {
+        // Kick the worker out of any parked synchronous pipe I/O before
+        // joining. The worker issues blocking WriteFile (SendFrame) and
+        // ReadFile (ReadFrame) calls; if Discord is alive but not draining the
+        // pipe, one of those can block in the kernel indefinitely, and clearing
+        // m_running alone cannot wake it, so join() would hang app exit.
+        // CancelSynchronousIo targets the worker thread's in-flight call.
+        // ERROR_NOT_FOUND (no call was pending) is expected and ignored. The
+        // spaced retries cover the race where the worker has decided to issue
+        // the call but has not yet entered the kernel when the first cancel
+        // fires; the unconditional join afterward reaps the thread either way.
+        const HANDLE workerHandle = m_worker.native_handle();
+        for (int i = 0; i < 3; i++) {
+            CancelSynchronousIo(workerHandle);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        m_worker.join();
+    }
 
     if (m_pipe != INVALID_HANDLE_VALUE) {
         CloseHandle(m_pipe);
@@ -198,6 +215,14 @@ bool DiscordRPC::ReadFrame(Opcode& op, std::string& payload)
 
     payload.resize(len);
     if (len > 0) {
+        // Gate the payload ReadFile the same way the header read is gated.
+        // WaitForReadableFrame before this call only guaranteed the 8 header
+        // bytes; a header-only partial frame (Discord wrote the header then
+        // stalled, or is shutting down) would otherwise park the worker in a
+        // blocking kernel read on the missing payload, which m_running alone
+        // cannot wake and which would hang Disconnect's join(). Wait for the
+        // full payload to be peekable first; bail on timeout or a dropped pipe.
+        if (!WaitForReadableFrame(std::chrono::milliseconds(2000), len)) return false;
         if (!ReadFile(m_pipe, payload.data(), len, &got, nullptr) || got != len) return false;
     }
     return true;
@@ -225,6 +250,26 @@ void DiscordRPC::ClearActivity()
     std::lock_guard<std::mutex> lock(m_activityMutex);
     m_clearRequested = true;
     m_activityDirty  = false;
+}
+
+bool DiscordRPC::WaitForReadableFrame(std::chrono::milliseconds timeout,
+                                      DWORD requiredBytes)
+{
+    if (m_pipe == INVALID_HANDLE_VALUE) return false;
+
+    using clock = std::chrono::steady_clock;
+    const auto deadline = clock::now() + timeout;
+    while (m_running && clock::now() < deadline) {
+        DWORD bytesAvailable = 0;
+        if (!PeekNamedPipe(m_pipe, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+            // Pipe closed by Discord or a peek error: report not-readable so the
+            // caller skips the read instead of blocking on a dead pipe.
+            return false;
+        }
+        if (bytesAvailable >= requiredBytes) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
 }
 
 void DiscordRPC::WorkerLoop()
@@ -286,8 +331,17 @@ void DiscordRPC::WorkerLoop()
             break;
         }
         // Drain the response (don't bother parsing it).
+        //
+        // Gate the header read on PeekNamedPipe (and ReadFrame gates its own
+        // payload read the same way) so a silent or unresponsive Discord cannot
+        // park the worker in a kernel read: Disconnect sets m_running=false and
+        // the wait returns within one poll interval, so join() completes instead
+        // of hanging app exit. A reply that never arrives times out and the loop
+        // continues, so one dropped response does not stall later updates.
         Opcode op; std::string payload;
-        ReadFrame(op, payload);
+        if (WaitForReadableFrame(std::chrono::milliseconds(2000), sizeof(uint32_t) * 2)) {
+            ReadFrame(op, payload);
+        }
         lastSend = now;
     }
 }

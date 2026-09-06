@@ -115,6 +115,15 @@ struct Config {
     // on G-Sync / FreeSync panels can opt in.
     bool         vrrPresentPacing = false;
 
+    // Low-latency present mode (Alt+L, default ON). When ON: wait the swap
+    // chain at the top of the loop, then read the freshest captured frame and
+    // present it on arrival for the lowest input lag. When OFF: the frame is
+    // read first and the swap-chain wait moves into BeginFrame, so the held
+    // frame ages up to one refresh before it is presented. The present stays
+    // tearing-allowed either way; OFF only adds input lag. Default ON because
+    // lowest latency is the point.
+    bool         lowLatency = true;
+
     // (hdrMode string field stripped: Reference/Vibrant was an earlier
     //  fake-HDR pipeline. The current path negotiates real HDR10 via
     //  P010 capture, with the Elgato hardware tone-map disabled at

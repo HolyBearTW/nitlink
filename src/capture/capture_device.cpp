@@ -1,4 +1,5 @@
 #include "capture_device.h"
+#include "dshow_capture.h"
 #include <mferror.h>
 #include <debugapi.h>
 #include <sstream>
@@ -6,12 +7,37 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 namespace NitLink {
 
 // Debug helper -- writes to Visual Studio Output window
 static void DebugLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink] " + msg + L"\n").c_str());
+}
+
+// Optional DirectShow capture backend: when USE_DSHOW.txt sits next to the
+// exe, capture runs through the DirectShow one-hop backend instead of the
+// Media Foundation source reader. Delete the marker to restore Media
+// Foundation (no rebuild).
+//
+// The marker is resolved against the executable directory, not the current
+// working directory: an installed or shortcut launch, or "Run as
+// administrator" (working directory becomes System32), leaves the CWD
+// unrelated to the exe, so a CWD-relative lookup would miss the marker the
+// user placed next to the exe. The std::error_code overload of exists() is
+// used so a transient access error on the path returns false instead of
+// throwing out of this predicate.
+static bool UseDShowBackend() {
+    wchar_t exePath[MAX_PATH] = {};
+    DWORD n = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return false;
+
+    std::filesystem::path marker(exePath);
+    marker.replace_filename(L"USE_DSHOW.txt");
+
+    std::error_code ec;
+    return std::filesystem::exists(marker, ec);
 }
 
 // Integer fps from a media type's MF_MT_FRAME_RATE attribute.
@@ -43,6 +69,24 @@ CaptureDevice::~CaptureDevice()
 bool CaptureDevice::Open(const DeviceInfo& device)
 {
     m_deviceName = device.name;
+
+    if (UseDShowBackend()) {
+        DebugLog(L"USE_DSHOW.txt present: using DirectShow capture backend");
+        m_dshow = std::make_unique<DShowCapture>();
+        if (m_dshow->Open(device)) {
+            std::lock_guard<std::mutex> lock(m_formatMutex);
+            m_publishedFormat = m_dshow->GetOutputFormat();
+            return true;
+        }
+        // DirectShow could not open this device. Release the failed backend
+        // and fall through to the Media Foundation path below rather than
+        // failing the whole Open: a bad or unsupported marker must not leave
+        // the app with no capture at all. m_dshow is null after the reset, so
+        // no DirectShow state leaks into the Media Foundation attempt.
+        DebugLog(L"DirectShow backend Open failed; falling back to Media Foundation");
+        m_dshow.reset();
+    }
+
     DebugLog(L"Opening device: " + device.name);
 
     ComPtr<IMFAttributes> attrs;
@@ -657,6 +701,12 @@ static std::wstring SubtypeToName(const GUID& g) {
 
 bool CaptureDevice::LogAvailableFormats()
 {
+    if (m_dshow) {
+        // The DirectShow backend does not populate the MF format cache;
+        // the F1 picker stays empty while the marker is present.
+        return true;
+    }
+
     // Clear the cache up front so repeated calls (e.g. after a format
     // reconcile re-Open) do not stack duplicate entries. If the source is
     // gone the cache stays empty and the F1 dropdowns fall back to
@@ -776,6 +826,13 @@ bool CaptureDevice::LogAvailableFormats()
 
 void CaptureDevice::Close()
 {
+    if (m_dshow) {
+        m_dshow->Close();
+        m_dshow.reset();
+        m_capturing = false;
+        return;
+    }
+
     StopCapture();
     m_reader.Reset();
     if (m_source) {
@@ -786,6 +843,12 @@ void CaptureDevice::Close()
 
 bool CaptureDevice::StartCapture(FrameCallback callback)
 {
+    if (m_dshow) {
+        const bool ok = m_dshow->StartCapture(std::move(callback));
+        m_capturing = ok;
+        return ok;
+    }
+
     if (m_capturing) return false;
 
     {
@@ -800,6 +863,12 @@ bool CaptureDevice::StartCapture(FrameCallback callback)
 
 void CaptureDevice::StopCapture()
 {
+    if (m_dshow) {
+        m_dshow->StopCapture();
+        m_capturing = false;
+        return;
+    }
+
     m_capturing = false;
     if (m_captureThread.joinable()) {
         m_captureThread.join();

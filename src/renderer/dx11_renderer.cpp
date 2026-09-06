@@ -6,6 +6,11 @@
 #include <cmath>
 #include <debugapi.h>
 #include <wincodec.h>
+#include <DirectXPackedVector.h>  // XMConvertFloatToHalf: scRGB FP16 HDR screenshots
+#include <filesystem>
+#include <fstream>
+#include <chrono>
+#include <thread>
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
@@ -927,6 +932,19 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
         OutputDebugStringW(L"[NitLink/Renderer] WARN: IDXGISwapChain2 unavailable; running without latency wait\n");
     }
 
+    // VRR present-rate cap (VRR_CAP.txt next to the exe): rate-cap the ALLOW_TEARING
+    // present to just under the display's VRR max, so VRR engages (the panel refreshes
+    // on present: no vblank wait, no tearing inside the VRR range). File content =
+    // target Hz (default 117). Absent = off. Pairs with the ALLOW_TEARING present.
+    if (std::filesystem::exists("VRR_CAP.txt")) {
+        m_vrrCapHz = 117.0;
+        std::ifstream capFile("VRR_CAP.txt");
+        double hz = 0.0;
+        if (capFile >> hz && hz >= 30.0 && hz <= 1000.0) m_vrrCapHz = hz;
+        OutputDebugStringW((L"[NitLink/Renderer] VRR cap ON: " + std::to_wstring((int)m_vrrCapHz)
+            + L" Hz ALLOW_TEARING present-rate cap\n").c_str());
+    }
+
     if (!CreateRenderTarget()) return false;
     if (!CreateFullscreenQuad()) return false;
     if (!CreateCompositeShader()) return false;
@@ -1477,7 +1495,13 @@ void DX11Renderer::UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint
 
     D3D11_MAPPED_SUBRESOURCE mapped;
     HRESULT hr = m_context->Map(m_captureTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-    if (FAILED(hr)) return;
+    if (FAILED(hr)) {
+        // The capture upload Map is the other per-frame device call besides
+        // Present, so device loss can surface here first. Latch it for the run
+        // loop rather than silently dropping every frame from now on.
+        FlagIfDeviceLost(hr, L"UpdateCaptureTexture Map");
+        return;
+    }
 
     if (m_captureFormat == CaptureFormatKind::NV12) {
         // NV12 source layout: Y plane (width * height bytes), then UV (width * height/2 bytes interleaved)
@@ -1569,6 +1593,11 @@ void DX11Renderer::Resize(uint32_t width, uint32_t height)
         std::wstringstream ss;
         ss << L"[NitLink/Renderer] ResizeBuffers FAILED 0x" << std::hex << hr << L"\n";
         OutputDebugStringW(ss.str().c_str());
+        // A device removed during resize (TDR, driver upgrade, sleep/resume)
+        // surfaces here rather than at Present. Route it into the same latch
+        // the run loop polls so recovery engages instead of leaving the swap
+        // chain at its old size with no rebuild ever triggered.
+        FlagIfDeviceLost(hr, L"Resize ResizeBuffers");
         return;
     }
     OutputDebugStringW(L"[NitLink/Renderer] Resize: swap chain resized\n");
@@ -1625,6 +1654,21 @@ void DX11Renderer::WaitForFrameReady()
     // The DXGI 1.3 low-latency wait, callable on its own so the Low-Latency
     // loop can wait at the TOP of the iteration, then read the freshest capture
     // frame, then call BeginFrame(false) (the wait has already happened).
+    // VRR cap (VRR_CAP.txt): pace to ~m_vrrCapHz instead of the swap-chain waitable,
+    // so the ALLOW_TEARING present stays under the VRR ceiling and engages VRR. The
+    // capture frame is read right after this returns, so it stays fresh.
+    if (m_vrrCapHz > 0.0) {
+        const auto interval = std::chrono::nanoseconds((long long)(1.0e9 / m_vrrCapHz));
+        const auto target   = m_lastPresentTime + interval;
+        while (std::chrono::steady_clock::now() < target) {
+            const auto remain = target - std::chrono::steady_clock::now();
+            if (remain > std::chrono::milliseconds(2))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            else
+                std::this_thread::yield();
+        }
+        return;
+    }
     if (m_frameLatencyWaitable) {
         WaitForSingleObjectEx(m_frameLatencyWaitable, 1000, TRUE);
     }
@@ -1953,6 +1997,40 @@ void DX11Renderer::CompositeUI(ID3D11ShaderResourceView* uiSRV)
     m_context->PSSetShaderResources(0, 1, &nullSRV2);
 }
 
+// Format an HRESULT as "0x" + 8 uppercase hex digits, most-significant first.
+// Device-removed reasons (e.g. 0x887A0006 DXGI_ERROR_DEVICE_HUNG) only read
+// sensibly in hex.
+static std::wstring HrToHex(HRESULT hr)
+{
+    const wchar_t* digits = L"0123456789ABCDEF";
+    unsigned v = static_cast<unsigned>(hr);
+    std::wstring s = L"0x";
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        s += digits[(v >> shift) & 0xF];
+    }
+    return s;
+}
+
+void DX11Renderer::FlagIfDeviceLost(HRESULT hr, const wchar_t* site)
+{
+    if (hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET) return;
+
+    // GetDeviceRemovedReason gives the specific cause (hung, reset, driver
+    // upgrade, out-of-memory); the Present/Map HRESULT only says "device gone".
+    HRESULT reason = m_device ? m_device->GetDeviceRemovedReason() : hr;
+    OutputDebugStringW((L"[NitLink/Renderer] graphics device lost at " + std::wstring(site)
+        + L" (hr=" + HrToHex(hr) + L", reason=" + HrToHex(reason)
+        + L"); flagging renderer rebuild\n").c_str());
+    m_deviceLost = true;
+}
+
+bool DX11Renderer::ConsumeDeviceLost()
+{
+    bool v = m_deviceLost;
+    m_deviceLost = false;
+    return v;
+}
+
 void DX11Renderer::EndFrame()
 {
     // Close this frame's GPU timing window BEFORE Present, so the measured
@@ -1968,15 +2046,23 @@ void DX11Renderer::EndFrame()
         if (m_gpuQueryFrameCount < kGpuQueryRingSize) m_gpuQueryFrameCount++;
     }
 
+    HRESULT hrPresent = S_OK;
     if (m_vsync) {
         // Synced present: no tearing. On a VRR display the panel still drives
         // its refresh from this present, so gameplay stays smooth.
-        m_swapChain->Present(1, 0);
+        hrPresent = m_swapChain->Present(1, 0);
     } else {
         // Immediate present, tearing allowed: lowest latency, relies on the
         // display's VRR to avoid tearing within its refresh range.
-        m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+        hrPresent = m_swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
     }
+    // Present is the per-frame sentinel for device loss: a TDR or driver
+    // upgrade surfaces here as DXGI_ERROR_DEVICE_REMOVED/_RESET. Latch it for
+    // the run loop instead of presenting into the void forever.
+    FlagIfDeviceLost(hrPresent, L"Present");
+    // Timestamp the present so the VRR present-rate cap (WaitForFrameReady) can pace
+    // the next iteration just under the display's VRR ceiling.
+    m_lastPresentTime = std::chrono::steady_clock::now();
 
     // ============== FRAME-TIME TELEMETRY ==============
     // Measure BeginFrame -> Present-returned time and roll it into a sliding
@@ -2071,6 +2157,48 @@ static void Hdr10PixelToBgra8(uint32_t px, uint8_t* outBgra)
     outBgra[3] = 0xFF;
 }
 
+// HDR10 screenshot, true-HDR path: convert one R10G10B10A2_UNORM PQ BT.2020
+// backbuffer pixel into scRGB FP16 (linear, BT.709 primaries, 1.0 == 80 nits):
+// the encoding Windows uses for HDR JPEG XR. Reuses the PQ inverse-EOTF and the
+// BT.2020->BT.709 matrix from the SDR path but stops before the tonemap, so
+// highlights stay above 1.0 and wide-gamut colors stay outside [0,1]; FP16
+// carries both. Output order is R,G,B,A halves (GUID_WICPixelFormat64bppRGBAHalf).
+static void Hdr10PixelToScrgbHalf(uint32_t px, uint16_t* outRgbaHalf)
+{
+    auto pqToLinear = [](float pq) -> float {
+        const float m1 = 0.1593017578125f;
+        const float m2 = 78.84375f;
+        const float c1 = 0.8359375f;
+        const float c2 = 18.8515625f;
+        const float c3 = 18.6875f;
+        float p   = std::pow(pq < 0.0f ? 0.0f : pq, 1.0f / m2);
+        float num = p - c1; if (num < 0.0f) num = 0.0f;
+        float den = c2 - c3 * p;
+        return std::pow(num / den, 1.0f / m1);   // 1.0 == 10000 nits
+    };
+
+    // Unpack R10G10B10A2_UNORM: R bits 0..9, G bits 10..19, B bits 20..29.
+    float pqR = ((px      ) & 0x3FF) / 1023.0f;
+    float pqG = ((px >> 10) & 0x3FF) / 1023.0f;
+    float pqB = ((px >> 20) & 0x3FF) / 1023.0f;
+
+    float r = pqToLinear(pqR);
+    float g = pqToLinear(pqG);
+    float b = pqToLinear(pqB);
+
+    // BT.2020 -> BT.709 primaries in linear light (ITU-R BT.2087-0).
+    float r709 =  1.6605f * r - 0.5876f * g - 0.0728f * b;
+    float g709 = -0.1246f * r + 1.1329f * g - 0.0083f * b;
+    float b709 = -0.0182f * r - 0.1006f * g + 1.1187f * b;
+
+    // scRGB reference white is 80 nits; pqToLinear's 1.0 is 10000 nits.
+    const float kToScrgb = 10000.0f / 80.0f;   // 125
+    outRgbaHalf[0] = DirectX::PackedVector::XMConvertFloatToHalf(r709 * kToScrgb);
+    outRgbaHalf[1] = DirectX::PackedVector::XMConvertFloatToHalf(g709 * kToScrgb);
+    outRgbaHalf[2] = DirectX::PackedVector::XMConvertFloatToHalf(b709 * kToScrgb);
+    outRgbaHalf[3] = DirectX::PackedVector::XMConvertFloatToHalf(1.0f);
+}
+
 // Encode a top-down BGRA8 buffer to a PNG via Windows Imaging Component.
 // PNG keeps the screenshot lossless but compressed and shareable anywhere
 // (a raw BMP of a 4K frame is about 33 MB and many apps will not preview or
@@ -2108,13 +2236,16 @@ static bool WritePngBgra8(const std::wstring& path, const uint8_t* pixels,
     return true;
 }
 
-// Encode a top-down R10G10B10A2 (PQ BT.2020 HDR10) buffer to a JPEG XR (.jxr)
-// via Windows Imaging Component. JXR preserves the full 10-bit HDR; the PNG path
-// can only hold the tonemapped 8-bit SDR view. The pixel format matches the HDR10
-// swap chain bit-for-bit (DXGI_FORMAT_R10G10B10A2_UNORM maps to
-// WICPixelFormat32bppRGBA1010102), so the PQ codes pass through unaltered.
-static bool WriteJxrHdr10(const std::wstring& path, const uint8_t* pixels,
-                          uint32_t width, uint32_t height, uint32_t stride)
+// Encode a top-down scRGB FP16 (64bpp RGBA half-float) buffer to a JPEG XR
+// (.jxr) via Windows Imaging Component. scRGB (linear, BT.709 primaries, value
+// 1.0 == 80 nits) in FP16 is the encoding Windows itself uses for HDR
+// screenshots: the Photos app recognizes a 64bppRGBAHalf .jxr as HDR and
+// tone-maps it back for SDR displays, so no embedded color profile is needed.
+// Highlights above 80 nits sit above 1.0 and wide-gamut colors outside BT.709
+// sit outside [0,1]; FP16 carries both, which integer formats cannot. The JXR
+// encoder supports 64bppRGBAHalf natively.
+static bool WriteJxrScrgbHalf(const std::wstring& path, const uint8_t* pixels,
+                              uint32_t width, uint32_t height, uint32_t stride)
 {
     ComPtr<IWICImagingFactory> factory;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
@@ -2132,7 +2263,7 @@ static bool WriteJxrHdr10(const std::wstring& path, const uint8_t* pixels,
     ComPtr<IPropertyBag2> props;
     if (FAILED(encoder->CreateNewFrame(&frame, &props))) return false;
 
-    // Highest quality so the 10-bit HDR survives the encode.
+    // Max quality so the float HDR survives the encode.
     if (props) {
         PROPBAG2 opt{};
         opt.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
@@ -2143,11 +2274,11 @@ static bool WriteJxrHdr10(const std::wstring& path, const uint8_t* pixels,
     if (FAILED(frame->Initialize(props.Get()))) return false;
     if (FAILED(frame->SetSize(width, height))) return false;
 
-    WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppRGBA1010102;
+    WICPixelFormatGUID fmt = GUID_WICPixelFormat64bppRGBAHalf;
     if (FAILED(frame->SetPixelFormat(&fmt))) return false;
-    // Require the exact 10-bit format: if the codec substituted a different one,
-    // the raw codes would be misread, so skip the JXR rather than save garbage.
-    if (fmt != GUID_WICPixelFormat32bppRGBA1010102) return false;
+    // The encoder must keep the float format; if it substituted an integer one
+    // the HDR would be silently clamped, so skip the JXR rather than save SDR.
+    if (fmt != GUID_WICPixelFormat64bppRGBAHalf) return false;
 
     if (FAILED(frame->WritePixels(height, stride, stride * height,
                                   const_cast<BYTE*>(pixels)))) return false;
@@ -2220,24 +2351,26 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
     uint8_t*       dst = pixelData.data();
     const size_t   srcPitch = mapped.RowPitch;
 
-    // True-HDR export buffer: in HDR mode this holds the raw R10G10B10A2 PQ
-    // BT.2020 backbuffer, encoded to a .jxr beside the tonemapped SDR PNG so the
-    // full 10-bit HDR is preserved, not only the 8-bit SDR view.
+    // True-HDR export buffer: scRGB FP16 (64bpp = 8 bytes/pixel vs the SDR PNG's
+    // 4), built alongside the SDR tonemap below from the same source pixel and
+    // encoded to a .jxr so the full HDR is preserved, not only the 8-bit view.
     std::vector<uint8_t> hdrData;
+    const uint32_t hdrRowBytes = width * 8;   // 4 channels * 16-bit half
     if (srcIsHdr10) {
-        try { hdrData.resize((size_t)width * height * 4); } catch (...) { hdrData.clear(); }
-        // HDR10 backbuffer: tonemap each PQ BT.2020 pixel to 8-bit sRGB BGRA so
-        // the saved frame matches the in-shader SDR-from-HDR look, and keep the
-        // raw row for the true-HDR .jxr.
+        try { hdrData.resize((size_t)hdrRowBytes * height); } catch (...) { hdrData.clear(); }
+        // HDR10 backbuffer: tonemap each PQ BT.2020 pixel to 8-bit sRGB BGRA for
+        // the shareable SDR PNG, AND convert the same pixel to scRGB FP16 for the
+        // true-HDR .jxr (no tonemap; highlights and wide gamut preserved).
         for (uint32_t y = 0; y < height; y++) {
             const uint8_t* sRow = src + y * srcPitch;
             uint8_t*       dRow = dst + y * rowBytes;
-            if (!hdrData.empty())
-                memcpy(hdrData.data() + (size_t)y * rowBytes, sRow, rowBytes);
+            uint16_t*      hRow = hdrData.empty() ? nullptr
+                : reinterpret_cast<uint16_t*>(hdrData.data() + (size_t)y * hdrRowBytes);
             for (uint32_t x = 0; x < width; x++) {
                 uint32_t px;
                 memcpy(&px, sRow + (size_t)x * 4, sizeof(px));
                 Hdr10PixelToBgra8(px, dRow + (size_t)x * 4);
+                if (hRow) Hdr10PixelToScrgbHalf(px, hRow + (size_t)x * 4);
             }
         }
     } else {
@@ -2273,14 +2406,15 @@ bool DX11Renderer::SaveScreenshot(const std::wstring& path)
         OutputDebugStringW(L"[NitLink/Renderer] Screenshot: PNG encode failed\n");
     }
 
-    // True-HDR sidecar: in HDR mode also write the raw R10G10B10A2 PQ BT.2020
-    // backbuffer to a .jxr (JPEG XR), preserving the HDR the SDR PNG cannot.
+    // True-HDR sidecar: in HDR mode also write the scRGB FP16 buffer to a .jxr
+    // (JPEG XR), the format Windows uses for HDR screenshots, so Photos opens
+    // it as real HDR. The SDR PNG above is the shareable tonemapped view.
     if (srcIsHdr10 && !hdrData.empty()) {
         std::wstring jxrPath = path;
         size_t jdot = jxrPath.find_last_of(L'.');
         if (jdot != std::wstring::npos) jxrPath.replace(jdot, std::wstring::npos, L".jxr");
         else                            jxrPath += L".jxr";
-        if (WriteJxrHdr10(jxrPath, hdrData.data(), width, height, rowBytes)) {
+        if (WriteJxrScrgbHalf(jxrPath, hdrData.data(), width, height, hdrRowBytes)) {
             std::wstringstream ss;
             ss << L"[NitLink/Renderer] HDR screenshot saved: " << jxrPath << L"\n";
             OutputDebugStringW(ss.str().c_str());
@@ -2522,6 +2656,10 @@ bool DX11Renderer::RecreateSwapChainBuffer(DXGI_FORMAT newFormat)
         ss << L"[NitLink/Renderer] SetHDR ResizeBuffers failed hr=0x"
            << std::hex << hr << L"\n";
         OutputDebugStringW(ss.str().c_str());
+        // A device removed during the HDR format swap surfaces here rather
+        // than at Present. Route it into the same latch the run loop polls so
+        // recovery engages instead of leaving the swap chain unrecreated.
+        FlagIfDeviceLost(hr, L"RecreateSwapChainBuffer ResizeBuffers");
         return false;
     }
 

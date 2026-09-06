@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <cstdint>
 #include <string>
+#include <chrono>
 
 using Microsoft::WRL::ComPtr;
 
@@ -28,6 +29,15 @@ public:
     void WaitForFrameReady();
     void DrawCaptureFrame();
     void EndFrame();
+
+    // Latched true after EndFrame's Present (or a per-frame capture-texture
+    // Map) reports the graphics device was removed or reset (TDR, driver
+    // upgrade, GPU reset). The run loop polls this once per iteration and,
+    // when set, rebuilds the renderer and its device-dependent objects.
+    // Returns the latched value and clears it, so one device-loss event
+    // drives exactly one rebuild. Mirrors the capture side's needs-reopen
+    // signal.
+    bool ConsumeDeviceLost();
 
     void UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint32_t width, uint32_t height);
 
@@ -250,6 +260,13 @@ private:
     bool CreateGpuTimingQueries();
     void UpdateAspectTransform();
 
+    // Inspect an HRESULT from a swap-chain or device call. When it is a DXGI
+    // device-removed or device-reset code, log the specific
+    // GetDeviceRemovedReason and latch m_deviceLost. Any other HRESULT is
+    // ignored here and left for the call site to handle. `site` names the
+    // originating call for the log line.
+    void FlagIfDeviceLost(HRESULT hr, const wchar_t* site);
+
     // CaptureFormatKind is declared in the public section above so the
     // application's CaptureDevice→renderer subtype routing can use it
     // without including this private section.
@@ -270,6 +287,11 @@ private:
     // DXGI when the swap chain is ready for the next Present. The wait
     // happens at the START of BeginFrame.
     HANDLE                         m_frameLatencyWaitable = nullptr;
+    // VRR present-rate cap: when > 0 (set from VRR_CAP.txt at init), WaitForFrameReady
+    // paces the loop to this Hz instead of the swap-chain waitable, keeping the
+    // ALLOW_TEARING present just under the display's VRR max so VRR engages.
+    double                         m_vrrCapHz = 0.0;
+    std::chrono::steady_clock::time_point m_lastPresentTime{};
 
     // Frame-latency telemetry. Averaged window of recent end-to-end render
     // times (BeginFrame to Present), reported into PushSettingsState so the
@@ -397,6 +419,10 @@ private:
     uint32_t m_windowWidth  = 0;
     uint32_t m_windowHeight = 0;
     HWND     m_hwnd = nullptr;
+
+    // Latched when Present or a capture-texture Map returns a DXGI device-
+    // removed or device-reset code. Polled and cleared by ConsumeDeviceLost.
+    bool     m_deviceLost = false;
 };
 
 } // namespace NitLink

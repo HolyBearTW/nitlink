@@ -3,6 +3,8 @@
 #include <propvarutil.h>
 #include <avrt.h>
 #include <debugapi.h>
+#include <mmreg.h>
+#include <ksmedia.h>
 #include <sstream>
 #include <algorithm>
 
@@ -17,6 +19,21 @@ static constexpr REFERENCE_TIME REFTIMES_PER_MILLISEC = 10000;
 
 static void AudioLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/Audio] " + msg + L"\n").c_str());
+}
+
+// True when a WASAPI mix format carries IEEE float samples, either as a plain
+// WAVE_FORMAT_IEEE_FLOAT tag or a WAVE_FORMAT_EXTENSIBLE whose SubFormat is IEEE
+// float. The capture to render fast path reinterprets sample bytes as float, so
+// this gates that cast.
+static bool IsFloatFormat(const WAVEFORMATEX* wf) {
+    if (!wf) return false;
+    if (wf->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) return true;
+    if (wf->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+        wf->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        auto ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(wf);
+        return IsEqualGUID(ext->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) != 0;
+    }
+    return false;
 }
 
 AudioRouter::AudioRouter() = default;
@@ -53,6 +70,10 @@ bool AudioRouter::Initialize(const std::wstring& nameHint)
         AudioLog(L"Initialize: SetupRender failed");
         return false;
     }
+
+    // Decide how the worker bridges the two formats now that both are known,
+    // before the worker thread starts (m_routeMode is read on that thread).
+    ChooseRouteMode();
 
     // Start streaming
     hr = m_captureClient->Start();
@@ -200,6 +221,61 @@ bool AudioRouter::SetupRender()
     return true;
 }
 
+void AudioRouter::ChooseRouteMode()
+{
+    m_routeMode     = RouteMode::Silence;
+    m_formatWarning = false;
+    m_formatWarningText.clear();
+
+    if (!m_captureFormat || !m_renderFormat) {
+        m_formatWarning     = true;
+        m_formatWarningText = L"NitLink could not read the audio device formats, so game "
+                              L"audio is muted. Video is unaffected.";
+        AudioLog(L"Route mode: missing format, muting audio");
+        return;
+    }
+
+    const bool sameRate  = m_captureFormat->nSamplesPerSec == m_renderFormat->nSamplesPerSec;
+    const bool bothFloat = IsFloatFormat(m_captureFormat) && IsFloatFormat(m_renderFormat);
+    const WORD capCh     = m_captureFormat->nChannels;
+    const WORD renCh     = m_renderFormat->nChannels;
+
+    // Identical formats: copy straight through.
+    if (sameRate && bothFloat &&
+        m_captureFormat->wBitsPerSample == m_renderFormat->wBitsPerSample &&
+        capCh == renCh) {
+        m_routeMode = RouteMode::DirectCopy;
+        AudioLog(L"Route mode: direct copy (matching formats)");
+        return;
+    }
+
+    // Stereo float capture into a 5.1/7.1 float playback device at the same
+    // rate: map L/R onto the front pair, zero the rest. This is the common
+    // surround case and stays a safe, channel-bounded copy.
+    if (sameRate && bothFloat && capCh == 2 && (renCh == 6 || renCh == 8)) {
+        m_routeMode = RouteMode::StereoToSurround;
+        AudioLog(L"Route mode: stereo capture mapped to surround front channels");
+        return;
+    }
+
+    // Anything else (different sample rate, non-float, or a channel layout this
+    // path does not map) would require real resampling / a channel matrix.
+    // Mute and surface a one-time explanation rather than guess or over-read.
+    m_routeMode     = RouteMode::Silence;
+    m_formatWarning = true;
+    std::wstringstream ss;
+    ss << L"NitLink can't route this audio combination yet, so game audio is muted.\n\n"
+       << L"Capture device: " << m_captureFormat->nSamplesPerSec << L" Hz, " << capCh << L" ch\n"
+       << L"Playback device: " << m_renderFormat->nSamplesPerSec << L" Hz, " << renCh << L" ch\n\n"
+       << L"Routing works when both devices use 32-bit float at the same sample rate and the "
+       << L"playback device is stereo or 5.1/7.1 surround.\n\n"
+       << L"To fix: open Windows Sound settings and set your default playback device to a stereo "
+       << L"format at the capture device's sample rate, or send game audio through your TV or "
+       << L"receiver directly. Video is unaffected.";
+    m_formatWarningText = ss.str();
+    AudioLog(L"Route mode: unsupported format combination, muting audio");
+}
+
 void AudioRouter::RouteLoop()
 {
     // Boost thread priority for low-latency audio. The Windows pro-audio
@@ -242,8 +318,27 @@ void AudioRouter::RouteLoop()
                 BYTE* renderData = nullptr;
                 hr = m_renderService->GetBuffer(framesToWrite, &renderData);
                 if (SUCCEEDED(hr) && renderData) {
-                    if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || m_muted.load()) {
+                    if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || m_muted.load()
+                            || m_routeMode == RouteMode::Silence) {
                         memset(renderData, 0, framesToWrite * (size_t)bytesPerRenderSample);
+                    } else if (m_routeMode == RouteMode::StereoToSurround) {
+                        // Stereo capture to a 5.1/7.1 playback device: place L and R on
+                        // the front-left and front-right channels (indices 0 and 1 in
+                        // the standard WAVEFORMATEXTENSIBLE channel order) and zero the
+                        // rest. Reads exactly two floats per frame from the capture
+                        // packet, so it cannot over-read regardless of render channels.
+                        const float vol = m_volume.load();
+                        const float* src = reinterpret_cast<const float*>(captureData);
+                        float*       dst = reinterpret_cast<float*>(renderData);
+                        const uint32_t rc = m_renderFormat->nChannels;
+                        for (UINT32 frame = 0; frame < framesToWrite; ++frame) {
+                            const float l = src[(size_t)frame * 2 + 0] * vol;
+                            const float r = src[(size_t)frame * 2 + 1] * vol;
+                            float* out = dst + (size_t)frame * rc;
+                            out[0] = l;
+                            out[1] = r;
+                            for (uint32_t c = 2; c < rc; ++c) out[c] = 0.0f;
+                        }
                     } else {
                         // Both sides are likely 32-bit float (WASAPI default mix format).
                         // Copy with volume scaling. Matching format is assumed here for

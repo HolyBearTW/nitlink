@@ -51,6 +51,15 @@ private:
 
     bool SendFrame(Opcode op, const std::string& payload);
     bool ReadFrame(Opcode& op, std::string& payload);
+    // Wait until at least requiredBytes are readable on the pipe, Discord drops
+    // it, the worker is asked to stop (m_running goes false), or the timeout
+    // elapses. Gates every blocking ReadFile (both the frame header and the
+    // payload) on PeekNamedPipe so an unresponsive Discord, or a header-only
+    // partial frame, cannot park the worker in a kernel read and hang
+    // Disconnect's join(). Returns true only when the requested bytes can be
+    // read without blocking.
+    bool WaitForReadableFrame(std::chrono::milliseconds timeout,
+                              DWORD requiredBytes);
     void WorkerLoop();
     static std::string EscapeJson(const std::string& s);
     static std::string WideToUtf8(const std::wstring& w);

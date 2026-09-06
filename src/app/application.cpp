@@ -8,6 +8,8 @@
 #include <sstream>
 #include <algorithm>
 #include <filesystem>
+#include <vector>       // FrameLevels histograms (HDR levels readout)
+#include <cstdint>      // fixed-width pixel-code types
 #include <cassert>      // assert: frame-buffer teardown invariant (worker joined)
 #include <debugapi.h>
 #include <shlobj.h>
@@ -18,6 +20,134 @@ namespace NitLink {
 
 static void AppLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/App] " + msg + L"\n").c_str());
+}
+
+// ---- HDR levels readout (Ctrl+F6) -------------------------------------
+// Measures the captured frame's code range so the correct per-card color
+// range can be read off the signal instead of eyeballed. NitLink's decode
+// only varies by LUMA range (chroma is full-range in both shader paths), so
+// the luma floor is the load-bearing number: ~64 (10-bit) / ~16 (8-bit)
+// means a limited-range source, ~0 means full range. Chroma min/max is
+// reported too (informational; needs saturated content to be meaningful).
+struct FrameLevels {
+    bool valid      = false;
+    bool eightBit   = false;   // NV12 (8-bit codes) vs P010 (10-bit codes)
+    int  yFloor = 0, yCeil = 0;
+    bool haveChroma = false;
+    int  cbLo = 0, cbHi = 0, crLo = 0, crHi = 0;
+};
+
+// Robust floor/ceiling from a code histogram: ignore the bottom/top 0.1% so
+// a handful of stuck pixels cannot flip the verdict. binCount = 256 or 1024.
+static void HistFloorCeil(const uint32_t* hist, int binCount,
+                          uint64_t total, int& floorOut, int& ceilOut) {
+    floorOut = 0;
+    ceilOut  = binCount - 1;
+    if (total == 0) return;
+    const uint64_t cut = total / 1000;   // 0.1% tail on each end
+    uint64_t acc = 0;
+    for (int i = 0; i < binCount; ++i) {
+        acc += hist[i];
+        if (acc > cut) { floorOut = i; break; }
+    }
+    acc = 0;
+    for (int i = binCount - 1; i >= 0; --i) {
+        acc += hist[i];
+        if (acc > cut) { ceilOut = i; break; }
+    }
+}
+
+static FrameLevels ComputeFrameLevels(const uint8_t* data, uint32_t size,
+                                      uint32_t width, uint32_t height,
+                                      bool isP010, bool isNV12) {
+    FrameLevels lv;
+    if (!data || width < 16 || height < 16) return lv;
+    if (!isP010 && !isNV12) return lv;   // BGRA is an RGB path; no YUV range
+
+    // Subsample to ~250k luma samples regardless of resolution so the 4 Hz
+    // scan stays well under a millisecond even at 4K.
+    const uint64_t pixels = static_cast<uint64_t>(width) * height;
+    uint32_t step = static_cast<uint32_t>(pixels / 250000);
+    if (step < 1) step = 1;
+
+    const int bins = isP010 ? 1024 : 256;
+    std::vector<uint32_t> yh(bins, 0), cbh(bins, 0), crh(bins, 0);
+    uint64_t yCount = 0, cCount = 0;
+
+    if (isP010) {
+        // Y plane: pixels * 16-bit LE samples, 10-bit code in the high bits.
+        const uint64_t yBytes = pixels * 2;
+        for (uint64_t i = 0; i < pixels; i += step) {
+            const uint64_t off = i * 2;
+            if (off + 1 >= size) break;
+            const uint32_t v = (data[off] | (data[off + 1] << 8)) >> 6;
+            yh[v & 1023]++; ++yCount;
+        }
+        // UV plane: interleaved (Cb,Cr) 16-bit pairs at half resolution.
+        const uint64_t chromaBytes = (size > yBytes) ? (size - yBytes) : 0;
+        const uint64_t pairs = chromaBytes / 4;
+        for (uint64_t p = 0; p < pairs; p += step) {
+            const uint64_t off = yBytes + p * 4;
+            if (off + 3 >= size) break;
+            const uint32_t cb = (data[off]     | (data[off + 1] << 8)) >> 6;
+            const uint32_t cr = (data[off + 2] | (data[off + 3] << 8)) >> 6;
+            cbh[cb & 1023]++; crh[cr & 1023]++; cCount += 2;
+        }
+    } else {
+        // NV12: 8-bit Y plane (pixels bytes), then interleaved (Cb,Cr) 8-bit.
+        for (uint64_t i = 0; i < pixels; i += step) {
+            if (i >= size) break;
+            yh[data[i]]++; ++yCount;
+        }
+        const uint64_t chromaBytes = (size > pixels) ? (size - pixels) : 0;
+        const uint64_t pairs = chromaBytes / 2;
+        for (uint64_t p = 0; p < pairs; p += step) {
+            const uint64_t off = pixels + p * 2;
+            if (off + 1 >= size) break;
+            cbh[data[off]]++; crh[data[off + 1]]++; cCount += 2;
+        }
+    }
+
+    if (yCount == 0) return lv;
+    lv.eightBit = !isP010;
+    HistFloorCeil(yh.data(), bins, yCount, lv.yFloor, lv.yCeil);
+    if (cCount > 0) {
+        HistFloorCeil(cbh.data(), bins, cCount / 2, lv.cbLo, lv.cbHi);
+        HistFloorCeil(crh.data(), bins, cCount / 2, lv.crLo, lv.crHi);
+        lv.haveChroma = true;
+    }
+    lv.valid = true;
+    return lv;
+}
+
+// One-line readout: measured signal range (sig:) next to the shader's active
+// decode (dec:), so signal-truth and the Alt+R setting compare at a glance.
+static std::wstring FormatLevelsText(const FrameLevels& lv,
+                                     bool effectiveFullRange) {
+    if (!lv.valid) {
+        return L"LEVELS: no YUV range on this path (test HDR / P010 capture)";
+    }
+    // Verdict from the luma floor. Limited-range black sits at 64 (10-bit) /
+    // 16 (8-bit); full range bottoms at 0. The gap is wide, so a midpoint
+    // split is unambiguous unless the scene carries no true black.
+    const int limBlack = lv.eightBit ? 16 : 64;
+    const int midpoint = limBlack / 2;                 // 8 (8b) / 32 (10b)
+    const int hiTol    = lv.eightBit ? 28 : 112;       // limited-black + slack
+    std::wstring sig;
+    if      (lv.yFloor <= midpoint) sig = L"FULL";
+    else if (lv.yFloor <= hiTol)    sig = L"LIMITED";
+    else                            sig = L"? need-black";
+
+    std::wstringstream ss;
+    ss << L"Y " << lv.yFloor << L"-" << lv.yCeil
+       << L"  sig:" << sig
+       << L"  dec:" << (effectiveFullRange ? L"FULL" : L"LIMITED");
+    if (lv.haveChroma) {
+        ss << L"  Cb " << lv.cbLo << L"-" << lv.cbHi
+           << L" Cr " << lv.crLo << L"-" << lv.crHi;
+    }
+    if (lv.eightBit) ss << L" (8b)";
+    return ss.str();
 }
 
 // Predicate used to gate Elgato-specific control calls (IKsPropertySet
@@ -659,6 +789,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     const std::wstring audioHint = DeriveAudioHint(m_currentDeviceInfo.name);
     if (!m_audioRouter->Initialize(audioHint)) {
         AppLog(L"Initialize: AudioRouter failed (continuing without audio)");
+    } else if (m_audioRouter->HasFormatWarning()) {
+        // Unsupported playback format (e.g. a non-standard sample rate or a
+        // channel layout the router cannot map): audio is muted and the router
+        // built a message describing what to change. Surface it once, owned by
+        // the main window.
+        MessageBoxW(m_window->GetHWND(), m_audioRouter->FormatWarningText().c_str(),
+                    L"NitLink audio", MB_OK | MB_ICONINFORMATION);
     }
 
     m_overlay = std::make_unique<Overlay>();
@@ -807,6 +944,18 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             AppLog(m_config->vrrPresentPacing
                 ? L"VRR pacing: enabled (Present gated by frame differ)"
                 : L"VRR pacing: disabled (Present every iteration)");
+            return;
+        }
+        if (action == L"toggleLowLatency" && m_config) {
+            // Low-latency present mode on/off. The run loop reads m_lowLatency
+            // each iteration to choose present-on-arrival vs vsync pacing, so
+            // the next frame picks up the change with no pipeline rebuild.
+            // m_config->lowLatency is the persisted mirror.
+            m_lowLatency = !m_lowLatency;
+            m_config->lowLatency = m_lowLatency;
+            m_config->Save("nitlink.json");
+            AppLog(m_lowLatency ? L"Low-Latency ON (F1): present-on-arrival"
+                                : L"Low-Latency OFF (F1): VRR/Smooth pacing");
             return;
         }
         if (action == L"setVolume" && m_config && m_audioRouter) {
@@ -1146,19 +1295,6 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
         });
 
-    // Alt+V: toggle VSync. Default off keeps the low-latency tearing-allowed
-    // present; on switches to a synced present so a VRR or fixed display can
-    // stop the tearing (most visible on camera pans).
-    m_hotkeyManager->Register("toggle_vsync", {VK_MENU, 'V'},
-        [this]() {
-            if (m_renderer) {
-                const bool on = !m_renderer->IsVSyncOn();
-                m_renderer->SetVSync(on);
-                AppLog(on ? L"VSync ON (Alt+V): synced present, no tearing"
-                          : L"VSync OFF (Alt+V): immediate present, lowest latency");
-            }
-        });
-
     // Alt+L: toggle Low-Latency present mode. ON = present-on-arrival (wait for
     // the swap chain at the TOP of the loop, then grab the freshest frame and
     // present it). OFF = VRR/Smooth pacing (skip dup frames, panel follows the
@@ -1166,8 +1302,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_hotkeyManager->Register("toggle_low_latency", {VK_MENU, 'L'},
         [this]() {
             m_lowLatency = !m_lowLatency;
+            if (m_config) {
+                m_config->lowLatency = m_lowLatency;
+                m_config->Save("nitlink.json");
+            }
             AppLog(m_lowLatency ? L"Low-Latency ON (Alt+L): present-on-arrival"
                                 : L"Low-Latency OFF (Alt+L): VRR/Smooth pacing");
+            PushSettingsState();
         });
 
     // Alt+R: override the source color-range expansion. MF reports HDR10 as
@@ -1178,9 +1319,12 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         [this]() {
             m_sourceRangeOverride = (m_sourceRangeOverride + 1) % 3;
             if (m_renderer) m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
-            AppLog(m_sourceRangeOverride == 1 ? L"Color range: FULL forced (Alt+R)"
-                 : m_sourceRangeOverride == 2 ? L"Color range: LIMITED forced (Alt+R)"
-                 : L"Color range: AUTO from Media Foundation (Alt+R)");
+            const std::wstring rmsg =
+                m_sourceRangeOverride == 1 ? L"Color range: FULL forced (Alt+R)"
+              : m_sourceRangeOverride == 2 ? L"Color range: LIMITED forced (Alt+R)"
+              :                              L"Color range: AUTO from Media Foundation (Alt+R)";
+            AppLog(rmsg);
+            ShowToast(rmsg, std::chrono::milliseconds(1800));
         });
 
     // Ctrl+F5: capture the current frame's placeholder fingerprint to the
@@ -1194,6 +1338,23 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         [this]() {
             m_dumpFingerprintRequested = true;
             AppLog(L"Placeholder fingerprint capture queued (Ctrl+F5), next captured frame will log its signature");
+        });
+
+    // Ctrl+F6: HDR levels readout. Measures the captured frame's luma (and
+    // chroma) code range and shows it on-screen, so the correct per-card
+    // color range can be read off the signal instead of eyeballed. On a
+    // reference black/white pattern (the PS5 HDR calibration screen is
+    // ideal), a luma floor near 64 (10-bit) means a limited-range source,
+    // near 0 means full range. The readout pairs sig: (measured signal) with
+    // dec: (how the shader is currently decoding) so the two can be compared
+    // and the Alt+R override dialed to match.
+    m_hotkeyManager->Register("toggle_levels_diag", {VK_CONTROL, VK_F6},
+        [this]() {
+            m_levelsDiagOn = !m_levelsDiagOn;
+            AppLog(m_levelsDiagOn ? L"HDR levels readout ON (Ctrl+F6)"
+                                  : L"HDR levels readout OFF (Ctrl+F6)");
+            // Drop any lingering readout immediately on toggle-off.
+            if (!m_levelsDiagOn) m_toastText.clear();
         });
 
     m_sessionStartTime = std::chrono::system_clock::now();
@@ -1219,6 +1380,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     if (m_renderer) {
         m_renderer->SetColorExpansion(m_config->colorExpansion);
     }
+    // Apply the persisted low-latency preference (Alt+L / F1 toggle). The run
+    // loop reads m_lowLatency to choose present-on-arrival vs vsync pacing.
+    m_lowLatency = m_config->lowLatency;
 
     // Spin up the HDR source poller iff the device class supports the
     // InfoFrame property query. The 4K Pro does; the 4K S over USB does
@@ -1276,7 +1440,13 @@ void Application::Run()
         //   3. Overlay recreates its D2D bitmap to wrap the new backbuffer.
         // Without step 1 first, DXGI's ResizeBuffers will block forever
         // waiting for the dangling D2D reference to release.
-        if (m_window->WasResized()) {
+        // Null guard on m_renderer: the device-loss gate below this block only
+        // rebuilds the renderer later in the same iteration, so a resize event
+        // that lands while the renderer is torn down (failed rebuild pending
+        // retry) would otherwise dereference a null renderer here. Skipping the
+        // resize is safe: the pending rebuild recreates the swap chain at the
+        // current client size, and any later resize event repeats this block.
+        if (m_window->WasResized() && m_renderer) {
             auto [w, h] = m_window->GetClientSize();
             AppLog(L"Resize event: handling resize");
             if (m_overlay) m_overlay->OnResizeBegin();
@@ -1384,6 +1554,26 @@ void Application::Run()
         // the freshest frame at any display instant is already 0-7 ms old by
         // physics, so a second blocking wait only adds drops, it cannot make the
         // frame fresher. The frame-ready event infra stays in place but unused.
+        // Graphics device loss recovery. EndFrame's Present (or the per-frame
+        // capture-texture Map) latches device-removed; rebuild the renderer and
+        // its dependents before this iteration touches them further. A failed
+        // rebuild backs off briefly so the loop does not spin while the GPU is
+        // still gone (long driver reinstall, sleep/resume window).
+        //
+        // A null renderer counts as still-lost: a failed rebuild leaves
+        // m_renderer null and returns false, so treating null as recovered
+        // would drop straight into the render path below and dereference a null
+        // renderer within a frame. Gating on null instead retries the rebuild
+        // every backoff interval until the GPU returns, and guarantees the
+        // render path below runs only with a live renderer.
+        const bool deviceLost = !m_renderer || m_renderer->ConsumeDeviceLost();
+        if (deviceLost) {
+            if (!RecoverFromDeviceLost()) {
+                Sleep(250);
+                continue;
+            }
+        }
+
         if (m_lowLatency && m_renderer) m_renderer->WaitForFrameReady();
 
         auto captureStart = Clock::now();
@@ -1505,6 +1695,26 @@ void Application::Run()
                 if (m_inPlaceholderState) {
                     AppLog(L"Signal: real source frames resumed");
                     m_inPlaceholderState = false;
+                }
+
+                // HDR levels readout (Ctrl+F6): measure this frame's code
+                // range so the per-card color range is read off the signal,
+                // not eyeballed. Throttled to ~4 Hz; the scan is a subsampled
+                // histogram costing a fraction of a millisecond. Helpers are
+                // ComputeFrameLevels / FormatLevelsText at the top of the file.
+                if (m_levelsDiagOn && m_captureDevice) {
+                    const auto lvNow = std::chrono::steady_clock::now();
+                    if (lvNow - m_lastLevelsCompute >= std::chrono::milliseconds(250)) {
+                        m_lastLevelsCompute = lvNow;
+                        const auto sub = m_captureDevice->GetOutputFormat().subtype;
+                        const bool isP010 = IsEqualGUID(sub, MFVideoFormat_P010);
+                        const bool isNV12 = IsEqualGUID(sub, MFVideoFormat_NV12);
+                        const FrameLevels lv = ComputeFrameLevels(
+                            frame.data, frame.size, frame.width, frame.height,
+                            isP010, isNV12);
+                        ShowToast(FormatLevelsText(lv, EffectiveSourceFullRange()),
+                                  std::chrono::milliseconds(1200));
+                    }
                 }
             } else if (cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder) {
                 // MOTION-RECENCY GATE.
@@ -2848,6 +3058,120 @@ bool Application::ReconcileCaptureFormat(bool force)
     return true;
 }
 
+bool Application::RecoverFromDeviceLost()
+{
+    AppLog(L"Device lost: rebuilding renderer and device-dependent objects");
+
+    // Capture the live renderer state before teardown. These are session
+    // choices a fresh DX11Renderer would otherwise reset to defaults, plus the
+    // backbuffer size to rebuild at. When a prior rebuild failed and left the
+    // renderer null, the retry path enters here with no renderer to query, so
+    // the size falls back to the live window client rect (which does not need
+    // a renderer); without that fallback a failed rebuild could never retry.
+    uint32_t w              = m_renderer ? m_renderer->GetWindowWidth()     : 0;
+    uint32_t h              = m_renderer ? m_renderer->GetWindowHeight()    : 0;
+    if ((w == 0 || h == 0) && m_window) {
+        auto [cw, ch] = m_window->GetClientSize();
+        w = cw;
+        h = ch;
+    }
+    const bool wasVsync     = m_renderer ? m_renderer->IsVSyncOn()          : false;
+    const bool wasHDR       = m_renderer ? m_renderer->IsHDREnabled()       : false;
+    const bool wasDiag      = m_renderer ? m_renderer->IsHDRDiagModeOn()    : false;
+    const bool wasPostInput = m_renderer ? m_renderer->IsPostInputEnabled() : false;
+
+    // Tear down in reverse dependency order: overlay, NIS upscaler, and frame
+    // differ all hold D3D11 objects created from the renderer's device, so they
+    // must release before the device they were built on.
+    m_frameDiffer.reset();
+    m_nisUpscaler.reset();
+    m_overlay.reset();
+    m_renderer.reset();
+
+    if (w == 0 || h == 0) {
+        AppLog(L"Device lost: no cached backbuffer size; aborting rebuild");
+        return false;
+    }
+
+    // Rebuild the renderer on a fresh device.
+    m_renderer = std::make_unique<DX11Renderer>();
+    if (!m_renderer->Initialize(m_window->GetHWND(), w, h)) {
+        AppLog(L"Device lost: renderer rebuild FAILED");
+        m_renderer.reset();
+        return false;
+    }
+
+    // Rebuild the device-dependent objects on the new device. Best-effort, same
+    // as Initialize: a failed dependent disables its feature but the app keeps
+    // running. (Kept in lock-step with the Initialize bring-up at the overlay/
+    // NIS/frame-differ block.)
+    m_overlay = std::make_unique<Overlay>();
+    if (m_overlay->Initialize(m_renderer->GetDevice(), m_renderer->GetContext(),
+                              m_renderer->GetSwapChain(), m_window->GetHWND())) {
+        m_showOverlay = true;
+    } else {
+        m_showOverlay = false;
+        AppLog(L"Device lost: Overlay rebuild failed (continuing without overlay)");
+    }
+
+    m_nisUpscaler = std::make_unique<NisUpscaler>();
+    if (!m_nisUpscaler->Initialize(m_renderer->GetDevice())) {
+        m_nisUpscaler.reset();
+        AppLog(L"Device lost: NIS rebuild failed (continuing without NIS)");
+    }
+
+    m_frameDiffer = std::make_unique<FrameDiffer>();
+    if (!m_frameDiffer->Initialize(m_renderer->GetDevice())) {
+        m_frameDiffer.reset();
+        AppLog(L"Device lost: FrameDiffer rebuild failed (continuing without)");
+    }
+
+    // Re-apply the live renderer toggles the fresh device reset to defaults.
+    m_renderer->SetVSync(wasVsync);
+    m_renderer->SetHDRDiagMode(wasDiag);
+    m_renderer->SetPostInputEnabled(wasPostInput);
+    if (m_config) m_renderer->SetColorExpansion(m_config->colorExpansion);
+
+    // Re-teach the new renderer how to interpret the capture stream, reading
+    // the format the capture device is currently running. Mirrors the renderer
+    // source-state push in ReconcileCaptureFormat. The next UpdateCaptureTexture
+    // re-creates the GPU capture textures for this format.
+    if (m_captureDevice) {
+        auto fmt = m_captureDevice->GetOutputFormat();
+        m_renderer->SetSourceRowOrder(fmt.topDown);
+        m_lastMfFullRange   = fmt.fullRange;
+        m_lastCaptureIsP010 = IsEqualGUID(fmt.subtype, MFVideoFormat_P010);
+        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+        const bool captureIsP010 = IsEqualGUID(fmt.subtype, MFVideoFormat_P010);
+        m_renderer->SetSourceIsHDR10(captureIsP010);
+        DX11Renderer::CaptureFormatKind rkind;
+        if (captureIsP010) {
+            rkind = DX11Renderer::CaptureFormatKind::P010;
+        } else if (IsEqualGUID(fmt.subtype, MFVideoFormat_NV12)) {
+            rkind = DX11Renderer::CaptureFormatKind::NV12;
+        } else {
+            rkind = DX11Renderer::CaptureFormatKind::BGRA;
+        }
+        m_renderer->SetSourceFormat(rkind);
+    }
+
+    // Restore HDR swap-chain mode last, bracketed by the overlay resize hooks
+    // the same way every other HDR toggle is, so the overlay releases and
+    // re-wraps the backbuffer bitmap cleanly. On failure the renderer stays in
+    // SDR and config is brought down to match, same as the reconcile fallback.
+    if (wasHDR) {
+        if (m_overlay) m_overlay->OnResizeBegin();
+        if (!m_renderer->SetHDREnabled(true)) {
+            AppLog(L"Device lost: HDR re-enable failed; renderer staying in SDR");
+            if (m_config) m_config->hdrEnabled = false;
+        }
+        if (m_overlay) m_overlay->OnResizeEnd();
+    }
+
+    AppLog(L"Device lost: rebuild complete");
+    return true;
+}
+
 bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
 {
     if (!m_captureDevice || !m_config) return false;
@@ -2964,6 +3288,15 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
             AppLog(L"SwitchCaptureDevice: AudioRouter re-init failed (continuing without audio)");
         } else {
             AppLog(L"SwitchCaptureDevice: AudioRouter re-bound to '" + newAudioHint + L"'");
+            // Surface an unsupported-playback-format warning the same way the
+            // startup path does. Without this, switching into a device whose
+            // audio endpoint uses a non-standard sample rate or channel layout
+            // mutes silently: the router falls back to no audio but the user is
+            // never told why. Mirrors the once-per-init MessageBox at bring-up.
+            if (m_audioRouter->HasFormatWarning()) {
+                MessageBoxW(m_window->GetHWND(), m_audioRouter->FormatWarningText().c_str(),
+                            L"NitLink audio", MB_OK | MB_ICONINFORMATION);
+            }
         }
     }
 
@@ -2998,6 +3331,7 @@ void Application::PushSettingsState()
     js << L"\"colorExpansion\":"    << (m_config->colorExpansion    ? L"true" : L"false") << L",";
     js << L"\"nisEnabled\":"        << (m_config->nisEnabled        ? L"true" : L"false") << L",";
     js << L"\"vrrPresentPacing\":"  << (m_config->vrrPresentPacing  ? L"true" : L"false") << L",";
+    js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";

@@ -928,7 +928,7 @@
           <div class="brand-logo">NitLink</div>
           <p class="brand-tagline">Low-latency capture viewer for HDR10, VRR, and clean device control.</p>
         </div>
-        <span class="version-tag">v1.0.0-rc4</span>
+        <span class="version-tag">v1.1.0</span>
       </div>
 
       <div class="sidebar-card telemetry-stack" aria-label="Signal telemetry">
@@ -1059,6 +1059,20 @@
                 </div>
               </div>
 
+              <div class="setting-row" data-action="toggleLowLatency"
+                onmouseenter="updateDesc('Low-Latency Mode', 'Grabs the freshest capture frame and presents it the instant it arrives, which is what makes NitLink fast. Turning it off holds each frame after capture and waits before presenting, so the picture is up to one refresh older. Leave it on; off only adds input lag.')">
+                <div class="setting-label-group">
+                  <div class="setting-name-row">
+                    <span class="setting-name">Low-Latency Mode</span>
+                    <span class="setting-chip soft">Recommended</span>
+                  </div>
+                  <span class="setting-desc">Presents the freshest frame on arrival. Off adds up to one refresh of lag.</span>
+                </div>
+                <div class="setting-control-group">
+                  <div class="toggle" id="toggle-low-latency"></div>
+                </div>
+              </div>
+
               <div class="setting-row" data-action="toggleVrrPacing"
                 onmouseenter="updateDesc('VRR Present Pacing', 'GPU frame differ gates Present so a G-Sync or FreeSync monitor locks to the source’s unique-frame rate instead of the Elgato’s constant 60 Hz HDMI delivery. Leave OFF on fixed-refresh displays: low-motion content like game intros and splash screens drops the differ’s detected rate to near zero, and gating Present on that collapses visible cadence into the single digits.')">
                 <div class="setting-label-group">
@@ -1122,6 +1136,8 @@
         <div class="hotkey"><span class="hotkey-key">F1</span> Settings</div>
         <div class="hotkey"><span class="hotkey-key">Ctrl+F3</span> HUD</div>
         <div class="hotkey"><span class="hotkey-key">Alt+H</span> HDR</div>
+        <div class="hotkey"><span class="hotkey-key">Alt+L</span> Low-Latency</div>
+        <div class="hotkey"><span class="hotkey-key">Alt+R</span> Color Range</div>
         <div class="hotkey"><span class="hotkey-key">Alt+Enter</span> Fullscreen</div>
         <div class="hotkey"><span class="hotkey-key">Ctrl+S</span> Screenshot</div>
       </div>
@@ -1577,6 +1593,7 @@
       setToggle('toggle-color', s.colorExpansion);
       setToggle('toggle-nis', s.nisEnabled);
       setToggle('toggle-vrr-pacing', s.vrrPresentPacing);
+      setToggle('toggle-low-latency', s.lowLatency);
       setToggle('toggle-mute', s.audioMuted);
 
       if (typeof s.volume === 'number') {

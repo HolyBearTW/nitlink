@@ -109,15 +109,38 @@ public:
     HRESULT __stdcall Open(D3D_INCLUDE_TYPE /*incType*/, LPCSTR pFileName,
                             LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) override
     {
+        // Resolve NIS_Scaler.h next to the executable first. CMake copies it to
+        // <exeDir>/third_party/nis/ at build time, but std::ifstream resolves
+        // relative paths against the current working directory, not the exe
+        // directory. An installed or shortcut launch, or "Run as administrator"
+        // (working directory becomes System32), has a working directory
+        // unrelated to the exe, so a CWD-relative lookup misses and silently
+        // disables upscaling. Build the exe-directory prefix and try it first;
+        // keep the CWD-relative candidates as a development fallback.
+        std::string exePrefix;
+        {
+            char exePath[MAX_PATH] = {};
+            DWORD n = GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) {
+                std::string dir(exePath, exePath + n);
+                size_t slash = dir.find_last_of("\\/");
+                if (slash != std::string::npos) {
+                    exePrefix = dir.substr(0, slash + 1) + "third_party/nis/";
+                }
+            }
+        }
+
         // Try several plausible paths, in priority order.
-        const char* candidates[] = {
+        std::string candidates[] = {
+            exePrefix,                    // next to the exe (installed launches)
             "third_party/nis/",          // running from repo root
             "../../third_party/nis/",     // running from build subdir
             "../../../third_party/nis/",  // VS multi-config layouts
         };
         std::string body;
-        for (const char* prefix : candidates) {
-            std::string path = std::string(prefix) + pFileName;
+        for (const std::string& prefix : candidates) {
+            if (prefix.empty()) continue;
+            std::string path = prefix + pFileName;
             std::ifstream f(path, std::ios::binary);
             if (!f.is_open()) continue;
             std::stringstream ss;

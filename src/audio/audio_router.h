@@ -35,10 +35,19 @@ public:
     bool  IsMuted()   const { return m_muted; }
     bool  IsRunning() const { return m_running; }
 
+    // True when Initialize found a capture/playback format combination it could
+    // not route and muted audio as a result. The application reads this once
+    // after Initialize to show a one-time explanation. FormatWarningText is the
+    // user-facing message describing what to change. Both are set before the
+    // worker thread starts and are not modified afterward.
+    bool                HasFormatWarning()  const { return m_formatWarning; }
+    const std::wstring& FormatWarningText() const { return m_formatWarningText; }
+
 private:
     bool FindCaptureDevice(const std::wstring& nameHint, ComPtr<IMMDevice>& outDevice);
     bool SetupCapture(IMMDevice* captureDevice);
     bool SetupRender();
+    void ChooseRouteMode();
     void RouteLoop();
 
     ComPtr<IMMDeviceEnumerator> m_enumerator;
@@ -52,6 +61,18 @@ private:
     ComPtr<IAudioRenderClient>  m_renderService;
     WAVEFORMATEX*               m_renderFormat = nullptr;
     UINT32                      m_renderBufferFrames = 0;
+
+    // How RouteLoop bridges a capture packet to the render buffer, chosen once
+    // by ChooseRouteMode from the two negotiated formats:
+    //   DirectCopy       - identical formats: copy straight through.
+    //   StereoToSurround - 2ch float capture into a 5.1/7.1 float render at the
+    //                      same rate: map L/R to the front pair, zero the rest.
+    //   Silence          - any other combination: write silence and raise a
+    //                      one-time format warning (no resampler on this path).
+    enum class RouteMode { Silence, DirectCopy, StereoToSurround };
+    RouteMode    m_routeMode     = RouteMode::Silence;
+    bool         m_formatWarning = false;
+    std::wstring m_formatWarningText;
 
     std::thread        m_thread;
     std::atomic<bool>  m_running{false};

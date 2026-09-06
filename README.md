@@ -1,8 +1,8 @@
 # NitLink
 
-A capture card viewer for Windows. It makes your console feel like part of your PC: same screen, same workflow, real HDR10, VRR, no extra monitor required.
+A capture card viewer for Windows. It makes your console feel like part of your PC: same screen, same workflow, real HDR10, VRR, lowest-latency preview, no extra monitor required.
 
-Built and tested on the Elgato 4K Pro (PCIe) and Elgato 4K S (USB).
+Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Link 4K (USB).
 
 <p align="center">
   <img src="docs/images/COMPARSIONS.webp" alt="NitLink HDR comparison" width="900">
@@ -28,9 +28,9 @@ Built and tested on the Elgato 4K Pro (PCIe) and Elgato 4K S (USB).
 
 A 42-inch monitor as a main screen. A PS5. No second monitor, no source swaps. The goal: PS5 as just another window on the PC, something to Alt-Tab to, take screenshots from, see in Discord status, all in the same ecosystem.
 
-The existing options didn't work for that. Elgato Studio tonemaps HDR to SDR for the preview. OBS does the same. Every capture utility treats the preview window as "good enough for monitoring while you record", but that's not gameplay. The goal here is to *play*, with the game looking the way it was actually meant to look.
+The existing options didn't work for that. Elgato Studio tonemaps HDR to SDR for the preview. OBS does the same. Every capture utility treats the preview window as "good enough for monitoring while you record", but that's not gameplay. The goal here is to *play*, with the game looking the way it was actually meant to look — and with the lowest latency a capture preview can give you.
 
-NitLink: real HDR10, render latency below the perceptible threshold, VRR tracking the actual game framerate, integrated with the PC the way every other window is.
+NitLink: real HDR10, the lowest preview latency measured, VRR tracking the actual game framerate, integrated with the PC the way every other window is.
 
 ---
 
@@ -42,6 +42,7 @@ NitLink is for you if:
 - You like Alt-Tab, integrated screenshots, Discord status: the whole "everything on one screen" workflow
 - You care about HDR and don't want it tonemapped to SDR for the preview
 - You play games at variable framerates and want VRR to actually work through the capture pipeline
+- You want the lowest-latency preview you can get (and you're on a VRR or high-refresh display)
 
 NitLink is NOT for you if:
 - You have a free monitor input and just want pure HDMI passthrough (use the card's built-in HDMI-out, it's literally physics-direct)
@@ -52,130 +53,90 @@ NitLink is NOT for you if:
 
 ## What it does
 
-- **Real HDR10 passthrough**: auto-detects HDR sources from the Elgato HDR InfoFrame on cards that expose it, negotiates native 10-bit P010 capture (BT.2020 PQ), presents through an R10G10B10A2 + `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020` swap chain. Zero color conversion. The card's internal HDR-to-SDR tonemapper is disabled at startup via the `IKsPropertySet` GUID Elgato exposes for it. On cards where the IKsPropertySet HDR GUID isn't exposed (the 4K S), NitLink falls back to the vendor HID HDR Metadata register for the same auto-detect; on devices with neither path the `hdr_enabled` config setting decides.
-- **Low end-to-end latency, measured.** 19.6 ms +/- 0.9 ms on the Elgato 4K Pro and 33.2 ms +/- 0.5 ms on the Elgato 4K S, measured photon-to-photon with a 240fps slow-motion camera. NitLink itself contributes ~1 ms of that (PresentMon-verified); the rest is capture card buffering + bus transfer + the source/display panels. Runs in *Hardware Composed: Independent Flip* mode (`SyncInterval=0`, `AllowsTearing=1`): the same DXGI present path full-screen games use, no DWM composition overhead. See [Performance](#performance) below for the methodology.
-- **VRR (G-Sync / FreeSync) in a window.** Capture cards deliver frames at the negotiated rate to Media Foundation regardless of the source's actual framerate (frame duplication at the HDMI signal level). NitLink's GPU frame differ detects which frames are unique content vs duplicates, and only calls `Present()` on unique frames. With Independent Flip + ALLOW_TEARING active, the monitor's VRR follows the actual game framerate: a 30fps quality-mode game locks the monitor to 30Hz, a 60fps performance-mode game locks to 60Hz, variable-framerate content syncs as the game varies. Verified working on LG C3 OLED via the C3's Game Dashboard refresh rate indicator. Defaults to OFF; toggle it on from the F1 settings panel (or set `vrr_present_pacing = true` in `nitlink.json`) when you're on a G-Sync or FreeSync display. Leave OFF on fixed-refresh displays: gating Present on the frame differ collapses cadence to single digits during low-motion content like game intros and splash screens.
+- **Real HDR10 passthrough**: auto-detects HDR sources from the Elgato HDR InfoFrame on cards that expose it, negotiates native 10-bit P010 capture (BT.2020 PQ), presents through an R10G10B10A2 + `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020` swap chain. Zero color conversion. The card's internal HDR-to-SDR tonemapper is disabled at startup. Color range is handled per the HDR-over-HDMI standard (limited-range luma, full-range chroma) so skin tones and blacks render the way the source intended — no orange shift, no milky blacks. `Alt+R` gives a manual range override (Auto / Full / Limited) for third-party cards or edge cases.
+- **Lowest-latency preview, measured.** NitLink presents each captured frame the instant it arrives (low-latency mode, ON by default). On a fixed photon rig, back-to-back against Elgato's own preview software on the same card, NitLink comes out ahead or even on every card tested and never loses. This comes from a low-latency tearing/VRR present — a deliberate tradeoff: lowest latency, but it can tear on a fixed-refresh display, so it's best paired with VRR. `Alt+L` (or the F1 panel) turns low-latency off if you want it, which only adds input lag; the present stays tearing-allowed. See [Performance](#performance).
+- **VRR (G-Sync / FreeSync) in a window.** Capture cards deliver frames at the negotiated rate regardless of the source's actual framerate (HDMI-level frame duplication). NitLink's GPU frame differ detects unique vs duplicate frames and, with VRR pacing on, only presents unique frames so the monitor's VRR follows the real game framerate. Defaults to OFF; toggle on from the F1 panel (or `vrr_present_pacing = true`) on a G-Sync / FreeSync display. Leave OFF on fixed-refresh displays.
+- **Live source detection in the title bar.** On supported Elgato cards NitLink reads the HDMI source identifier, resolution, fps, and HDR state straight from the card's vendor protocol and shows them in the window title (e.g. `NitLink - PlayStation 5 [HDR]` or `NitLink - 3840x2160 @ 60Hz [HDR]`), updating live as the source changes.
+- **True-HDR screenshots.** `Ctrl+S` saves a shareable tonemapped SDR `.png` and, when capturing HDR, a true-HDR `.jxr` (scRGB FP16) sidecar that opens as real HDR in the Windows Photos app.
 - **MJP-style Catmull-Rom resampling**: sharp bicubic without ringing artifacts, the same algorithm used by mpv and madVR.
 - **NIS upscaling**: NVIDIA Image Scaling integrated as a compute-shader pass for sharpening at non-native window sizes.
 - **HDR-aware HUD overlay**: fps, latency, pipeline status. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
 - **WASAPI audio routing** with volume + mute.
 - **Borderless fullscreen** and **picture-in-picture**.
-- **Screenshots**: Ctrl+S. HDR captures are tonemapped to SDR for the saved file so they're shareable.
 - **Discord Rich Presence** showing playing NitLink. Uses Discord's local IPC pipe only; NitLink itself makes no network connections.
-- **Frame-difference based content fps**: the same GPU differ that drives VRR pacing also surfaces the real game framerate in the HUD.
-- **Multi-device source picker.** Live capture-device list in the F1 settings sidebar. Click a connected device to switch to it without restarting; the selection is persisted to `nitlink.json` so the same device opens on the next launch. Non-Elgato sources (webcams, third-party cards) are gated cleanly: Elgato-specific paths (HDR auto-detect, 4K S vendor HID tone-map) skip themselves, and P010 is forced to SDR since the HDR pipeline is only validated on Elgato hardware.
-- **Smart signal handling.** Brief HDMI handshake windows (PS5 boot logo, source switch, SDR ↔ HDR transitions) keep showing the last good frame instead of flashing the capture card's NO SIGNAL placeholder. Real signal loss is detected by format-tagged content fingerprints with a temporal-stability gate, so legitimate static or low-motion intro content (logos, slow fades, splash screens) doesn't trip the no-signal screen by accident.
+- **Multi-device source picker.** Live capture-device list in the F1 settings sidebar. Click a connected device to switch without restarting; the selection persists. Non-Elgato sources are gated cleanly.
+- **Smart signal handling.** Brief HDMI handshake windows (PS5 boot logo, source switch, SDR ↔ HDR transitions) keep showing the last good frame instead of the card's NO SIGNAL placeholder. Real signal loss is detected by format-tagged content fingerprints with a temporal-stability gate.
 
 <p align="center">
   <img src="docs/images/f1-settings.png" alt="NitLink F1 settings panel" width="900">
 </p>
 
 <p align="center">
-  <em>F1 settings panel: capture-device picker, HDR, VRR pacing, image scaling, audio, hotkeys.</em>
+  <em>F1 settings panel: capture-device picker, HDR, low-latency mode, VRR pacing, image scaling, audio, hotkeys.</em>
 </p>
 
 ---
 
 ## Performance
 
-Two measurements: end-to-end latency (the number users feel), and PresentMon (the slice NitLink is responsible for).
+**The short version:** NitLink is the lowest-latency capture *viewer* tested. On a fixed photon-to-photon rig, measured back-to-back against Elgato's own preview software on the same card and the same display, NitLink comes out **ahead or even on every card and mode tested, and never loses.**
 
-### End-to-end latency (measured)
+**Measured results.** Same rig, same session, medians of 100 samples, NitLink versus Elgato's own capture software on the same card and display:
 
-Measured with an iPhone at 240fps slow-motion, framing a wall-clock timer at the HDMI source (a MacBook Pro M4 displaying a millisecond-resolution browser timer) side-by-side with the same timer as displayed in the NitLink window. Latency = (source timer value) - (NitLink-displayed timer value), averaged over 4-5 frame-stepped samples per card. Both cards captured at 60Hz, NV12, RTX 5080, Windows 11, LG C3 OLED in Game mode.
+| Card / source mode | NitLink | Elgato | Difference |
+|---|---|---|---|
+| 4K Pro @ 1080p144 | **38.4 ms** | 44.2 ms | NitLink −5.9 ms |
+| 4K X @ 4K120 | **47.7 ms** | 48.4 ms | tie (−0.8 ms, within noise) |
+| 4K S @ 4K60 | **67.8 ms** | 75.1 ms | NitLink −7.3 ms |
 
-| Capture card           | End-to-end latency    | Notes                |
-|------------------------|-----------------------|----------------------|
-| Elgato 4K Pro (PCIe)   | **19.6 ms +/- 0.9 ms**| Range 19-21 ms       |
-| Elgato 4K S (USB)      | **33.2 ms +/- 0.5 ms**| Range 33-34 ms       |
+These results use NitLink's tearing present rate-capped just under the display's refresh (117 Hz on a 120 Hz panel), which is what lets a variable-refresh display absorb the tear. Full methodology, the rig, every caveat, and the raw data: [docs/LATENCY.md](docs/LATENCY.md).
 
-The 4K Pro is ~14 ms faster end-to-end than the 4K S (about a 41% reduction). This is felt: it's roughly one 60Hz frame's worth of difference, which is the threshold where most people start noticing input lag.
+How: NitLink presents each frame the instant it arrives instead of waiting for the next refresh. That's a real latency win and a deliberate **tradeoff** — lowest latency, but the present can tear on a fixed-refresh display. Pair it with VRR and the tear is absorbed. `Alt+L` toggles Low-Latency off, which holds each frame after capture and waits before presenting, so the picture is up to one refresh older; the present stays tearing-allowed either way, so leave it on unless you have a reason not to.
 
-For reference, Elgato officially specs the 4K S at "as low as 30 ms" preview latency through their own Elgato Studio software. The 4K S measurement at 33.2 ms is consistent with that spec. The 4K Pro measurement of 19.6 ms is below it because PCIe has materially lower bus latency than USB, and NitLink's render path is faster than Elgato Studio's (see PresentMon section below).
-
-### Application-side performance (PresentMon)
-
-The numbers above are the *total* photon-to-photon latency. To isolate how much of that is NitLink's own contribution vs the capture card's upstream pipeline, [PresentMon](https://github.com/GameTechDev/PresentMon) was run on 10-second windowed captures:
-
-| Metric                          | Elgato 4K Pro (PCIe) | Elgato 4K S (USB) |
-|---------------------------------|----------------------|-------------------|
-| Render to Present (median)      | 0.41 ms              | 0.48 ms           |
-| Present to on-screen (median)   | 0.49 ms              | 0.60 ms           |
-| GPU work per frame (median)     | 1.32 ms              | 1.48 ms           |
-| Present mode                    | Hardware Composed: Independent Flip | (same) |
-
-NitLink's slice of the pipeline, from "renderer finished drawing" to "photons leave the panel", is about **1 ms on both cards**. The remaining ~18 ms (Pro) or ~32 ms (4K S) lives upstream of NitLink: HDMI line-scan into the card, the card's internal buffering, the bus transfer (PCIe vs USB), and the Media Foundation source reader. That stage is opaque to PresentMon and dominates the end-to-end number: it's why the cards feel different despite NitLink doing the same work on both.
-
-For comparison, Elgato Studio's render path measures around 11 ms on the same hardware: about 10 ms slower than NitLink per Present(). That's where the 4K Pro's ~10 ms headroom under Elgato's 30 ms spec comes from. NitLink runs in the same DXGI present path full-screen games use (Hardware Composed: Independent Flip, `SyncInterval=0`, `AllowsTearing=1`).
-
-<p align="center">
-  <img src="docs/images/hud-overlay.png" alt="NitLink HUD overlay on live gameplay" width="900">
-</p>
-
-<p align="center">
-  <em>HUD overlay (<code>Ctrl+F3</code>) on live gameplay. Reports content fps from the GPU frame differ, capture and render latency, and the active capture format.</em>
-</p>
+**Why the numbers here are relative, not a single "input lag" figure:** absolute photon latency depends heavily on your display panel and setup, so cross-setup absolutes aren't meaningful. The trustworthy measurement is the *same-rig, back-to-back* delta between two viewers on identical hardware — which is exactly what's reported. NitLink's own present-to-glass slice is well under a millisecond (PresentMon, tearing present).
 
 ### What this feels like when actually gaming
 
-Numbers in isolation don't mean much. The numbers above are *capture latency*: from "HDMI signal enters the card" to "photons leave your monitor". For real gameplay you have to add what's upstream: controller polling, game engine processing, the game's own render and present. On a 60 fps PS5 game in performance mode that's roughly 30-60 ms on the console side.
+The latency above is *capture latency* (HDMI-into-card → photons-off-your-panel). Real gameplay adds the console side: controller polling, game logic, the game's own render/present (roughly 30-60 ms on a 60 fps PS5 title). So total controller-to-screen through NitLink lands in the same ballpark as **playing on a good gaming OLED in Game Mode** — and well ahead of any cloud-gaming option.
 
-So total controller-to-screen latency through NitLink works out to roughly:
+- **4K Pro** feels equivalent to a direct HDMI connection for all but frame-perfect competitive play.
+- **4K S / 4K X** are great for single-player, RPGs, racing, sports, story, and casual multiplayer; the 4K S is borderline for top-level competitive twitch content.
 
-| Setup                  | Total controller to screen | What it feels like |
-|------------------------|----------------------------|---------------------|
-| NitLink + 4K Pro       | ~60-80 ms                  | Indistinguishable from a TV direct |
-| NitLink + 4K S         | ~75-95 ms                  | One 60 Hz frame slower than the Pro |
+<p align="center">
+  <img src="docs/images/hud-overlay.webp" alt="NitLink HUD overlay on live gameplay" width="900">
+</p>
 
-For reference points:
-
-- **Direct PS5 to TV** is ~50-70 ms total on a good gaming OLED: that's the baseline most console players already accept as "normal".
-- **Cloud gaming** (GeForce Now, PS Plus streaming) runs ~80-150 ms.
-- **Most non-game-mode TVs** sit at ~80-130 ms.
-
-**4K Pro feels equivalent to playing on a TV.** You wouldn't pass a blind test against a direct HDMI connection unless you're a pro fighting game player with frame-perfect muscle memory.
-
-**4K S feels noticeable on twitch-sensitive content, fine for everything else.** Good for single-player games, RPGs, racing, sports, story-driven content, and casual multiplayer. Borderline for competitive fighting games (frame-perfect combos are harder) and rhythm games (may need calibration offset). Not recommended for top-level ranked competitive shooters where every millisecond matters.
-
-The real comparison: 4K S latency is similar to playing through a 65" LG OLED in Game Mode with a wireless 8BitDo controller, a setup most people would happily call "great". And both cards through NitLink are meaningfully better than any cloud gaming option.
-
-If you're choosing between cards: the 4K Pro is the right pick if you want zero compromises and 4K HDR. The 4K S is the right pick if you can live without 4K HDR and want to save ~$140. Both are real, supported, working setups: not one is "the real product" and the other "a downgrade".
+<p align="center">
+  <em>HUD overlay (<code>Ctrl+F3</code>) on a live 4K60 PS5 feed: content fps from the GPU frame differ, capture/render latency, and the active capture format.</em>
+</p>
 
 ### Tested platforms
 
-NitLink has been hardware-validated on two distinct PC setups, covering both high-end and mid-range gaming hardware and both VRR and fixed-refresh displays:
-
-| Platform | GPU / CPU | RAM / Storage | Display | Cards |
-|---|---|---|---|---|
-| Desktop | RTX 5080, Windows 11 | 64 GB DDR5 | LG C3 OLED 42" @ 4K 120Hz, G-Sync VRR | 4K Pro (PCIe), 4K S (USB) |
-| Acer Nitro 5 — AN515-54-728C | RTX 2060, Intel Core i7-9750H (9th Gen) | 16 GB DDR4, 256 GB NVMe SSD | TUF VG289Q UHD 4k IPS @60Hz, FreeSync HDR10 | 4K S (USB) |
-
-The laptop test specifically informed the rc1 defaults. On a fixed-refresh panel, gating Present on the GPU frame differ (VRR pacing) collapses visible cadence during low-motion content — game intros, slow fades, splash screens — because the differ correctly classifies most of those frames as duplicates and skips `Present()`. With VRR pacing OFF (the rc1 default), playback on the laptop is smooth. Users on G-Sync or FreeSync displays can opt in from the F1 panel.
+| Platform | GPU / CPU | Display | Cards |
+|---|---|---|---|
+| Desktop | RTX 5080, Windows 11 | LG C3 OLED 42" @ 4K 120Hz, G-Sync VRR | 4K Pro, 4K S, 4K X, Cam Link 4K |
+| Acer Nitro 5 (AN515-54) | RTX 2060, i7-9750H | TUF VG289Q 4K IPS @60Hz, FreeSync HDR10 | 4K S |
 
 ---
 
 ## Known limitations
 
-Honest disclosure of things NitLink does not do and probably can't do without significant changes:
-
-- **Elgato 4K S: 1080p HDR or 4K SDR, not both.** Bus bandwidth caps the 4K S below 4K HDR10. The 4K S uses USB 3.2 Gen 2x1 (10 Gbps), and uncompressed 4K@60 P010 (HDR10) needs roughly 12 Gbps, which doesn't fit. 4K@60 NV12 (SDR) is about 6 Gbps and works fine. The driver itself only publishes P010 at 1080p and 720p, which you can verify in NitLink's `[NitLink/Formats]` debug enumeration. This is a hardware ceiling on the 4K S, not a NitLink limitation. The 4K Pro (PCIe) has the bandwidth headroom for 4K@60 HDR10 with no caveats; the 4K X (USB 3.2 Gen 2x2, 20 Gbps) per Elgato's spec also supports 4K@60 HDR10, but NitLink hasn't been tested on it yet, see [Hardware support](#hardware-support).
-- **Elgato 4K S: HDR costs resolution.** The 4K S's USB bandwidth can't fit 4K HDR (P010 is only published at 1080p/720p). NitLink auto-detects HDR source state via the card's vendor HID, but engaging the HDR pipeline clamps capture to 1080p, so `hdr_enabled` acts as opt-in even when an HDR source is connected. With `hdr_enabled = false` and an HDR source attached, NitLink stays at 4K NV12 and uses the card's internal tonemap to deliver clean SDR. Alt+H flips between 1080p HDR and 4K SDR at runtime.
-- **Windows HDR can be temperamental.** Windows 11's Advanced Color Management is generally stable but edge cases exist: moving the NitLink window across monitors with different HDR profiles, certain notification overlays, or background apps with custom ICC profiles can occasionally cause flickering or color desaturation. Closing and reopening NitLink resets the swap chain and resolves it. This is a known Windows limitation that affects all HDR-aware applications.
-- **VRR below 40Hz falls back to fixed refresh.** Most VRR displays (including the LG C3) have a minimum refresh rate around 40Hz. Below that, VRR disengages and a safety floor in NitLink presents at ~4Hz to keep DWM happy. For purely static content (dashboards, paused screens with no animation) this is invisible. A future version may add frame doubling to keep sub-30fps content inside the VRR window.
-- **HDMI handshake can get sticky when swapping capture devices.** If you swap from one Elgato card to another (or change cables) without restarting the console, the source may negotiate a stale EDID; symptom is black screen with audio, or video locks to 1080p when both ends support 4K. Restarting the console fixes it. Not a NitLink bug, but worth knowing.
+- **Elgato 4K S: 1080p HDR or 4K SDR, not both.** USB 3.2 Gen 2x1 (10 Gbps) can't fit 4K@60 P010 (HDR10, ~12 Gbps). The driver only publishes P010 at 1080p/720p. 4K@60 NV12 (SDR) works fine. Hardware ceiling, not a NitLink limitation.
+- **Elgato 4K S: HDR costs resolution.** Engaging HDR clamps capture to 1080p, so `hdr_enabled` acts as opt-in even with an HDR source connected. `Alt+H` flips between 1080p HDR and 4K SDR at runtime.
+- **Windows HDR can be temperamental.** Moving the window across monitors with different HDR profiles, some notification overlays, or apps with custom ICC profiles can cause flickering/desaturation. Closing and reopening NitLink resets the swap chain. A Windows-wide limitation for all HDR apps.
+- **VRR below ~40Hz falls back to fixed refresh.** Most VRR displays have a ~40Hz floor; below it VRR disengages.
+- **The tearing present can tear on fixed-refresh displays.** That's the tradeoff for the latency win, and it applies whether Low-Latency is on or off. Use a VRR display to absorb it; turning Low-Latency off (`Alt+L`) does not remove tearing, it only adds input lag.
+- **Brief visual artifact during PS5 HDR mode changes.** Changing the PS5's HDR setting mid-session renegotiates the HDMI link; a frame or two can show a transient green band before the next reconcile (~100ms). Restarting NitLink avoids it if you know you'll change PS5 HDR mode.
+- **Spider-Man 2 on the 4K S in 4K SDR (game-specific).** On the 4K S's NV12 4K@60 SDR path this title produces fewer unique frames than expected (the HUD reports it honestly), while other games on the same setup run at 60fps. Switching the 4K S to 1080p HDR restores 60fps. Most plausibly a PS5 / Insomniac / 4K-S interaction rather than a NitLink defect.
+- **No frame generation. No recording or streaming.** Out of scope — run OBS alongside for capture.
 
 <p align="center">
   <img src="docs/images/no-signal.png" alt="NitLink branded no-signal screen" width="900">
 </p>
 
 <p align="center">
-  <em>Branded no-signal screen. Shown after the grace window expires; during brief HDMI handshake gaps the renderer keeps painting the last good frame instead.</em>
+  <em>Branded no-signal screen, shown after the grace window expires.</em>
 </p>
-
-- **Brief visual artifact during PS5 HDR mode changes.** When you change the PS5's HDR setting mid-session (PlayStation Settings → Screen and Video → HDR), the HDMI link renegotiates between the PS5 and the capture card; NitLink picks up the format change on the next reconcile and re-opens the capture device with the correct pixel format (P010 for HDR, NV12 for SDR), but a frame or two can render with a transient green band on the left edge during the handoff. This is the brief window where the card's MF source has switched stride/format but the renderer's last good frame is still being held. The picture corrects on the next reconcile pass (typically within ~100ms). Not a NitLink bug exactly, just the inherent cost of mid-session format renegotiation; restarting NitLink avoids it entirely if you know in advance you're going to change PS5 HDR mode.
-- **Spider-Man 2 framerate on 4K S in 2160p SDR (game-specific).** On the 4K S's NV12 4K@60 SDR path, Marvel's Spider-Man 2 produces fewer unique frames than expected: the PS5 dashboard tile reads ~45fps while other game tiles on the same setup read 60fps, and Performance Pro mode in-game can drop to ~30fps. NitLink's HUD reports these honestly — the HDMI signal itself stays at 60Hz, but the unique-content rate from the PS5 side drops. Switching the 4K S to 1080p HDR (P010) restores Spider-Man 2 to 60fps. Other games tested on the same setup (e.g. Star Wars Jedi: Survivor) run at 60fps in 4K SDR with no issue. This is most plausibly a PS5 / Insomniac / 4K-S-capability interaction rather than a NitLink defect. Workaround: use 1080p HDR for Spider-Man 2 on the 4K S.
-- **No frame generation.** Adds latency by definition. Out of scope.
-- **No recording or streaming.** Run OBS alongside it for that.
 
 ---
 
@@ -185,14 +146,12 @@ Honest disclosure of things NitLink does not do and probably can't do without si
 - DirectX 11 capable GPU
 - Microsoft Edge WebView2 runtime (preinstalled on Windows 11)
 - For HDR: an HDR-capable display + HDR enabled in Windows display settings
-- For VRR: a VRR-capable display (G-Sync / FreeSync / HDMI 2.1 VRR) with VRR enabled at the OS and display level
-- An Elgato 4K Pro or 4K S (see [Hardware support](#hardware-support) for the full matrix)
+- For VRR / the tear-free latency win: a VRR-capable display (G-Sync / FreeSync / HDMI 2.1 VRR) with VRR enabled at the OS and display level
+- A supported capture card (see [Hardware support](#hardware-support))
 
 ### LG OLED notes
 
-If you're on an LG OLED TV (C2, C3, C4, G3, etc.) and want the best HDR fidelity, change the HDMI input icon from "PC" to "Game Console" in the TV's input settings. This switches the panel into HDR Game picture mode, which preserves shadow detail and applies the correct tone-mapping curve. Without this, the TV may pick a more conservative HDR mode that lifts blacks. NitLink's HDR10 metadata (BT.2020 / 1000-nit mastering / MaxCLL 1000 / MaxFALL 400) helps the TV pick the right mode, but the input-type setting is the deciding factor on LG firmware.
-
-For VRR on LG OLEDs, make sure G-Sync VRR is enabled in `Settings -> All Settings -> General -> Game Optimizer -> VRR & G-Sync`. The Game Dashboard (gear button on the remote) will show "G-SYNC VRR" when it's active and the real-time refresh rate NitLink is driving.
+On an LG OLED, set the HDMI input icon to "Game Console" (not "PC") for correct HDR Game mode. For VRR, enable G-Sync VRR under `Settings → General → Game Optimizer → VRR & G-Sync`; the Game Dashboard shows "G-SYNC VRR" and the live refresh rate NitLink is driving.
 
 ---
 
@@ -200,40 +159,36 @@ For VRR on LG OLEDs, make sure G-Sync VRR is enabled in `Settings -> All Setting
 
 | Device | Status |
 |---|---|
-| Elgato 4K Pro (PCIe) | ✅ Tested and validated. 4K@60 HDR10 + VRR pacing, HDR auto-detect via Elgato property GUID, hardware tonemap controlled through `IKsPropertySet`. |
-| Elgato 4K S (USB) | ✅ Tested and validated. 4K@60 SDR (NV12) or 1080p@60 HDR10 (P010) + VRR pacing. HDR source state and tonemap both go through the vendor HID (see `docs/4ks-hdr-tonemap.md`); engaging the HDR pipeline clamps capture to 1080p so `hdr_enabled` is treated as opt-in even when the source is HDR. |
-| Elgato 4K X | ❓ Untested. Same Media Foundation path as the 4K Pro, expected to work. |
-| Other Elgato cards | ❓ Untested |
-| AverMedia / Magewell / Razer | ❓ Untested |
+| Elgato 4K Pro (PCIe) | ✅ Tested and validated. 4K@60 HDR10 + VRR, HDR auto-detect + source mode via `IKsPropertySet`. |
+| Elgato 4K S (USB) | ✅ Tested and validated. 4K@60 SDR (NV12) or 1080p@60 HDR10 (P010). Source name + HDR detect via vendor HID. |
+| Elgato 4K X (USB) | ✅ Tested and validated. Source name + resolution + HDR detect via the UVC extension unit; live source-follow. |
+| Elgato Cam Link 4K (USB) | ✅ Validated (generic UVC, SDR, no vendor controls). |
+| Other Elgato / AverMedia / Magewell / Razer | ❓ Untested — generic Media Foundation capture should still work. |
 
-NitLink uses the Media Foundation source reader, which works with any DirectShow / WDM video capture device. The Elgato-specific bits (HDR auto-detect via `IKsPropertySet`, hardware tonemap disable) silently no-op on cards that don't expose those properties; SDR capture should still work fine. The frame format negotiator now prefers NV12 over RGB32 for SDR (about 2.7x less bandwidth), which lets USB cards deliver 4K@60 instead of silently downgrading to 1080p; row order is detected empirically via `MF_MT_DEFAULT_STRIDE` so cards with different conventions render right-side-up.
+NitLink uses the Media Foundation source reader, which works with any DirectShow / WDM capture device. Elgato-specific paths (HDR auto-detect, vendor tonemap control, source detection) silently no-op on cards that don't expose them; generic SDR capture still works.
 
-If you have a different card and want NitLink to officially support it, open an issue with: card model, OS version, what you saw, and the `[NitLink/Formats]` lines from the Debug Output window.
+If you have a different card and want official support, open an issue with: card model, OS version, what you saw, and the `[NitLink/Formats]` lines from the Debug Output window.
 
 ---
 
 ## Build
 
-NitLink uses CMake. Tested with Visual Studio 2022 / 2026 Insiders.
+CMake. Tested with Visual Studio 2022 / 2026 Insiders.
 
 ```
 git clone https://github.com/nitlink-dev/nitlink
 cd nitlink
 ```
 
-In Visual Studio:
-1. `File -> Open -> CMake...` and pick `CMakeLists.txt`
-2. Wait for CMake to generate
-3. Select the `x64-Release` configuration
-4. `Build -> Build All`
+In Visual Studio: `File → Open → CMake...`, pick `CMakeLists.txt`, select `x64-Release`, `Build → Build All`.
 
-Or from the command line (Developer Command Prompt for VS 2022):
+Or CLI (Developer Command Prompt):
 ```
 cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
 
-Output binary lands at `out/build/x64-Release/NitLink.exe` (VS) or `build/Release/NitLink.exe` (CLI). The build step also copies `nitlink-menu.html` and `third_party/nis/NIS_Scaler.h` next to the .exe (both needed at runtime).
+Output at `out/build/x64-Release/NitLink.exe` (VS) or `build/Release/NitLink.exe` (CLI). The build copies `nitlink-menu.html` and `third_party/nis/NIS_Scaler.h` next to the `.exe` (both needed at runtime).
 
 ---
 
@@ -242,80 +197,68 @@ Output binary lands at `out/build/x64-Release/NitLink.exe` (VS) or `build/Releas
 | Key | Action |
 |---|---|
 | `F1` | Open / close settings menu |
-| `Alt + H` | Toggle HDR manually (override the auto-detect) |
+| `Alt + L` | **Low-Latency** present on/off (default: on; off adds up to one refresh of lag) |
+| `Alt + H` | Toggle HDR manually (override auto-detect) |
+| `Alt + R` | Cycle source color range: Auto → Full → Limited |
 | `Alt + Enter` | Toggle fullscreen |
 | `Alt + P` | Toggle picture-in-picture |
+| `Ctrl + S` | Save screenshot (SDR `.png` + true-HDR `.jxr`) to `Pictures/NitLink/` |
 | `Ctrl + F3` | Toggle HUD overlay |
-| `Ctrl + S` | Save screenshot to `Pictures/NitLink/` |
 
-On 4K Pro: HDR auto-follows the source by default. When NitLink starts and the connected source is sending HDR10 (e.g. PS5 in HDR mode), HDR mode turns on automatically. When the source is SDR, HDR turns off. Alt+H is a manual override.
+With picture-in-picture active, `Ctrl + Arrow keys` nudge the PiP window (`Ctrl + Shift + Arrow keys` for larger steps).
 
-On 4K S: source HDR state is auto-detected via the card's vendor HID. `hdr_enabled` controls whether NitLink engages the HDR pipeline; on the 4K S the HDR pipeline costs resolution (1080p P010 instead of 4K NV12) so it stays opt-in. Alt+H flips both the renderer's HDR mode AND the capture format at runtime.
+**Advanced / diagnostic:**
+
+| Key | Action |
+|---|---|
+| `Ctrl + F4` | HDR color-fidelity test patches (A/B against a reference) |
+| `Ctrl + F6` | HDR levels readout (live luma/chroma code range — verify color range per card) |
+
+On the 4K Pro / 4K X, HDR auto-follows the source. On the 4K S, source HDR state is auto-detected but the HDR pipeline is opt-in (it costs resolution); `Alt+H` flips both renderer HDR and capture format at runtime.
 
 ---
 
 ## Configuration
 
-Settings live in `nitlink.json` next to the executable. Plain text; auto-saves on every toggle so a crash never costs you your setup. Keys of interest:
+Settings live in `nitlink.json` next to the executable. Plain text; auto-saves on every toggle. Keys of interest:
 
-- `hdr_enabled`: toggle HDR mode. On 4K Pro, source HDR state drives the pipeline automatically. On 4K S, `hdr_enabled` is opt-in because engaging HDR clamps capture to 1080p over USB; flip with Alt+H at runtime to switch between 1080p HDR and 4K NV12 SDR.
-- `vrr_present_pacing`: toggle VRR pacing (default `false`). Set to `true` on G-Sync / FreeSync displays so monitor VRR tracks the source's real unique-frame rate; leave `false` on fixed-refresh displays to keep Present cadence smooth during low-motion content. Also toggleable from the F1 settings panel.
-- `nis_enabled` / `nis_sharpness` / `nis_scale_mode`: NIS upscaler config
-- `color_expansion`: limited (16-235) to full (0-255) range expansion. Off by default. NitLink reads the source's nominal range from `MF_MT_VIDEO_NOMINAL_RANGE` and automatically skips this expansion when the driver reports full-range output (e.g. some 4K S NV12 modes deliver pre-expanded 0-255). You generally don't need to touch this.
-- `audio_volume` / `audio_muted`: playback level
+- `low_latency`: low-latency present mode (default `true`). `true` = present-on-arrival (lowest input lag). `false` = the frame is held after capture and the swap-chain wait moves before present, so the picture is up to one refresh older. The present is tearing-allowed either way; `false` only adds input lag. Toggle with `Alt+L` or the F1 panel.
+- `hdr_enabled`: HDR mode. 4K Pro/X follow the source automatically; on the 4K S it's opt-in (HDR clamps to 1080p over USB).
+- `vrr_present_pacing`: VRR pacing (default `false`). Set `true` on G-Sync / FreeSync displays.
+- `nis_enabled` / `nis_sharpness` / `nis_scale_mode`: NIS upscaler config.
+- `color_expansion`: limited→full range expansion (default off; NitLink auto-skips when the source is already full-range).
+- `audio_volume` / `audio_muted`: playback level.
 
 ---
 
 ## Architecture
 
-Pure DirectX 11. No D3D12, no Vulkan. Capture frames arrive via Media Foundation on a worker thread, hit a double-buffered frame queue, and run through the render pipeline:
+Pure DirectX 11. Capture frames arrive via Media Foundation on a worker thread into a triple-buffered frame queue, then run through the render pipeline:
 
 ```
 PS5 HDMI
-  │
   ▼
-Elgato 4K Pro / 4K S (hardware tonemap disabled when supported)
-  │
+Elgato card (hardware tonemap disabled when supported; source info read via vendor protocol)
   ▼
-Media Foundation
-  P010 negotiated for HDR10 source
-  NV12 preferred for SDR (RGB32 fallback)
-  Row order detected via MF_MT_DEFAULT_STRIDE
-  Nominal range detected via MF_MT_VIDEO_NOMINAL_RANGE
-  │
+Media Foundation  (P010 for HDR10, NV12 for SDR; row order + nominal range detected)
   ▼
-GPU upload (DYNAMIC texture, MAP_WRITE_DISCARD)
-  │
+GPU upload (DYNAMIC texture)
   ▼
-GPU frame differ (640x360 SAD pass) classifies unique vs duplicate
-  │
-  ▼ (only if unique frame OR safety floor expired)
-  │
-Capture shader
-  P010 -> BT.2020-PQ passthrough
-  NV12 / BGRA -> Catmull-Rom + range-aware decode
-  │
+GPU frame differ (640x360 SAD) classifies unique vs duplicate  → gates Present when VRR pacing on
   ▼
-Optional NIS upscale (compute shader, 1x to 2x)
-  │
+Capture shader  (P010 → BT.2020-PQ passthrough; NV12/BGRA → Catmull-Rom + range-aware decode)
+  ▼
+Optional NIS upscale (compute shader)
   ▼
 HUD / settings overlay composite (203-nit paper-white when HDR)
-  │
   ▼
-DXGI flip-discard waitable swap chain
-  R10G10B10A2 + HDR10 PQ BT.2020 when HDR
-  BGRA8 when SDR
-  SetMaximumFrameLatency(1), ALLOW_TEARING
-  │
+DXGI flip-discard waitable swap chain  (R10G10B10A2 + HDR10 PQ when HDR; BGRA8 when SDR;
+  SetMaximumFrameLatency(1), ALLOW_TEARING; present-on-arrival in low-latency mode)
   ▼
-LG C3 OLED (Game mode, G-Sync VRR active)
+Display (VRR active when paired with a VRR panel)
 ```
 
-The frame differ runs at 640x360 working resolution with hysteresis classification (two thresholds with sticky state) to prevent oscillation when source diff values sit near the decision boundary. This is what makes VRR pacing stable on subtle content like character idle animations in pause menus.
-
-The HUD overlay renders with Direct2D + DirectWrite. In SDR it paints the backbuffer directly; in HDR it can't (D2D doesn't support R10G10B10A2 with HDR10 PQ output), so it draws into a BGRA8 offscreen which the renderer composites in via a sRGB-to-PQ pixel shader at 203-nit paper-white.
-
-The settings menu is HTML/CSS rendered inside an embedded WebView2 control as a child window of the main HWND. C++ to JS communication goes through `window.chrome.webview.postMessage` in both directions.
+The settings menu is HTML/CSS in an embedded WebView2 child window; C++ ↔ JS over `window.chrome.webview.postMessage`.
 
 ---
 
@@ -324,9 +267,9 @@ The settings menu is HTML/CSS rendered inside an embedded WebView2 control as a 
 ```
 src/
 ├── main.cpp           : WinMain, COM/MF init
-├── app/               : Application class, config, WebView2 settings bridge, game database
+├── app/               : Application, config, WebView2 settings bridge, game database
 ├── audio/             : WASAPI audio routing
-├── capture/           : MF device + frame buffer + Elgato HDR control + frame differ
+├── capture/           : MF device, frame buffer, Elgato HDR/source control, frame differ, DShow backend
 ├── discord/           : Discord RPC client
 ├── input/             : Global hotkey manager
 ├── overlay/           : D2D HUD overlay + branded no-signal screen
@@ -341,40 +284,38 @@ third_party/           : NIS, WebView2, WIL
 
 ## Scope
 
-NitLink does one thing: makes your console feel like part of your PC. It's not a recording tool, not a streaming tool, not an OBS replacement. For recording and streaming, run OBS alongside it.
+NitLink does one thing: makes your console feel like part of your PC. Not a recording or streaming tool — run OBS alongside it for that.
 
 ---
 
 ## License
 
-MIT. See `LICENSE`.
-
-Third-party licenses (NIS, WebView2, WIL, MJP's Catmull-Rom) in `LICENSES.md`.
+MIT. See `LICENSE`. Third-party licenses (NIS, WebView2, WIL, MJP's Catmull-Rom) in `LICENSES.md`.
 
 ---
 
 ## Acknowledgments
 
-- **Matt Pettineo (TheRealMJP)**: the Catmull-Rom bicubic implementation used in NitLink's resampling shaders is adapted from his public reference. MIT licensed.
+- **Matt Pettineo (TheRealMJP)**: Catmull-Rom bicubic reference. MIT licensed.
 - **NVIDIA**: NIS SDK.
 - **Microsoft**: WIL, WebView2.
-- **Brandon (13bm), [elgato4k-linux](https://github.com/13bm/elgato4k-linux)**: 4K S HID protocol reference. See [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md) and [`docs/4ks-hdr-tonemap.md`](docs/4ks-hdr-tonemap.md).
+- **Brandon (13bm), [elgato4k-linux](https://github.com/13bm/elgato4k-linux)**: Elgato HID/protocol reference. See [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md).
+- **Testing & feedback**: u/Lordmau5, u/XSilverlink, and u/TooxChilly for hardware testing, bug reports, and cross-card latency measurements.
+- **Hardware**: u/elgato_phil (Elgato) provided the 4K X and the Cam Link 4K used for validation.
 
 ---
 
 ## Support development
 
-NitLink is built by one developer. If it's useful to you, here are the concrete things donations would fund next:
+NitLink is built by one developer. Donations fund hardware testing and distribution. Current goals:
 
-- **$200: Elgato 4K X testing.** Buy a 4K X to add official support and benchmark its latency alongside the 4K Pro and 4K S.
-- **$300: AVerMedia Live Gamer Ultra support.** Buy an LGU, integrate into the format negotiator, validate end-to-end so users with existing AverMedia hardware can use NitLink.
+- **Code-signing certificate.** Removes the Windows SmartScreen warning that currently greets every first launch.
+- **AVerMedia Live Gamer Ultra support.** Buy the card, integrate it into the format negotiator, and validate end-to-end so owners of existing AverMedia hardware can use NitLink.
 
-Support development at [ko-fi.com/klosed89](https://ko-fi.com/klosed89). Progress against these milestones will be tracked in the changelog as they're hit.
+Support at [ko-fi.com/klosed89](https://ko-fi.com/klosed89). The core NitLink viewer is free, MIT-licensed, and stays that way. No telemetry, no ads, no bundled junk.
 
-The core NitLink viewer in this repo is free, MIT-licensed, and will stay that way. No telemetry, no ads, no bundled junk in the app you download from here. Your support funds hardware testing and distribution costs.
-
-Bug reports and PRs welcome on the issue tracker.
+Bug reports and PRs welcome.
 
 ---
 
-*NitLink is an independent software application. It is not affiliated with, authorized, sponsored, or endorsed by Corsair Gaming, Inc., Elgato Systems LLC, or their affiliates. All registered trademarks, including "Elgato", "4K Pro", "4K X", "4K S", and "4K Capture Utility", are the property of their respective owners.*
+*NitLink is an independent software application. It is not affiliated with, authorized, sponsored, or endorsed by Corsair Gaming, Inc., Elgato Systems LLC, or their affiliates. All registered trademarks, including "Elgato", "4K Pro", "4K X", "4K S", and "Cam Link", are the property of their respective owners.*

@@ -12,10 +12,13 @@
 #include <thread>
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 using Microsoft::WRL::ComPtr;
 
 namespace NitLink {
+
+class DShowCapture;  // DirectShow capture backend (dshow_capture.h)
 
 struct CaptureFormat {
     uint32_t width  = 3840;
@@ -250,6 +253,11 @@ private:
     // (Open / ReconcileCaptureFormat), consumed and cleared by the JSON
     // push via ConsumeFallbackNotice(). See that accessor's doc comment.
     std::wstring m_fallbackNotice;
+
+    // Optional DirectShow capture backend, created only when USE_DSHOW.txt is
+    // present next to the exe. When non-null, every public method delegates to
+    // it and the Media Foundation members above stay unused.
+    std::unique_ptr<DShowCapture> m_dshow;
 };
 
 } // namespace NitLink

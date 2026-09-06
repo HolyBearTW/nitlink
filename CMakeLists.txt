@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NitLink VERSION 1.0.0 LANGUAGES CXX)
+project(NitLink VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,8 @@ set(NITLINK_SOURCES
     src/app/WebViewSettings.h
     src/capture/capture_device.cpp
     src/capture/capture_device.h
+    src/capture/dshow_capture.cpp
+    src/capture/dshow_capture.h
     src/capture/device_enumerator.cpp
     src/capture/device_enumerator.h
     src/capture/elgato_hdr_control.cpp
