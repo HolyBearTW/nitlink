@@ -75,31 +75,32 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
         GetTheme().overlayFontSize, L"en-us", &m_textFormat);
     if (FAILED(hr)) return false;
 
+    // Footer text (GPU time): the panel's body size.
     hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        11.0f, L"en-us", &m_smallTextFormat);
+        11.5f, L"en-us", &m_smallTextFormat);
     if (FAILED(hr)) return false;
 
-    // Big primary number (FPS value, latency value): 24pt bold.
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        24.0f, L"en-us", &m_textFormatBig);
-    if (FAILED(hr)) return false;
-
-    // Small caps-style label above primary numbers ("FRAME RATE").
+    // Big primary number (frame rate, ingest): semibold, same family.
     hr = m_dwriteFactory->CreateTextFormat(
         GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        8.5f, L"en-us", &m_textFormatLabel);
+        26.0f, L"en-us", &m_textFormatBig);
     if (FAILED(hr)) return false;
 
-    // Unit suffix (FPS, MS): small, sits next to the big number.
+    // Uppercase band title and pipeline badges, like the panel's band titles.
     hr = m_dwriteFactory->CreateTextFormat(
         GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        10.0f, L"en-us", &m_textFormatUnit);
+        10.0f, L"en-us", &m_textFormatLabel);
+    if (FAILED(hr)) return false;
+
+    // Metric labels and unit suffixes, like the panel's signal labels.
+    hr = m_dwriteFactory->CreateTextFormat(
+        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        11.0f, L"en-us", &m_textFormatUnit);
     if (FAILED(hr)) return false;
 
     if (!CreateD2DResources()) {
@@ -147,9 +148,10 @@ bool Overlay::CreateD2DResources()
         m_d2dContext->CreateSolidColorBrush(th.warn,      &m_brushWarn);
         // Critical and dim brushes: not yet in theme, hardcoded for now.
         m_d2dContext->CreateSolidColorBrush(
-            D2D1::ColorF(1.00f, 0.20f, 0.40f, 1.0f), &m_brushCrit);
+            D2D1::ColorF(0.878f, 0.376f, 0.376f, 1.0f), &m_brushCrit);
+        m_d2dContext->CreateSolidColorBrush(th.textDim, &m_brushDim);
         m_d2dContext->CreateSolidColorBrush(
-            D2D1::ColorF(0.60f, 0.62f, 0.68f, 0.60f), &m_brushDim);
+            D2D1::ColorF(0.706f, 0.706f, 0.706f, 1.0f), &m_brushInk2);
         return true;
     }
 
@@ -182,9 +184,10 @@ bool Overlay::CreateD2DResources()
     m_d2dContext->CreateSolidColorBrush(th.good,      &m_brushGood);
     m_d2dContext->CreateSolidColorBrush(th.warn,      &m_brushWarn);
     m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(1.00f, 0.20f, 0.40f, 1.0f), &m_brushCrit);
+        D2D1::ColorF(0.878f, 0.376f, 0.376f, 1.0f), &m_brushCrit);
+    m_d2dContext->CreateSolidColorBrush(th.textDim, &m_brushDim);
     m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(0.60f, 0.62f, 0.68f, 0.60f), &m_brushDim);
+        D2D1::ColorF(0.706f, 0.706f, 0.706f, 1.0f), &m_brushInk2);
 
     return true;
 }
@@ -304,19 +307,17 @@ void Overlay::Render(const Stats& stats)
     m_latencyHistory.push_back(stats.signalActive ? totalLatency : 0.0f);
     if (m_latencyHistory.size() > kHistorySize) m_latencyHistory.pop_front();
 
-    // HUD layout.
-    // Panel: 280×156, soft near-black 85% alpha, 4px corners, subtle border.
-    // Top 24px: status header (signal dot, resolution, "NL // HUD" brand).
-    // Next 60px: two primary metric columns (FPS left, latency right).
-    // Sub-row: GPU upload time (one line).
-    // Then 40px: two split sparklines (FPS history, latency history).
-    // Bottom 16px: pipeline status strip (HDR / NIS / COLOR badges).
+    // HUD layout, matched to the F1 panel: a 280 x 160 card with square
+    // corners, a title band on top, two metric columns with sparklines,
+    // and a footer with the GPU time and the pipeline badges. Sizes are
+    // in DIPs at the 96 DPI the Direct2D target was created with.
     const float panelW = 280.0f;
-    const float panelH = 156.0f;
+    const float panelH = 160.0f;
     const float margin = 16.0f;
-    const float pad    = 12.0f;
+    const float pad    = 14.0f;
+    const float bandH  = 30.0f;
 
-    D2D1_RECT_F panel = D2D1::RectF(margin, margin, margin + panelW, margin + panelH);
+    const D2D1_RECT_F panel = D2D1::RectF(margin, margin, margin + panelW, margin + panelH);
 
     m_d2dContext->BeginDraw();
 
@@ -330,191 +331,128 @@ void Overlay::Render(const Stats& stats)
 
     const bool sig = stats.signalActive;
 
-    // ---- 1. Background panel + border --------------------------------------
-    // Aligned with the F1 menu's --bg-soft (#131418) at 85% opacity so the
-    // HUD reads as the same surface as the settings card / no-signal card
-    // when game content is showing through. Border + divider use --rule.
-    ComPtr<ID2D1SolidColorBrush> bgBrush, borderBrush, dividerBrush;
-    m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(0.075f, 0.078f, 0.094f, 0.85f), &bgBrush);     // #131418 @ 85%
-    m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f), &borderBrush);        // --rule (subtle)
-    m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.06f), &dividerBrush);       // --rule (lighter)
+    auto drawText = [&](const std::wstring& text, IDWriteTextFormat* fmt, D2D1_RECT_F r,
+                        ID2D1Brush* brush, DWRITE_TEXT_ALIGNMENT ha, DWRITE_PARAGRAPH_ALIGNMENT va) {
+        fmt->SetTextAlignment(ha);
+        fmt->SetParagraphAlignment(va);
+        m_d2dContext->DrawText(text.c_str(), (UINT32)text.size(), fmt, r, brush);
+    };
+    auto textWidth = [&](const std::wstring& text, IDWriteTextFormat* fmt) -> float {
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(m_dwriteFactory->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt,
+                                                     1000.0f, 100.0f, &layout))) return 0.0f;
+        DWRITE_TEXT_METRICS m{};
+        layout->GetMetrics(&m);
+        return m.widthIncludingTrailingWhitespace;
+    };
 
-    D2D1_ROUNDED_RECT roundRect = { panel, 4.0f, 4.0f };
-    m_d2dContext->FillRoundedRectangle(roundRect, bgBrush.Get());
-    m_d2dContext->DrawRoundedRectangle(roundRect, borderBrush.Get(), 1.0f);
+    // ---- 1. Surfaces -------------------------------------------------------
+    // Body, band, and rules mirror the drawer tokens (--bg, --band, --hair,
+    // --hair2) so the HUD reads as the same material as the panel.
+    ComPtr<ID2D1SolidColorBrush> bandBrush, borderBrush, hairBrush;
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.173f, 0.173f, 0.173f, 0.88f), &bandBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),       &borderBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.075f),      &hairBrush);
 
-    // ---- 2. Status header (top 24px) ---------------------------------------
-    // Signal dot: green if active, red if no signal. 6px diameter.
+    m_d2dContext->FillRectangle(panel, m_brushBg.Get());
+    m_d2dContext->FillRectangle(
+        D2D1::RectF(panel.left, panel.top, panel.right, panel.top + bandH), bandBrush.Get());
+    m_d2dContext->DrawRectangle(
+        D2D1::RectF(panel.left + 0.5f, panel.top + 0.5f, panel.right - 0.5f, panel.bottom - 0.5f),
+        borderBrush.Get(), 1.0f);
+
+    // ---- 2. Title band -----------------------------------------------------
+    // Brand mark (amber while a signal is live, red without one), the name,
+    // and the source resolution on the right.
     {
-        D2D1_ELLIPSE dot = D2D1::Ellipse(
-            D2D1::Point2F(panel.left + pad + 4.0f, panel.top + 12.0f),
-            3.0f, 3.0f);
-        ID2D1SolidColorBrush* dotBrush = sig ? m_brushGood.Get() : m_brushCrit.Get();
-        m_d2dContext->FillEllipse(dot, dotBrush);
+        const float markY = panel.top + bandH * 0.5f;
+        m_d2dContext->FillRectangle(
+            D2D1::RectF(panel.left + pad, markY - 4.0f, panel.left + pad + 8.0f, markY + 4.0f),
+            sig ? m_brushAccent.Get() : m_brushCrit.Get());
 
-        // Subtle 2px glow ring (just a larger transparent fill).
-        ComPtr<ID2D1SolidColorBrush> glow;
-        D2D1_COLOR_F gcol = sig
-            ? D2D1::ColorF(0.0f, 1.0f, 0.53f, 0.35f)
-            : D2D1::ColorF(1.0f, 0.20f, 0.40f, 0.35f);
-        m_d2dContext->CreateSolidColorBrush(gcol, &glow);
-        D2D1_ELLIPSE glowDot = D2D1::Ellipse(
-            D2D1::Point2F(panel.left + pad + 4.0f, panel.top + 12.0f),
-            5.0f, 5.0f);
-        m_d2dContext->FillEllipse(glowDot, glow.Get());
-    }
+        drawText(L"NITLINK", m_textFormatLabel.Get(),
+                 D2D1::RectF(panel.left + pad + 15.0f, panel.top, panel.left + 150.0f, panel.top + bandH),
+                 m_brushInk2.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    // Resolution text: to the right of the dot.
-    {
         std::wstringstream ss;
         if (sig) ss << stats.captureWidth << L"\u00d7" << stats.captureHeight;
         else     ss << L"NO SIGNAL";
-        std::wstring s = ss.str();
-        D2D1_RECT_F r = D2D1::RectF(panel.left + pad + 14.0f, panel.top + 4.0f,
-                                     panel.left + 160.0f,      panel.top + 22.0f);
-        m_d2dContext->DrawText(s.c_str(), (UINT32)s.size(),
-            m_textFormatUnit.Get(), r,
-            sig ? m_brushText.Get() : m_brushCrit.Get());
+        drawText(ss.str(), m_textFormatUnit.Get(),
+                 D2D1::RectF(panel.left + 150.0f, panel.top, panel.right - pad, panel.top + bandH),
+                 sig ? m_brushDim.Get() : m_brushCrit.Get(),
+                 DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
-
-    // Brand tag "NL // HUD": right side, dim.
-    {
-        const std::wstring brand = L"NL // HUD";
-        D2D1_RECT_F r = D2D1::RectF(panel.right - 110.0f, panel.top + 5.0f,
-                                     panel.right - pad,      panel.top + 22.0f);
-        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        m_d2dContext->DrawText(brand.c_str(), (UINT32)brand.size(),
-            m_textFormatLabel.Get(), r, m_brushDim.Get());
-        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    }
-
-    // Header divider: 1px line under header bar.
-    m_d2dContext->DrawLine(
-        D2D1::Point2F(panel.left + pad,   panel.top + 24.0f),
-        D2D1::Point2F(panel.right - pad,  panel.top + 24.0f),
-        dividerBrush.Get(), 1.0f);
 
     // ---- 3. Primary metrics: two columns ----------------------------------
-    // Column geometry: split panel into halves, with a tiny gap.
-    const float colMid = panel.left + panelW * 0.5f;
-    const float metricY = panel.top + 32.0f;    // labels start here
+    const float colMid  = panel.left + panelW * 0.5f;
+    const float labelY  = panel.top + 40.0f;
+    const float valueY  = panel.top + 54.0f;
+    const float valueH  = 32.0f;
 
-    // Helper to pick brush by threshold.
+    // Healthy values stay in plain ink like the panel; only degraded states
+    // take color. The sparkline stroke carries the accent when healthy.
     auto fpsBrush = [&]() -> ID2D1SolidColorBrush* {
-        if (!sig) return m_brushText.Get();
-        if (stats.fps >= 58)     return m_brushGood.Get();
-        if (stats.fps >= 31)     return m_brushWarn.Get();
+        if (!sig)               return m_brushDim.Get();
+        if (stats.fps >= 58)    return m_brushText.Get();
+        if (stats.fps >= 31)    return m_brushWarn.Get();
         return m_brushCrit.Get();
+    };
+    auto fpsStroke = [&]() -> ID2D1SolidColorBrush* {
+        return (sig && stats.fps >= 58) ? m_brushAccent.Get() : fpsBrush();
     };
 
     // App ingest: real, live, per-frame card-driver-to-app delivery time
     // measured via MFSampleExtension_DeviceTimestamp (QPC 100ns) deltaed
     // against arrivalWallNs (steady_clock ns). Both share the QPC epoch on
-    // Windows. Replaces the old estimated-end-to-end formula that baked
-    // ~16ms (MF buffering) + ~8ms (HDMI/card/PCIe) + ~8ms (present/scanout)
-    // as guesses; those constants were specific to one test rig and didn't
-    // generalize. The new value is what NitLink can measure directly,
-    // NOT the full photon-to-photon end-to-end (the source device and
-    // display panel are still invisible from inside the app).
-    //
-    // 0 means the driver doesn't populate the attribute (some non-Elgato
-    // cards). Negative values would only appear under clock skew between
-    // QPC and steady_clock; clamp them to 0 defensively.
+    // Windows. This is what NitLink can measure directly, not the full
+    // photon-to-photon figure (the source device and display panel are
+    // invisible from inside the app). 0 means the driver doesn't populate
+    // the attribute; negative values would only appear under clock skew
+    // between QPC and steady_clock, so they clamp to 0.
     const float appIngest = sig ? std::max(0.0f, (float)stats.appIngestMs) : 0.0f;
 
     auto appIngestBrush = [&]() -> ID2D1SolidColorBrush* {
-        if (!sig) return m_brushText.Get();
-        if (appIngest <  10.0f) return m_brushGood.Get();   // PCIe / fast paths
+        if (!sig)               return m_brushDim.Get();
+        if (appIngest <  10.0f) return m_brushText.Get();   // PCIe / fast paths
         if (appIngest <= 25.0f) return m_brushWarn.Get();   // USB / busy systems
         return m_brushCrit.Get();                            // something's wrong
     };
+    auto appIngestStroke = [&]() -> ID2D1SolidColorBrush* {
+        return (sig && appIngest < 10.0f) ? m_brushAccent.Get() : appIngestBrush();
+    };
 
-    // LEFT column: FRAME RATE
+    // One metric column: label, big value, unit hung off the value's baseline.
+    auto drawMetric = [&](float left, float right, const wchar_t* label,
+                          const std::wstring& value, const wchar_t* unit,
+                          ID2D1SolidColorBrush* valueBrush) {
+        drawText(label, m_textFormatUnit.Get(),
+                 D2D1::RectF(left, labelY, right, labelY + 14.0f),
+                 m_brushDim.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        drawText(value, m_textFormatBig.Get(),
+                 D2D1::RectF(left, valueY, right, valueY + valueH),
+                 valueBrush, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        const float unitX = left + textWidth(value, m_textFormatBig.Get()) + 5.0f;
+        drawText(unit, m_textFormatUnit.Get(),
+                 D2D1::RectF(unitX, valueY, right, valueY + 31.0f),
+                 m_brushDim.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_FAR);
+    };
+
+    drawMetric(panel.left + pad, colMid - 4.0f, L"Frame rate",
+               sig ? std::to_wstring(stats.fps) : L"--", L"FPS", fpsBrush());
     {
-        D2D1_RECT_F lr = D2D1::RectF(panel.left + pad, metricY,
-                                       colMid - 4.0f,    metricY + 12.0f);
-        std::wstring lbl = L"FRAME RATE";
-        m_d2dContext->DrawText(lbl.c_str(), (UINT32)lbl.size(),
-            m_textFormatLabel.Get(), lr, m_brushDim.Get());
-
-        std::wstring v = sig ? std::to_wstring(stats.fps) : L"--";
-        D2D1_RECT_F vr = D2D1::RectF(panel.left + pad, metricY + 12.0f,
-                                       colMid - 30.0f,    metricY + 48.0f);
-        m_d2dContext->DrawText(v.c_str(), (UINT32)v.size(),
-            m_textFormatBig.Get(), vr, fpsBrush());
-
-        // Unit "FPS": bottom-aligned with the big number.
-        D2D1_RECT_F ur = D2D1::RectF(panel.left + pad + 36.0f, metricY + 32.0f,
-                                       colMid - 4.0f,             metricY + 48.0f);
-        std::wstring u = L"FPS";
-        m_d2dContext->DrawText(u.c_str(), (UINT32)u.size(),
-            m_textFormatUnit.Get(), ur, m_brushDim.Get());
-    }
-
-    // RIGHT column: APP INGEST
-    {
-        D2D1_RECT_F lr = D2D1::RectF(colMid + 4.0f,   metricY,
-                                       panel.right - pad, metricY + 12.0f);
-        std::wstring lbl = L"APP INGEST";
-        m_d2dContext->DrawText(lbl.c_str(), (UINT32)lbl.size(),
-            m_textFormatLabel.Get(), lr, m_brushDim.Get());
-
-        std::wstring v;
+        std::wstring v = L"--";
         if (sig) {
             std::wstringstream ss;
             ss << std::fixed << std::setprecision(1) << appIngest;
             v = ss.str();
-        } else {
-            v = L"--";
         }
-        D2D1_RECT_F vr = D2D1::RectF(colMid + 4.0f,   metricY + 12.0f,
-                                       panel.right - 38.0f, metricY + 48.0f);
-        m_d2dContext->DrawText(v.c_str(), (UINT32)v.size(),
-            m_textFormatBig.Get(), vr, appIngestBrush());
-
-        D2D1_RECT_F ur = D2D1::RectF(colMid + 48.0f,    metricY + 32.0f,
-                                       panel.right - pad, metricY + 48.0f);
-        std::wstring u = L"MS";
-        m_d2dContext->DrawText(u.c_str(), (UINT32)u.size(),
-            m_textFormatUnit.Get(), ur, m_brushDim.Get());
+        drawMetric(colMid + 4.0f, panel.right - pad, L"App ingest", v, L"MS", appIngestBrush());
     }
 
-    // ---- 4. Sub-metric: real GPU per-frame work ----------------------------
-    // Sourced from D3D11_QUERY_TIMESTAMP via DX11Renderer::GetLastGpuMs().
-    // Shows "GPU --" until the renderer's 3-slot query ring has filled, or
-    // permanently if the driver refused to create timestamp queries.
+    // ---- 4. Sparklines (frame rate left, ingest right) ---------------------
     {
-        const float gpu = sig ? (float)stats.gpuMs : 0.0f;
-        const bool  haveGpu = sig && gpu > 0.0f;
-
-        std::wstringstream ss;
-        if (haveGpu) ss << L"GPU " << std::fixed << std::setprecision(1) << gpu << L" ms";
-        else         ss << L"GPU --";
-        std::wstring s = ss.str();
-        D2D1_RECT_F r = D2D1::RectF(panel.left + pad, panel.top + 82.0f,
-                                     panel.right - pad, panel.top + 96.0f);
-
-        ID2D1SolidColorBrush* gpuBrush = m_brushText.Get();
-        if (haveGpu) {
-            if      (gpu <  5.0f)  gpuBrush = m_brushGood.Get();
-            else if (gpu <= 12.0f) gpuBrush = m_brushWarn.Get();
-            else                   gpuBrush = m_brushCrit.Get();
-        }
-        m_d2dContext->DrawText(s.c_str(), (UINT32)s.size(),
-            m_smallTextFormat.Get(), r, gpuBrush);
-    }
-
-    // ---- 5. Bottom: dual sparklines (FPS left, latency right) --------------
-    {
-        // Sparkline area lives between the GPU sub-metric row and the
-        // pipeline status strip. With panelH=156, the strip occupies the
-        // bottom ~16px so sparklines bottom out at panel.top + 138 to
-        // leave clearance for the strip + a 2px breather.
-        const float sparkTop    = panel.top + 100.0f;
-        const float sparkBottom = panel.top + 138.0f;
+        const float sparkTop    = panel.top + 92.0f;
+        const float sparkBottom = panel.top + 120.0f;
         const float sparkLeftL  = panel.left + pad;
         const float sparkRightL = colMid - 4.0f;
         const float sparkLeftR  = colMid + 4.0f;
@@ -528,9 +466,8 @@ void Overlay::Render(const Stats& stats)
             const float w = right - left;
             const float h = sparkBottom - sparkTop;
 
-            // Build a path geometry from samples. The geometry forms a closed
-            // polygon (top edge follows the data, bottom edge is the floor)
-            // so it can be filled with a gradient for the "filled area" look.
+            // Closed polygon under the data for the gradient fill, then an
+            // open path on top for the stroke.
             ComPtr<ID2D1PathGeometry> geom;
             m_d2dFactory->CreatePathGeometry(&geom);
             ComPtr<ID2D1GeometrySink> sink;
@@ -541,9 +478,7 @@ void Overlay::Render(const Stats& stats)
                 return std::clamp(y, sparkTop, sparkBottom);
             };
 
-            sink->BeginFigure(
-                D2D1::Point2F(left, sparkBottom),
-                D2D1_FIGURE_BEGIN_FILLED);
+            sink->BeginFigure(D2D1::Point2F(left, sparkBottom), D2D1_FIGURE_BEGIN_FILLED);
             for (size_t i = 0; i < hist.size(); ++i) {
                 float x = left + (i / (float)(kHistorySize - 1)) * w;
                 sink->AddLine(D2D1::Point2F(x, sampleY(hist[i])));
@@ -552,11 +487,9 @@ void Overlay::Render(const Stats& stats)
             sink->EndFigure(D2D1_FIGURE_END_CLOSED);
             sink->Close();
 
-            // Gradient fill under the line: same color as stroke, fades to
-            // transparent toward the floor.
             D2D1_COLOR_F strokeCol = stroke->GetColor();
             D2D1_GRADIENT_STOP stops[2] = {
-                { 0.0f, D2D1::ColorF(strokeCol.r, strokeCol.g, strokeCol.b, 0.45f) },
+                { 0.0f, D2D1::ColorF(strokeCol.r, strokeCol.g, strokeCol.b, 0.30f) },
                 { 1.0f, D2D1::ColorF(strokeCol.r, strokeCol.g, strokeCol.b, 0.00f) },
             };
             ComPtr<ID2D1GradientStopCollection> stopColl;
@@ -569,74 +502,64 @@ void Overlay::Render(const Stats& stats)
                 stopColl.Get(), &gradBrush);
             m_d2dContext->FillGeometry(geom.Get(), gradBrush.Get());
 
-            // Stroke on top: solid line tracing the data.
-            // Need a separate geometry for the stroke (open path, no floor).
             ComPtr<ID2D1PathGeometry> strokeGeom;
             m_d2dFactory->CreatePathGeometry(&strokeGeom);
             ComPtr<ID2D1GeometrySink> strokeSink;
             strokeGeom->Open(&strokeSink);
-            strokeSink->BeginFigure(
-                D2D1::Point2F(left, sampleY(hist[0])),
-                D2D1_FIGURE_BEGIN_HOLLOW);
+            strokeSink->BeginFigure(D2D1::Point2F(left, sampleY(hist[0])), D2D1_FIGURE_BEGIN_HOLLOW);
             for (size_t i = 1; i < hist.size(); ++i) {
                 float x = left + (i / (float)(kHistorySize - 1)) * w;
                 strokeSink->AddLine(D2D1::Point2F(x, sampleY(hist[i])));
             }
             strokeSink->EndFigure(D2D1_FIGURE_END_OPEN);
             strokeSink->Close();
-            m_d2dContext->DrawGeometry(strokeGeom.Get(), stroke, 1.5f);
+            m_d2dContext->DrawGeometry(strokeGeom.Get(), stroke, 1.25f);
         };
 
-        // FPS sparkline: left half. Stroke color reflects current FPS.
-        drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory, 70.0f, fpsBrush());
-
-        // App ingest sparkline: right half. Built dynamically from history.
-        // Stroke color reflects current app ingest threshold band.
-        drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, appIngestBrush());
+        drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory,     70.0f,  fpsStroke());
+        drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, appIngestStroke());
     }
 
-    // ---- 6. Pipeline status strip (bottom 16px) ----------------------------
-    // Feature badges so the HUD shows what's active without opening F1.
-    // Active = accent color, inactive = dim.
+    // ---- 5. Footer: GPU time and pipeline badges ---------------------------
     {
-        const float stripY = panel.top + 142.0f;
-        const float stripH = 14.0f;
+        const float ruleY = panel.top + 128.0f + 0.5f;
+        m_d2dContext->DrawLine(D2D1::Point2F(panel.left + pad,  ruleY),
+                               D2D1::Point2F(panel.right - pad, ruleY),
+                               hairBrush.Get(), 1.0f);
 
-        // Subtle separator above the strip, matching the header divider.
-        m_d2dContext->DrawLine(
-            D2D1::Point2F(panel.left + pad,  stripY - 2.0f),
-            D2D1::Point2F(panel.right - pad, stripY - 2.0f),
-            dividerBrush.Get(), 1.0f);
+        const D2D1_RECT_F footer = D2D1::RectF(panel.left + pad, panel.top + 130.0f,
+                                               panel.right - pad, panel.top + 152.0f);
 
-        // Four badges, equally spaced across the strip. Each is just text;
-        // the brush is colored per-badge instead of mixing colors in one run.
-        // Order matches pipeline execution: scale -> HDR -> NIS -> color.
-        struct Badge { const wchar_t* label; bool active; };
-        Badge badges[4] = {
-            { L"CR",    true                  }, // Catmull-Rom always on (only scaler today)
-            { L"HDR",   stats.hdrActive       },
-            { L"NIS",   stats.nisActive       },
-            { L"COLOR", stats.colorExpansion  },
-        };
-
-        const float stripLeft  = panel.left + pad;
-        const float stripRight = panel.right - pad;
-        const float stripW     = stripRight - stripLeft;
-        const float slotW      = stripW / 4.0f;
-
-        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        for (int i = 0; i < 4; ++i) {
-            D2D1_RECT_F r = D2D1::RectF(
-                stripLeft + slotW * i,       stripY,
-                stripLeft + slotW * (i + 1), stripY + stripH);
-            ID2D1SolidColorBrush* b = badges[i].active
-                ? m_brushAccent.Get()
-                : m_brushDim.Get();
-            m_d2dContext->DrawText(
-                badges[i].label, (UINT32)wcslen(badges[i].label),
-                m_textFormatLabel.Get(), r, b);
+        // Real per-frame GPU work from the renderer's timestamp queries.
+        // Shows "GPU --" until the query ring has filled, or permanently if
+        // the driver refused to create timestamp queries.
+        const float gpu     = sig ? (float)stats.gpuMs : 0.0f;
+        const bool  haveGpu = sig && gpu > 0.0f;
+        std::wstringstream ss;
+        if (haveGpu) ss << L"GPU " << std::fixed << std::setprecision(1) << gpu << L" ms";
+        else         ss << L"GPU --";
+        ID2D1SolidColorBrush* gpuBrush = m_brushInk2.Get();
+        if (haveGpu) {
+            if      (gpu >  12.0f) gpuBrush = m_brushCrit.Get();
+            else if (gpu >=  5.0f) gpuBrush = m_brushWarn.Get();
         }
-        m_textFormatLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        drawText(ss.str(), m_smallTextFormat.Get(), footer, gpuBrush,
+                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        // Badges hang off the right edge, active in accent, inactive in the
+        // muted ink. Order matches pipeline execution: scale, HDR, NIS, color.
+        const wchar_t* labels[4] = { L"CR", L"HDR", L"NIS", L"COLOR" };
+        const bool     active[4] = { true, stats.hdrActive, stats.nisActive, stats.colorExpansion };
+        float x = footer.right;
+        for (int i = 3; i >= 0; --i) {
+            const std::wstring badge = labels[i];
+            const float w = textWidth(badge, m_textFormatLabel.Get());
+            drawText(badge, m_textFormatLabel.Get(),
+                     D2D1::RectF(x - w, footer.top, x, footer.bottom),
+                     active[i] ? m_brushAccent.Get() : m_brushDim.Get(),
+                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            x -= w + 12.0f;
+        }
     }
 
     HRESULT hr = m_d2dContext->EndDraw();

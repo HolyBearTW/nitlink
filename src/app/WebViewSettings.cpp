@@ -67,9 +67,8 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
                             controller->get_CoreWebView2(&m_webview);
 
                             // Size to current parent client area.
-                            RECT bounds;
-                            GetClientRect(m_parent, &bounds);
-                            m_controller->put_Bounds(bounds);
+                            m_controller->put_Bounds(ComputeBounds());
+                            ApplyBackground();
 
                             // Start HIDDEN; Show(true) flips it on when F1 pressed.
                             m_controller->put_IsVisible(FALSE);
@@ -178,9 +177,7 @@ void WebViewSettings::Show(bool visible) {
         // Resize to current parent client bounds in case the parent grew
         // since last show: DXGI swap chain may have resized but the
         // controller wouldn't have been told.
-        RECT rc;
-        GetClientRect(m_parent, &rc);
-        m_controller->put_Bounds(rc);
+        m_controller->put_Bounds(ComputeBounds());
         m_controller->put_IsVisible(TRUE);
         m_controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
         WVLog(L"Show(true): overlay visible");
@@ -195,9 +192,55 @@ void WebViewSettings::Show(bool visible) {
 
 void WebViewSettings::Resize() {
     if (!m_controller) return;
-    RECT rc;
+    m_controller->put_Bounds(ComputeBounds());
+}
+
+RECT WebViewSettings::ComputeBounds() const {
+    RECT rc{};
     GetClientRect(m_parent, &rc);
-    m_controller->put_Bounds(rc);
+    if (m_dock == Dock::Full) return rc;
+    // The strip width follows the monitor scale so 420 DIP reads the same
+    // on a 4K display at 150% as on a 1080p display at 100%.
+    UINT dpi = GetDpiForWindow(m_parent);
+    if (dpi == 0) dpi = 96;
+    LONG width = MulDiv(m_widthDip, static_cast<int>(dpi), 96);
+    const LONG client = rc.right - rc.left;
+    if (width > client) width = client;
+    if (m_dock == Dock::Right) rc.left  = rc.right - width;
+    else                       rc.right = rc.left + width;
+    return rc;
+}
+
+void WebViewSettings::SetDock(Dock dock, int widthDip) {
+    if (dock == m_dock && widthDip == m_widthDip) return;
+    m_dock = dock;
+    m_widthDip = widthDip;
+    if (m_controller && m_visible) m_controller->put_Bounds(ComputeBounds());
+    WVLog(std::wstring(L"dock: ") +
+          (dock == Dock::Full ? L"full" : dock == Dock::Right ? L"right" : L"left"));
+}
+
+void WebViewSettings::SetTransparentBackground(bool on) {
+    if (on == m_transparent) return;
+    m_transparent = on;
+    ApplyBackground();
+}
+
+void WebViewSettings::ApplyBackground() {
+    if (!m_controller) return;
+    auto controller2 = m_controller.try_query<ICoreWebView2Controller2>();
+    if (!controller2) {
+        WVLog(L"DefaultBackgroundColor unavailable on this runtime, panel stays opaque");
+        return;
+    }
+    // Alpha 0 lets the page's own translucent surfaces show the picture
+    // behind the control. The color channels only matter while opaque.
+    COREWEBVIEW2_COLOR color{};
+    color.A = m_transparent ? 0 : 255;
+    color.R = 0x20;
+    color.G = 0x20;
+    color.B = 0x20;
+    controller2->put_DefaultBackgroundColor(color);
 }
 
 void WebViewSettings::NavigateToFile(const std::wstring& path) {

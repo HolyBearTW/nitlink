@@ -10,6 +10,8 @@ Maintenance release: the USB audio stutter fix promised in 1.1.0, an aspect-rati
 
 ## New
 
+- **The F1 panel is now a sidebar.** It opens as a translucent strip on the right and the picture keeps playing beside it, so a setting can be changed while watching the result. The Position row on the Video tab cycles Right, Left, and Full, the previous whole-window panel; `panel_side` and `panel_width` in `nitlink.json` store the choice. While a panel is open the desktop compositor handles the window (about one frame of extra latency, VRR paused), which is why the earlier panel covered the picture; closing it restores the direct path. The Ctrl+F3 HUD is redrawn in the same style: title band, plain-ink metrics that only take color when something degrades, amber sparklines, and the pipeline badges in the footer.
+
 - **Aspect ratio option.** `Alt+A`, the F1 panel, or `aspect_ratio` in `nitlink.json`. Auto shows the source at the ratio the card reports; 4:3, 16:9, 16:10, 21:9, or any custom `W:H` squeezes or letterboxes the picture, which restores 4:3 consoles that a card delivers stretched inside a 16:9 frame; Stretch fills the window. Requested in [#4](https://github.com/nitlink-dev/nitlink/issues/4).
 
 ## Known issues

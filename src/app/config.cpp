@@ -136,6 +136,8 @@ bool Config::Load(const std::string& path)
         if (key == "low_latency")     lowLatency = ParseBool(val);
         if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
         if (key == "aspect_ratio")   aspectRatio  = val.substr(0, 16);
+        if (key == "panel_side")     panelSide    = val.substr(0, 8);
+        if (key == "panel_width")    panelWidth   = ParseI32(val, panelWidth, 320, 1200);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
         if (key == "show_overlay")    showOverlay   = ParseBool(val);
         if (key == "current_game")    currentGameId = val;
@@ -336,6 +338,11 @@ bool Config::Save(const std::string& path)
     file << "# window), or a fixed ratio such as 4:3, 16:9, 16:10, 21:9.\n";
     file << "# Cycle with Alt+A or from the F1 panel.\n";
     file << "aspect_ratio = " << aspectRatio << "\n\n";
+
+    file << "# F1 panel placement: right or left docks it beside the picture,\n";
+    file << "# full covers the window. panel_width is in device-independent pixels.\n";
+    file << "panel_side = " << panelSide << "\n";
+    file << "panel_width = " << panelWidth << "\n\n";
 
     file << "# Shaders\n";
     file << "enable_shaders = " << (enableShaders ? "true" : "false") << "\n\n";

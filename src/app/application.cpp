@@ -836,6 +836,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     m_webviewSettings = std::make_unique<WebViewSettings>();
     m_webviewSettings->Initialize(m_window->GetHWND(), actualW, actualH);
+    ApplyPanelLayout();
     m_webviewSettings->SetMessageHandler([this](const std::wstring& msg) {
         // Length gate first. Every legitimate message in the schema below is
         // small (a few hundred chars at most); a multi-megabyte string only
@@ -976,6 +977,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
         if (action == L"cycleAspect") {
             CycleAspectRatio();
+            return;
+        }
+        if (action == L"cyclePanelSide") {
+            CyclePanelSide();
             return;
         }
         if (action == L"cycleScaler") {
@@ -2086,7 +2091,11 @@ void Application::Run()
         // chain MUST keep presenting; on a bare Sleep, DWM eventually
         // marks the window as unresponsive and the WebView2 child can
         // get its compositing context torn down.
-        if (m_settingsVisible) {
+        // A docked panel leaves the picture running beside it, so the black
+        // frame applies only to the full-window panel.
+        const bool panelCoversPicture = m_settingsVisible && m_webviewSettings &&
+            m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
+        if (panelCoversPicture) {
             m_renderer->BeginFrame(!m_lowLatency);   // clears to (0,0,0,1): solid black
             m_renderer->EndFrame();     // presents the black frame
             continue;                    // skip the rest of the pipeline
@@ -3224,6 +3233,33 @@ void Application::CycleAspectRatio()
     if (m_settingsVisible) PushSettingsState();
 }
 
+std::wstring Application::ApplyPanelLayout()
+{
+    std::string side = m_config ? m_config->panelSide : std::string("right");
+    WebViewSettings::Dock dock = WebViewSettings::Dock::Right;
+    if (side == "left")      dock = WebViewSettings::Dock::Left;
+    else if (side == "full") dock = WebViewSettings::Dock::Full;
+    else                     side = "right";
+    if (m_webviewSettings) {
+        m_webviewSettings->SetDock(dock, m_config ? m_config->panelWidth : 420);
+        m_webviewSettings->SetTransparentBackground(dock != WebViewSettings::Dock::Full);
+    }
+    if (side == "left") return L"Left";
+    if (side == "full") return L"Full";
+    return L"Right";
+}
+
+void Application::CyclePanelSide()
+{
+    if (!m_config) return;
+    const std::string current = m_config->panelSide;
+    m_config->panelSide = (current == "right") ? "left" : (current == "left") ? "full" : "right";
+    m_config->Save("nitlink.json");
+    const std::wstring label = ApplyPanelLayout();
+    AppLog(L"Panel position: " + label);
+    if (m_settingsVisible) PushSettingsState();
+}
+
 bool Application::RecoverFromDeviceLost()
 {
     AppLog(L"Device lost: rebuilding renderer and device-dependent objects");
@@ -3495,6 +3531,7 @@ void Application::PushSettingsState()
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";
     js << L"\"aspectRatio\":\"" << JsonEscapeWide(ApplyAspectRatio()) << L"\",";
+    js << L"\"panelSide\":\"" << ApplyPanelLayout() << L"\",";
 
     if (m_captureDevice) {
         auto fmt = m_captureDevice->GetOutputFormat();

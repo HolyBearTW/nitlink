@@ -12,8 +12,8 @@ namespace NitLink {
 // Colors are D2D1_COLOR_F (R, G, B, A) where each channel is 0.0-1.0.
 //
 // === CURRENT THEME ===
-// Dark navy backgrounds, indigo accents, soft text. Generic "developer
-// tool" look. Replace the values in GetTheme() to re-skin everything.
+// Near-black surfaces, amber accent, soft grays: the palette of the F1
+// panel. Replace the values in GetTheme() to re-skin everything.
 
 struct Theme {
     // Backgrounds
@@ -55,20 +55,20 @@ struct Theme {
 inline const Theme& GetTheme() {
     static const Theme t = {
         // Backgrounds
-        /*overlayBg*/ D2D1::ColorF(0.04f, 0.05f, 0.10f, 0.85f),
+        /*overlayBg*/ D2D1::ColorF(0.102f, 0.102f, 0.102f, 0.93f), // #1A1A1A at 93%, the F1 drawer surface
         /*panelBg*/   D2D1::ColorF(0.06f, 0.07f, 0.12f, 0.92f),
         /*backdrop*/  D2D1::ColorF(0.00f, 0.00f, 0.00f, 0.45f),
         /*trackBg*/   D2D1::ColorF(0.16f, 0.18f, 0.24f, 1.00f),
 
         // Foregrounds
-        /*text*/      D2D1::ColorF(0.92f, 0.93f, 0.96f, 1.00f),
-        /*textDim*/   D2D1::ColorF(0.55f, 0.58f, 0.65f, 1.00f),
-        /*accent*/    D2D1::ColorF(0.51f, 0.53f, 0.97f, 1.00f), // indigo-400
+        /*text*/      D2D1::ColorF(0.929f, 0.929f, 0.929f, 1.00f), // #EDEDED (--ink)
+        /*textDim*/   D2D1::ColorF(0.541f, 0.541f, 0.541f, 1.00f), // #8A8A8A (--ink3)
+        /*accent*/    D2D1::ColorF(0.890f, 0.604f, 0.231f, 1.00f), // #E39A3B, the F1 panel accent
         /*hover*/     D2D1::ColorF(0.22f, 0.24f, 0.32f, 1.00f),
 
         // Semantic
         /*good*/      D2D1::ColorF(0.13f, 0.77f, 0.37f, 1.00f), // green-500
-        /*warn*/      D2D1::ColorF(0.96f, 0.62f, 0.04f, 1.00f), // amber-500
+        /*warn*/      D2D1::ColorF(0.847f, 0.722f, 0.345f, 1.00f), // #D8B858 (--warn)
 
         // Font
         /*fontFamily*/            L"Segoe UI",

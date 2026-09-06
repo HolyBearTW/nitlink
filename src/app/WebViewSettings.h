@@ -29,6 +29,18 @@ public:
     // GetClientRect). Called from the application loop on window resize.
     void Resize();
 
+    // Panel placement. Right and Left size the control as a strip of
+    // widthDip device-independent pixels beside the picture; Full covers
+    // the whole client area. Takes effect on the next Show or Resize, or
+    // immediately while the panel is visible.
+    enum class Dock { Full, Right, Left };
+    void SetDock(Dock dock, int widthDip);
+    Dock GetDock() const { return m_dock; }
+
+    // Lets the page draw translucent surfaces over the picture. Keeps the
+    // opaque default when the installed runtime predates the interface.
+    void SetTransparentBackground(bool on);
+
     void NavigateToFile(const std::wstring& path);
     void NavigateToString(const std::wstring& html);
     void PostMessage(const std::wstring& json);
@@ -38,6 +50,13 @@ public:
 private:
     HWND m_parent  = nullptr;
     bool m_visible = false;
+    Dock m_dock = Dock::Full;
+    int  m_widthDip = 420;
+    bool m_transparent = false;
+
+    // Bounds for the current dock mode in parent client coordinates.
+    RECT ComputeBounds() const;
+    void ApplyBackground();
 
     wil::com_ptr<ICoreWebView2Controller> m_controller;
     wil::com_ptr<ICoreWebView2> m_webview;

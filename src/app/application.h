@@ -159,6 +159,11 @@ private:
     std::wstring ApplyAspectRatio();
     void CycleAspectRatio();
 
+    // Pushes the configured panel placement (right, left, or full) to the
+    // WebView2 host and returns the label shown in the panel.
+    std::wstring ApplyPanelLayout();
+    void CyclePanelSide();
+
     // Signal-loss debounce. PS5 boot logos, source switches, and
     // SDR<->HDR handshakes all produce brief windows (typically 0.5 to
     // 2.0 s) where the HDMI link is renegotiating and no fresh frames

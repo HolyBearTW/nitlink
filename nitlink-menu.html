@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-side="right">
 
 <head>
   <meta charset="UTF-8">
@@ -202,6 +202,45 @@
       box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
     }
     .toast.toast-show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+
+    /* Drawer layout. The host docks this page as a strip beside the picture
+       (panel_side right or left, about 420 CSS px wide): the rail becomes a
+       tab strip, the signal block stacks, and the surfaces go translucent so
+       the picture reads through. The full-window panel keeps the wide layout. */
+    @media (max-width: 640px) {
+      :root {
+        --bg: rgba(26, 26, 26, 0.93);
+        --chrome: rgba(18, 18, 18, 0.94);
+        --band: rgba(44, 44, 44, 0.88);
+      }
+      body { background: transparent; }
+      .app { flex-direction: column; box-shadow: 0 0 40px rgba(0, 0, 0, 0.55); }
+      html[data-side="right"] .app { border-left: 1px solid var(--hair2); }
+      html[data-side="left"] .app { border-right: 1px solid var(--hair2); }
+      .rail { width: auto; height: 48px; flex-direction: row; align-items: stretch; border-bottom: 1px solid var(--hair); }
+      .rail-brand { height: auto; padding: 0 10px 0 16px; }
+      .rail-brand-text { display: none; }
+      .rail-item { flex: 1; flex-direction: row; gap: 7px; height: auto; font-size: 12px; }
+      .rail-item svg { width: 15px; height: 15px; }
+      .rail-item[data-active="true"]::before { left: 0; right: 0; top: auto; bottom: 0; width: auto; height: 2px; }
+      .rail-status { display: none; }
+      .topbar { display: none; }
+      .metabar {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; padding: 12px 16px;
+        border-top: 0; border-bottom: 1px solid var(--hair);
+      }
+      .meta { flex-direction: column; align-items: flex-start; gap: 2px; }
+      #source-trigger { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 8px; }
+      #meta-source { max-width: none; }
+      .pane { max-width: none; padding-top: 10px; }
+      .band { height: 32px; padding: 0 16px; }
+      .row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 8px 16px; }
+      .row-chip { display: none; }
+      .row-right { justify-content: flex-end; }
+      .row:has(.slider-wrap) { grid-template-columns: 1fr; gap: 6px; }
+      .about-copy { padding: 14px 16px 20px; }
+      .toast { max-width: calc(100vw - 24px); }
+    }
   </style>
 </head>
 
@@ -356,6 +395,20 @@
             <div class="row-right">
               <span class="row-chip">NIS</span>
               <div class="toggle" id="toggle-nis"></div>
+            </div>
+          </div>
+
+          <div class="band">
+            <span class="band-title">Panel</span>
+            <span class="band-hint">This menu</span>
+          </div>
+
+          <div class="row" data-action="cyclePanelSide"
+            title="Where this menu opens. Right and Left dock it beside the picture, which keeps playing underneath. Full covers the window with the wide layout and pauses the picture while open.">
+            <span class="row-name">Position</span>
+            <div class="row-right">
+              <span class="row-value" id="panel-side-val">Right</span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
         </section>
@@ -899,6 +952,10 @@
       }
       setText('scaler-val', s.scalerName);
       if (s.aspectRatio) setText('aspect-val', s.aspectRatio);
+      if (s.panelSide) {
+        setText('panel-side-val', s.panelSide);
+        document.documentElement.dataset.side = String(s.panelSide).toLowerCase();
+      }
       setText('meta-resolution', `${s.negotiatedWidth}x${s.negotiatedHeight} / ${s.negotiatedFps} FPS`);
       setText('meta-format', s.negotiatedFormat);
       setText('meta-link', s.linkText);

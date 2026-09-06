@@ -144,6 +144,8 @@ private:
     ComPtr<ID2D1SolidColorBrush> m_brushCrit;
     // Dim text: for labels, units, branding. Subtler than m_brushText.
     ComPtr<ID2D1SolidColorBrush> m_brushDim;
+    // Secondary text (#B4B4B4, the panel's --ink2): band title, GPU row.
+    ComPtr<ID2D1SolidColorBrush> m_brushInk2;
     // Thicker fonts for the big primary numbers (FPS / Latency values).
     ComPtr<IDWriteTextFormat>    m_textFormatBig;
     ComPtr<IDWriteTextFormat>    m_textFormatLabel;

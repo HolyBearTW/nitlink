@@ -139,6 +139,13 @@ struct Config {
     // "stretch" fills the window and ignores the ratio entirely.
     std::string  aspectRatio = "auto";
 
+    // Where the F1 panel opens. "right" and "left" dock it as a strip beside
+    // the picture, which keeps playing underneath. "full" covers the whole
+    // window with the wide layout and holds a black frame while it is open.
+    std::string  panelSide  = "right";
+    // Width of the docked panel in device-independent pixels.
+    int          panelWidth = 420;
+
     // (hdrMode string field stripped: Reference/Vibrant was an earlier
     //  fake-HDR pipeline. The current path negotiates real HDR10 via
     //  P010 capture, with the Elgato hardware tone-map disabled at
