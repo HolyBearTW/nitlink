@@ -675,7 +675,7 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
     const D2D1_COLOR_F COL_FG       = D2D1::ColorF(0.910f, 0.918f, 0.929f, 1.0f); // #E8EAED (--fg)
     const D2D1_COLOR_F COL_FG_DIM   = D2D1::ColorF(0.604f, 0.627f, 0.659f, 1.0f); // #9AA0A8 (--fg-mid)
     const D2D1_COLOR_F COL_FG_MUTED = D2D1::ColorF(0.290f, 0.310f, 0.341f, 1.0f); // #4A4F57 (--fg-muted)
-    const D2D1_COLOR_F COL_ACCENT   = D2D1::ColorF(0.357f, 0.553f, 0.937f, 1.0f); // #5B8DEF (--accent)
+    const D2D1_COLOR_F COL_ACCENT   = D2D1::ColorF(0.890f, 0.604f, 0.231f, 1.0f); // #E39A3B (--accent)
 
     m_d2dContext->BeginDraw();
 
@@ -695,9 +695,9 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
     m_d2dContext->CreateSolidColorBrush(COL_FG_DIM,  &bFgDim);
     m_d2dContext->CreateSolidColorBrush(COL_FG_MUTED,&bFgMuted);
     m_d2dContext->CreateSolidColorBrush(COL_ACCENT,  &bAccent);
-    // --accent-soft equivalent for the status dot halo (rgba 91,141,239 / 0.16).
+    // --accent-soft equivalent for the status dot halo (rgba 227,154,59 / 0.16).
     m_d2dContext->CreateSolidColorBrush(
-        D2D1::ColorF(0.357f, 0.553f, 0.937f, 0.16f), &bAccentSoft);
+        D2D1::ColorF(0.890f, 0.604f, 0.231f, 0.16f), &bAccentSoft);
 
     // Type. Segoe UI is the closest stock-Windows analogue to Inter; paired
     // with Cascadia Mono for the version tag / brand sub-label so it matches
@@ -859,7 +859,7 @@ void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
     const D2D1_COLOR_F COL_CARD_BG = D2D1::ColorF(0.075f, 0.078f, 0.094f, 0.92f * alpha);
     const D2D1_COLOR_F COL_RULE    = D2D1::ColorF(1.0f,   1.0f,   1.0f,   0.06f * alpha);
     const D2D1_COLOR_F COL_FG      = D2D1::ColorF(0.910f, 0.918f, 0.929f, alpha);
-    const D2D1_COLOR_F COL_ACCENT  = D2D1::ColorF(0.357f, 0.553f, 0.937f, alpha);
+    const D2D1_COLOR_F COL_ACCENT  = D2D1::ColorF(0.890f, 0.604f, 0.231f, alpha);
 
     // Card sizing: text-width approximation by character count. Good enough
     // for short toast strings; if the text doesn't fit, DrawText clips it
