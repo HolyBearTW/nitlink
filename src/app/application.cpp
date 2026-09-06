@@ -788,14 +788,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // convention. Wave Link channels don't carry the specific device name.
     const std::wstring audioHint = DeriveAudioHint(m_currentDeviceInfo.name);
     if (!m_audioRouter->Initialize(audioHint)) {
-        AppLog(L"Initialize: AudioRouter failed (continuing without audio)");
-    } else if (m_audioRouter->HasFormatWarning()) {
-        // Unsupported playback format (e.g. a non-standard sample rate or a
-        // channel layout the router cannot map): audio is muted and the router
-        // built a message describing what to change. Surface it once, owned by
-        // the main window.
-        MessageBoxW(m_window->GetHWND(), m_audioRouter->FormatWarningText().c_str(),
-                    L"NitLink audio", MB_OK | MB_ICONINFORMATION);
+        AppLog(L"Initialize: AudioRouter has no endpoints yet (worker keeps retrying)");
     }
 
     m_overlay = std::make_unique<Overlay>();
@@ -3285,18 +3278,9 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         const std::wstring newAudioHint = DeriveAudioHint(newDevice.name);
         m_audioRouter->Shutdown();
         if (!m_audioRouter->Initialize(newAudioHint)) {
-            AppLog(L"SwitchCaptureDevice: AudioRouter re-init failed (continuing without audio)");
+            AppLog(L"SwitchCaptureDevice: AudioRouter has no endpoints yet (worker keeps retrying)");
         } else {
             AppLog(L"SwitchCaptureDevice: AudioRouter re-bound to '" + newAudioHint + L"'");
-            // Surface an unsupported-playback-format warning the same way the
-            // startup path does. Without this, switching into a device whose
-            // audio endpoint uses a non-standard sample rate or channel layout
-            // mutes silently: the router falls back to no audio but the user is
-            // never told why. Mirrors the once-per-init MessageBox at bring-up.
-            if (m_audioRouter->HasFormatWarning()) {
-                MessageBoxW(m_window->GetHWND(), m_audioRouter->FormatWarningText().c_str(),
-                            L"NitLink audio", MB_OK | MB_ICONINFORMATION);
-            }
         }
     }
 

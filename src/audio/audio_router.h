@@ -6,8 +6,9 @@
 #include <audioclient.h>
 #include <wrl/client.h>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
-#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -17,14 +18,26 @@ namespace NitLink {
 // Uses WASAPI: one IAudioClient in capture mode reading from the Elgato's
 // "Digital Audio Interface" device, another in render mode writing to the
 // default playback device. A worker thread bridges them with minimal latency.
+//
+// Both endpoints are opened, used, and rebuilt entirely on the worker thread.
+// Endpoints are not assumed to survive the life of the process: the default
+// playback device can change, a device's format can be reconfigured, and the
+// capture card can be unplugged. Any of those invalidates the affected
+// IAudioClient, and the worker rebuilds it in place rather than falling
+// permanently silent.
 class AudioRouter {
 public:
     AudioRouter();
     ~AudioRouter();
 
     // captureDeviceNameHint: substring to match against device friendly name,
-    // e.g. L"Elgato" or L"4K Pro". If empty, uses the first non-default
-    // microphone-style capture device.
+    // e.g. L"Elgato" or L"4K Pro". An empty hint falls back to L"Elgato";
+    // there is no "first capture device found" behaviour, because matching a
+    // random microphone would be worse than reporting no audio.
+    //
+    // Returns whether the first endpoint-open attempt succeeded. A false
+    // return does not mean audio is dead for the run: the worker stays alive
+    // and keeps retrying, so plugging the card back in recovers on its own.
     bool Initialize(const std::wstring& captureDeviceNameHint = L"Elgato");
     void Shutdown();
 
@@ -35,49 +48,67 @@ public:
     bool  IsMuted()   const { return m_muted; }
     bool  IsRunning() const { return m_running; }
 
-    // True when Initialize found a capture/playback format combination it could
-    // not route and muted audio as a result. The application reads this once
-    // after Initialize to show a one-time explanation. FormatWarningText is the
-    // user-facing message describing what to change. Both are set before the
-    // worker thread starts and are not modified afterward.
-    bool                HasFormatWarning()  const { return m_formatWarning; }
-    const std::wstring& FormatWarningText() const { return m_formatWarningText; }
+    // True only while both endpoints are open and frames are moving. Distinct
+    // from IsRunning(), which stays true while the worker retries a lost
+    // device.
+    bool  IsStreaming() const { return m_streaming; }
 
 private:
+    class EndpointNotifier;
+
     bool FindCaptureDevice(const std::wstring& nameHint, ComPtr<IMMDevice>& outDevice);
-    bool SetupCapture(IMMDevice* captureDevice);
+    bool SetupCapture();
     bool SetupRender();
-    void ChooseRouteMode();
+    void TeardownCapture();
+    void TeardownRender();
+
+    // Brings both endpoints up if they are down and services any pending
+    // rebuild requests. Returns true when the pipeline is ready to pump.
+    bool EnsureEndpoints();
+
+    // Classifies a WASAPI failure and flags the affected side for rebuild.
+    void HandleStreamError(HRESULT hr, const wchar_t* what, bool captureSide);
+
     void RouteLoop();
 
+    std::wstring m_nameHint = L"Elgato";
+
     ComPtr<IMMDeviceEnumerator> m_enumerator;
+    ComPtr<IMMNotificationClient> m_notifier;
 
     ComPtr<IAudioClient>        m_captureClient;
     ComPtr<IAudioCaptureClient> m_captureService;
     WAVEFORMATEX*               m_captureFormat = nullptr;
     UINT32                      m_captureBufferFrames = 0;
+    std::wstring                m_captureDeviceId;
 
     ComPtr<IAudioClient>        m_renderClient;
     ComPtr<IAudioRenderClient>  m_renderService;
     WAVEFORMATEX*               m_renderFormat = nullptr;
     UINT32                      m_renderBufferFrames = 0;
-
-    // How RouteLoop bridges a capture packet to the render buffer, chosen once
-    // by ChooseRouteMode from the two negotiated formats:
-    //   DirectCopy       - identical formats: copy straight through.
-    //   StereoToSurround - 2ch float capture into a 5.1/7.1 float render at the
-    //                      same rate: map L/R to the front pair, zero the rest.
-    //   Silence          - any other combination: write silence and raise a
-    //                      one-time format warning (no resampler on this path).
-    enum class RouteMode { Silence, DirectCopy, StereoToSurround };
-    RouteMode    m_routeMode     = RouteMode::Silence;
-    bool         m_formatWarning = false;
-    std::wstring m_formatWarningText;
+    std::wstring                m_renderDeviceId;
 
     std::thread        m_thread;
     std::atomic<bool>  m_running{false};
+    std::atomic<bool>  m_streaming{false};
     std::atomic<float> m_volume{1.0f};
     std::atomic<bool>  m_muted{false};
+
+    // Set from IMMNotificationClient callbacks (a system thread) and consumed
+    // by the worker. The endpoint notifications are the fast path; the
+    // AUDCLNT_E_DEVICE_INVALIDATED checks in the pump are the backstop that
+    // catches everything else, including in-place format changes.
+    std::atomic<bool>  m_restartCapture{false};
+    std::atomic<bool>  m_restartRender{false};
+
+    // Reports the first attempt's outcome back to Initialize().
+    std::mutex              m_startMutex;
+    std::condition_variable m_startCv;
+    bool                    m_startAttempted = false;
+    bool                    m_startSucceeded = false;
+
+    // Suppresses per-retry log spam while an endpoint is unavailable.
+    bool m_setupFailureLogged = false;
 };
 
 } // namespace NitLink
