@@ -124,6 +124,14 @@ struct Config {
     // lowest latency is the point.
     bool         lowLatency = true;
 
+    // Present-rate cap for the low-latency tearing-allowed present, in Hz.
+    // 0 = automatic: the window's monitor refresh rate minus 3, applied only
+    // when that stays at or above the source frame rate, so a variable
+    // refresh display engages VRR and a fixed refresh display never drops
+    // frames. 30 to 1000 = fixed cap. -1 = no cap. A VRR_CAP.txt file next
+    // to the exe overrides all of these.
+    int          presentCapHz = 0;
+
     // (hdrMode string field stripped: Reference/Vibrant was an earlier
     //  fake-HDR pipeline. The current path negotiates real HDR10 via
     //  P010 capture, with the Elgato hardware tone-map disabled at

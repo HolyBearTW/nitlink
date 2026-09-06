@@ -11,7 +11,7 @@ All figures are same-rig, same-session comparisons. Absolute milliseconds includ
 ## Measured configuration
 
 - NitLink 1.1 pre-release build. Low-Latency Mode on (the default), fullscreen, Media Foundation capture (the default path).
-- Present: tearing-allowed flip-model present, rate-capped at 117 Hz on a 120 Hz variable-refresh panel so the display's variable refresh engages. In this build the cap is set by a `VRR_CAP.txt` file next to `NitLink.exe` containing the target rate in Hz (a few Hz under the panel's maximum). Without the file the present runs uncapped; see "Why the present-rate cap matters" below.
+- Present: tearing-allowed flip-model present, rate-capped at 117 Hz on a 120 Hz variable-refresh panel so the display's variable refresh engages. The measured runs pinned the cap with a `VRR_CAP.txt` file next to `NitLink.exe` containing the target rate in Hz. In 1.1.0 the cap is automatic: monitor refresh minus 3 Hz, applied when that stays at or above the source frame rate, so the same 120 Hz panel lands on the same 117 Hz; `present_cap_hz` in `nitlink.json` overrides it, and the marker file still wins when present. See "Why the present-rate cap matters" below.
 - NVIDIA Control Panel Vertical Sync set to "Use the 3D application setting" and the display's variable refresh (G-Sync Compatible) enabled. A driver-forced vsync sits above the application and silently defeats the tearing present.
 - Display: LG C3 OLED 42" at 120 Hz. GPU: NVIDIA RTX 5080. Windows 11.
 - Comparison software: Elgato 4K Capture Utility, same card, same display, run immediately after the NitLink batch with nothing else changed.

@@ -1,9 +1,9 @@
 # Acknowledgments
 
-This file lists external work that informed NitLink's development but is
-not bundled, statically linked, or otherwise redistributed in the
-NitLink binary. Bundled and linked third-party software is tracked
-separately in `LICENSES.md`.
+This file credits external work that informed NitLink's development but
+is not bundled, statically linked, or otherwise redistributed in the
+NitLink binary, and the people who contributed code directly. Bundled
+and linked third-party software is tracked separately in `LICENSES.md`.
 
 ---
 
@@ -25,3 +25,16 @@ and written from scratch against the Win32 SetupAPI and HID Class API.
 For the engineering context (why two card-specific control paths exist,
 the byte layout of the HID Output Report, and the implemented HDR/SDR
 state machine), see [`docs/4ks-hdr-tonemap.md`](docs/4ks-hdr-tonemap.md).
+
+---
+
+## Contributors
+
+Code contributions merged into NitLink:
+
+- Nathan K. (@n810K), NitLink 1.1.0: audio endpoint recovery and
+  capture-format rendering in the WASAPI audio router
+  (https://github.com/nitlink-dev/nitlink/pull/5). The router now
+  survives default playback device changes, rebuilds a lost endpoint
+  on its worker thread, and plays through playback devices whose sample
+  rate or channel layout differs from the capture card's.

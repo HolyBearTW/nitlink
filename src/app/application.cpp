@@ -647,6 +647,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
     }
     AppLog(L"Initialize: capture device opened");
+    ApplyPresentCap();
 
     // 4K Pro source-mode readout. Reads the connected HDMI source's
     // resolution + fps from the Elgato custom property set (props 210
@@ -1444,6 +1445,7 @@ void Application::Run()
             AppLog(L"Resize event: handling resize");
             if (m_overlay) m_overlay->OnResizeBegin();
             m_renderer->Resize(w, h);
+            ApplyPresentCap();
             // Update the WebView2 child controller bounds so it stays
             // sized to the new client rect. The control is always sized
             // to the full client area; only its visibility toggles.
@@ -3047,8 +3049,78 @@ bool Application::ReconcileCaptureFormat(bool force)
     });
 
     m_currentDeviceInfo = deviceToOpen;
+    ApplyPresentCap();
     AppLog(L"Reconcile: capture restarted in new format");
     return true;
+}
+
+// Present-rate cap policy for the low-latency tearing-allowed present.
+//
+// A variable-refresh display engages VRR only when presents arrive a few
+// hertz under its maximum: a vsync present never engages it, and an
+// uncapped tearing present overshoots the ceiling and tears. A fixed
+// refresh display gains nothing from the cap and loses frames whenever the
+// cap sits under the source rate (a 60 Hz panel with a 60 fps source capped
+// at 57 Hz skips three frames a second). The automatic cap is therefore the
+// monitor refresh minus 3, applied only when that stays at or above the
+// source frame rate. present_cap_hz in nitlink.json: 0 automatic, negative
+// off, 30 to 1000 a fixed rate. A VRR_CAP.txt marker next to the exe wins
+// over all of this inside the renderer.
+//
+// The refresh rate is read from the current display mode of the monitor
+// under the window. A window dragged to another monitor without a resize
+// keeps the previous cap until the next resize or format change.
+void Application::ApplyPresentCap()
+{
+    if (!m_renderer) return;
+
+    const int cfg = m_config->presentCapHz;
+    double capHz = 0.0;
+    std::wstring policy;
+
+    if (cfg >= 30) {
+        capHz = static_cast<double>(cfg);
+        policy = L"fixed " + std::to_wstring(cfg) + L" Hz (present_cap_hz)";
+    } else if (cfg < 0) {
+        policy = L"off (present_cap_hz)";
+    } else {
+        double refreshHz = 0.0;
+        HMONITOR monitor = MonitorFromWindow(m_window->GetHWND(), MONITOR_DEFAULTTONEAREST);
+        MONITORINFOEXW info{};
+        info.cbSize = sizeof(info);
+        if (monitor && GetMonitorInfoW(monitor, &info)) {
+            DEVMODEW mode{};
+            mode.dmSize = sizeof(mode);
+            // dmDisplayFrequency of 0 or 1 means the hardware default rate,
+            // which carries no usable number.
+            if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
+                mode.dmDisplayFrequency > 1) {
+                refreshHz = static_cast<double>(mode.dmDisplayFrequency);
+            }
+        }
+
+        const uint32_t sourceFps = m_captureDevice ? m_captureDevice->GetOutputFormat().fps : 0;
+        const double candidate = refreshHz - 3.0;
+        std::wstringstream ss;
+        if (refreshHz >= 50.0 && candidate >= static_cast<double>(sourceFps)) {
+            capHz = candidate;
+            ss << L"automatic " << static_cast<int>(candidate) << L" Hz (monitor "
+               << static_cast<int>(refreshHz) << L" Hz, source " << sourceFps << L" fps)";
+        } else if (refreshHz < 50.0) {
+            ss << L"off (monitor refresh unknown or under 50 Hz)";
+        } else {
+            ss << L"off (monitor " << static_cast<int>(refreshHz) << L" Hz minus 3 would sit under the "
+               << sourceFps << L" fps source)";
+        }
+        policy = ss.str();
+    }
+
+    const bool applied = m_renderer->SetPresentCap(capHz);
+    if (capHz != m_appliedPresentCapHz) {
+        m_appliedPresentCapHz = capHz;
+        AppLog(applied ? L"PresentCap: " + policy
+                       : L"PresentCap: VRR_CAP.txt pins the renderer cap; policy not applied: " + policy);
+    }
 }
 
 bool Application::RecoverFromDeviceLost()
@@ -3122,6 +3194,7 @@ bool Application::RecoverFromDeviceLost()
     // Re-apply the live renderer toggles the fresh device reset to defaults.
     m_renderer->SetVSync(wasVsync);
     m_renderer->SetHDRDiagMode(wasDiag);
+    ApplyPresentCap();
     m_renderer->SetPostInputEnabled(wasPostInput);
     if (m_config) m_renderer->SetColorExpansion(m_config->colorExpansion);
 
@@ -3594,7 +3667,24 @@ void Application::TakeScreenshot()
     struct tm tm_buf;
     localtime_s(&tm_buf, &time_t);
 
+    // File name prefix: "nitlink" plus the detected source name when one is
+    // known (the identifier the title bar shows), so a folder of captures
+    // reads as nitlink-PS5_<timestamp> instead of timestamps alone.
     std::wstring safeTitle = L"nitlink";
+    {
+        const std::wstring& source = !m_detectedHdmiSource.empty()
+            ? m_detectedHdmiSource : m_source4KProMode.sourceName;
+        std::wstring slug;
+        for (wchar_t c : source) {
+            const bool keep = (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') ||
+                              (c >= L'a' && c <= L'z');
+            if (keep) slug += c;
+            else if (!slug.empty() && slug.back() != L'-') slug += L'-';
+            if (slug.size() >= 32) break;
+        }
+        while (!slug.empty() && slug.back() == L'-') slug.pop_back();
+        if (!slug.empty()) safeTitle += L"-" + slug;
+    }
 
     wchar_t timestamp[64];
     wcsftime(timestamp, 64, L"%Y%m%d_%H%M%S", &tm_buf);

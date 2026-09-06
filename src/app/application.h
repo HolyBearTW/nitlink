@@ -147,6 +147,12 @@ private:
     // (driven by DX11Renderer::ConsumeDeviceLost in the run loop).
     bool RecoverFromDeviceLost();
 
+    // Chooses the present-rate cap for the current display and source and
+    // pushes it to the renderer. Called after the capture device opens, on
+    // every capture format negotiation, after a device-loss rebuild, and on
+    // window resize, which also covers fullscreen toggles.
+    void ApplyPresentCap();
+
     // Signal-loss debounce. PS5 boot logos, source switches, and
     // SDR<->HDR handshakes all produce brief windows (typically 0.5 to
     // 2.0 s) where the HDMI link is renegotiating and no fresh frames
@@ -367,6 +373,7 @@ private:
     double m_renderLatencyMs = 0.0;
     double m_frameAgeMs = 0.0;   // MF-delivery -> render-start, ms (rig localizer)
     bool m_lowLatency = true;   // present-on-arrival (wait-then-read) vs VRR pacing; default ON, toggle Alt+L / F1
+    double m_appliedPresentCapHz = -1.0;  // last cap pushed to the renderer, logged on change only
 
     // App ingest: live card-driver-to-app-callback delivery time, computed
     // each frame as arrivalWallNs - (frame.deviceTimestamp * 100) in ns

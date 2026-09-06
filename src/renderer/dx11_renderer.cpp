@@ -938,6 +938,7 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     // target Hz (default 117). Absent = off. Pairs with the ALLOW_TEARING present.
     if (std::filesystem::exists("VRR_CAP.txt")) {
         m_vrrCapHz = 117.0;
+        m_presentCapFromMarker = true;
         std::ifstream capFile("VRR_CAP.txt");
         double hz = 0.0;
         if (capFile >> hz && hz >= 30.0 && hz <= 1000.0) m_vrrCapHz = hz;
@@ -1646,6 +1647,13 @@ bool DX11Renderer::CreateGpuTimingQueries()
         hr = m_device->CreateQuery(&tsDesc, &m_gpuQueryEnd[i]);
         if (FAILED(hr)) return false;
     }
+    return true;
+}
+
+bool DX11Renderer::SetPresentCap(double hz)
+{
+    if (m_presentCapFromMarker) return false;
+    m_vrrCapHz = (hz > 0.0) ? hz : 0.0;
     return true;
 }
 

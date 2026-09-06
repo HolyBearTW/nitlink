@@ -125,6 +125,14 @@ public:
     void SetVSync(bool on) { m_vsync = on; }
     bool m_vsync = false;
 
+    // Present-rate cap for the tearing-allowed present, in Hz; 0 turns it
+    // off. Chosen by the application from the display refresh rate, the
+    // source frame rate, and the present_cap_hz config key. Returns false
+    // and leaves the cap alone when a VRR_CAP.txt marker pinned it at
+    // Initialize: the marker is a hand-set test rate and must not be
+    // replaced by policy.
+    bool SetPresentCap(double hz);
+
     ID3D11Device*        GetDevice()    const { return m_device.Get(); }
     ID3D11DeviceContext* GetContext()   const { return m_context.Get(); }
     IDXGISwapChain1*     GetSwapChain() const { return m_swapChain.Get(); }
@@ -291,6 +299,7 @@ private:
     // paces the loop to this Hz instead of the swap-chain waitable, keeping the
     // ALLOW_TEARING present just under the display's VRR max so VRR engages.
     double                         m_vrrCapHz = 0.0;
+    bool                           m_presentCapFromMarker = false;
     std::chrono::steady_clock::time_point m_lastPresentTime{};
 
     // Frame-latency telemetry. Averaged window of recent end-to-end render

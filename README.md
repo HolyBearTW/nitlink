@@ -89,7 +89,7 @@ NitLink is NOT for you if:
 | 4K X @ 4K120 | **47.7 ms** | 48.4 ms | tie (−0.8 ms, within noise) |
 | 4K S @ 4K60 | **67.8 ms** | 75.1 ms | NitLink −7.3 ms |
 
-These results use NitLink's tearing present rate-capped just under the display's refresh (117 Hz on a 120 Hz panel), which is what lets a variable-refresh display absorb the tear. Full methodology, the rig, every caveat, and the raw data: [docs/LATENCY.md](docs/LATENCY.md).
+These results use NitLink's tearing present capped just under the display's refresh (117 Hz on a 120 Hz panel), which is what lets a variable-refresh display absorb the tear. The cap is automatic in 1.1.0: monitor refresh minus 3 Hz, applied when that stays at or above the source frame rate; `present_cap_hz` in `nitlink.json` overrides it. Full methodology, the rig, every caveat, and the raw data: [docs/LATENCY.md](docs/LATENCY.md).
 
 How: NitLink presents each frame the instant it arrives instead of waiting for the next refresh. That's a real latency win and a deliberate **tradeoff** — lowest latency, but the present can tear on a fixed-refresh display. Pair it with VRR and the tear is absorbed. `Alt+L` toggles Low-Latency off, which holds each frame after capture and waits before presenting, so the picture is up to one refresh older; the present stays tearing-allowed either way, so leave it on unless you have a reason not to.
 
@@ -225,6 +225,8 @@ Settings live in `nitlink.json` next to the executable. Plain text; auto-saves o
 - `low_latency`: low-latency present mode (default `true`). `true` = present-on-arrival (lowest input lag). `false` = the frame is held after capture and the swap-chain wait moves before present, so the picture is up to one refresh older. The present is tearing-allowed either way; `false` only adds input lag. Toggle with `Alt+L` or the F1 panel.
 - `hdr_enabled`: HDR mode. 4K Pro/X follow the source automatically; on the 4K S it's opt-in (HDR clamps to 1080p over USB).
 - `vrr_present_pacing`: VRR pacing (default `false`). Set `true` on G-Sync / FreeSync displays.
+
+- `present_cap_hz`: present-rate cap in Hz for the low-latency present (default `0` = automatic: monitor refresh minus 3, applied when that is at least the source frame rate). `30` to `1000` = fixed cap, `-1` = off.
 - `nis_enabled` / `nis_sharpness` / `nis_scale_mode`: NIS upscaler config.
 - `color_expansion`: limited→full range expansion (default off; NitLink auto-skips when the source is already full-range).
 - `audio_volume` / `audio_muted`: playback level.

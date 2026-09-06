@@ -134,6 +134,7 @@ bool Config::Load(const std::string& path)
         if (key == "hdr_auto_from_source") hdrAutoFromSource = ParseBool(val);
         if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
         if (key == "low_latency")     lowLatency = ParseBool(val);
+        if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
         if (key == "show_overlay")    showOverlay   = ParseBool(val);
         if (key == "current_game")    currentGameId = val;
@@ -324,6 +325,11 @@ bool Config::Save(const std::string& path)
     file << "# one refresh older. The present is tearing-allowed either way;\n";
     file << "# false only adds input lag. Toggle from the F1 panel or with Alt+L.\n";
     file << "low_latency = " << (lowLatency ? "true" : "false") << "\n\n";
+
+    file << "# Present-rate cap in Hz for the low-latency present (default 0)\n";
+    file << "# 0 = automatic: monitor refresh minus 3, when that is at least the\n";
+    file << "# source frame rate. 30-1000 = fixed cap. -1 = no cap.\n";
+    file << "present_cap_hz = " << presentCapHz << "\n\n";
 
     file << "# Shaders\n";
     file << "enable_shaders = " << (enableShaders ? "true" : "false") << "\n\n";
