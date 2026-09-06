@@ -63,6 +63,10 @@ public:
     // content. Available after >=2 calls; returns true conservatively until
     // then to avoid undercounting during startup.
     bool WasPreviousFrameNew() const { return m_wasNew; }
+    // Readbacks that found the GPU still busy and kept the previous
+    // classification instead of waiting. Cumulative; a steadily growing
+    // count means the GPU is contended by other work.
+    uint32_t GetReadbackSkips() const { return m_readbackSkips; }
     float GetLastDiffValue()  const { return m_lastDiff; }
 
     // Max-tile SAD from the previous Process() (see the tiled compute shader).
@@ -128,7 +132,18 @@ private:
     // + a staging copy read back on the CPU one frame later.
     ComPtr<ID3D11Texture2D>            m_resultTex;
     ComPtr<ID3D11UnorderedAccessView>  m_resultUAV;
-    ComPtr<ID3D11Texture2D>            m_resultStaging;
+    // Readback ring. Each frame's result is copied into the next slot and
+    // read back with a non-blocking Map from the slot written one frame
+    // earlier, falling back to the slot written two frames earlier. A single
+    // slot read with a blocking Map stalls the whole present loop whenever
+    // the GPU is busy elsewhere (another process, or the compositor
+    // composing this window), which held the loop in the 40s while the
+    // source ran at 60.
+    static constexpr uint32_t          kStagingRing = 3;
+    ComPtr<ID3D11Texture2D>            m_resultStaging[kStagingRing];
+    uint32_t                           m_stagingWrite   = 0;
+    uint32_t                           m_stagingWritten = 0;
+    uint32_t                           m_readbackSkips  = 0;
 
     bool   m_wasNew    = true;
     float  m_lastDiff  = 0.0f;     // frame-global mean SAD (= average of tiles)

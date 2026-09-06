@@ -16,6 +16,8 @@
 
 namespace NitLink {
 
+static std::wstring HrToHex(HRESULT hr);
+
 // Vertex shader: passes UV through, applies aspect-ratio-correct transform.
 // The scale comes from a constant buffer to letterbox/pillarbox correctly
 // regardless of how the user resizes the window.
@@ -830,6 +832,15 @@ struct TransformCB {
 DX11Renderer::DX11Renderer() = default;
 DX11Renderer::~DX11Renderer()
 {
+    // Unbind every view and drain the context before the members release.
+    // A backbuffer view left bound keeps the swap chain alive past this
+    // object, and the device-loss rebuild creates its replacement on the
+    // same window right after this destructor. Both calls are safe on a
+    // removed device.
+    if (m_context) {
+        m_context->ClearState();
+        m_context->Flush();
+    }
     // Close the DXGI 1.3 frame-latency waitable handle if one was created.
     // DXGI owns the swap chain reference, but the handle itself is given
     // out as a Win32 HANDLE that must be closed to avoid a small kernel-
@@ -890,18 +901,39 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
         D3D11_SDK_VERSION,
         &m_device, &featureLevel, &m_context
     );
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] D3D11CreateDevice failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     ComPtr<IDXGIDevice> dxgiDevice;
-    if (FAILED(m_device.As(&dxgiDevice))) return false;
+    hr = m_device.As(&dxgiDevice);
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] IDXGIDevice query failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
     ComPtr<IDXGIAdapter> adapter;
-    if (FAILED(dxgiDevice->GetAdapter(&adapter))) return false;
+    hr = dxgiDevice->GetAdapter(&adapter);
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] GetAdapter failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
     ComPtr<IDXGIFactory2> factory;
-    if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
+    hr = adapter->GetParent(IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] IDXGIFactory2 query failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     hr = factory->CreateSwapChainForHwnd(
         m_device.Get(), hwnd, &scd, nullptr, nullptr, &m_swapChain);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        // DXGI_ERROR_INVALID_CALL here means the window still carries a swap
+        // chain, normally one left alive by an object that survived a lost
+        // device.
+        OutputDebugStringW((L"[NitLink/Renderer] CreateSwapChainForHwnd failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     factory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
 
@@ -946,9 +978,18 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
             + L" Hz ALLOW_TEARING present-rate cap\n").c_str());
     }
 
-    if (!CreateRenderTarget()) return false;
-    if (!CreateFullscreenQuad()) return false;
-    if (!CreateCompositeShader()) return false;
+    if (!CreateRenderTarget()) {
+        OutputDebugStringW(L"[NitLink/Renderer] Initialize: CreateRenderTarget failed\n");
+        return false;
+    }
+    if (!CreateFullscreenQuad()) {
+        OutputDebugStringW(L"[NitLink/Renderer] Initialize: CreateFullscreenQuad failed\n");
+        return false;
+    }
+    if (!CreateCompositeShader()) {
+        OutputDebugStringW(L"[NitLink/Renderer] Initialize: CreateCompositeShader failed\n");
+        return false;
+    }
 
     // GPU timestamp queries are a "best effort" telemetry feature. If the
     // driver refuses to create them, the HUD shows "GPU --" but rendering
@@ -967,7 +1008,10 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
     samplerDesc.MaxLOD         = D3D11_FLOAT32_MAX;
     hr = m_device->CreateSamplerState(&samplerDesc, &m_sampler);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] CreateSamplerState failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     D3D11_BUFFER_DESC cbDesc{};
     cbDesc.ByteWidth      = sizeof(TransformCB);
@@ -975,7 +1019,10 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     cbDesc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
     cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     hr = m_device->CreateBuffer(&cbDesc, nullptr, &m_transformCB);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] CreateBuffer(TransformCB) failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     // Pixel-shader constant buffer for color pipeline knobs. 16 bytes is the
     // minimum D3D11 will accept (one float4 worth): 4 bytes plus pad.
@@ -985,7 +1032,10 @@ bool DX11Renderer::Initialize(HWND hwnd, uint32_t width, uint32_t height)
     pcbDesc.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
     pcbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     hr = m_device->CreateBuffer(&pcbDesc, nullptr, &m_pixelCB);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        OutputDebugStringW((L"[NitLink/Renderer] CreateBuffer(PixelCB) failed " + HrToHex(hr) + L"\n").c_str());
+        return false;
+    }
 
     // Probe the connected display for HDR capability. This populates
     // m_hdrDisplaySupported / m_hdrEngagedByOS / luminance bounds so the
@@ -1416,6 +1466,7 @@ bool DX11Renderer::CreateCaptureResourcesP010(uint32_t width, uint32_t height)
 
 void DX11Renderer::UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint32_t width, uint32_t height)
 {
+    const auto phaseStart = std::chrono::steady_clock::now();
     // Trust the format the application declared via SetSourceFormat: the
     // application got the authoritative subtype GUID back from CaptureDevice's
     // MF negotiation. The previous design here inferred format from the byte
@@ -1562,6 +1613,7 @@ void DX11Renderer::UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint
     }
 
     m_context->Unmap(m_captureTexture.Get(), 0);
+    m_phaseUploadMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - phaseStart).count();
     m_hasFrame = true;
 }
 
@@ -1657,8 +1709,36 @@ bool DX11Renderer::SetPresentCap(double hz)
     return true;
 }
 
+int DX11Renderer::PresentationMode() const
+{
+    ComPtr<IDXGISwapChainMedia> media;
+    if (!m_swapChain || FAILED(m_swapChain.As(&media))) return -1;
+    DXGI_FRAME_STATISTICS_MEDIA stats{};
+    if (FAILED(media->GetFrameStatisticsMedia(&stats))) return -1;
+    return static_cast<int>(stats.CompositionMode);
+}
+
+DX11Renderer::PhaseTimes DX11Renderer::ConsumePhaseTimes()
+{
+    PhaseTimes t{};
+    if (m_phaseWaits > 0) {
+        t.waitMs   = m_phaseWaitMs   / m_phaseWaits;
+        t.uploadMs = m_phaseUploadMs / m_phaseWaits;
+    }
+    if (m_phasePresents > 0) {
+        t.presentMs = m_phasePresentMs / m_phasePresents;
+    }
+    t.iterations = m_phaseWaits;
+    t.presents   = m_phasePresents;
+    m_phaseWaitMs = m_phaseUploadMs = m_phasePresentMs = 0.0;
+    m_phaseWaits = m_phasePresents = 0;
+    return t;
+}
+
 void DX11Renderer::WaitForFrameReady()
 {
+    const auto phaseStart = std::chrono::steady_clock::now();
+    m_phaseWaits++;
     // The DXGI 1.3 low-latency wait, callable on its own so the Low-Latency
     // loop can wait at the TOP of the iteration, then read the freshest capture
     // frame, then call BeginFrame(false) (the wait has already happened).
@@ -1675,11 +1755,13 @@ void DX11Renderer::WaitForFrameReady()
             else
                 std::this_thread::yield();
         }
+        m_phaseWaitMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - phaseStart).count();
         return;
     }
     if (m_frameLatencyWaitable) {
         WaitForSingleObjectEx(m_frameLatencyWaitable, 1000, TRUE);
     }
+    m_phaseWaitMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - phaseStart).count();
 }
 
 void DX11Renderer::BeginFrame(bool doWait)
@@ -1968,8 +2050,7 @@ void DX11Renderer::CompositeUI(ID3D11ShaderResourceView* uiSRV)
     // has transparent pixels everywhere there's no text drawn, so the
     // composite passes through to whatever was on the backbuffer beneath.
     // Cache the blend state on first use to avoid recreating per-frame.
-    static ComPtr<ID3D11BlendState> blendAlpha;
-    if (!blendAlpha) {
+    if (!m_uiBlendState) {
         D3D11_BLEND_DESC bd{};
         bd.RenderTarget[0].BlendEnable           = TRUE;
         bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_SRC_ALPHA;
@@ -1979,10 +2060,10 @@ void DX11Renderer::CompositeUI(ID3D11ShaderResourceView* uiSRV)
         bd.RenderTarget[0].DestBlendAlpha        = D3D11_BLEND_INV_SRC_ALPHA;
         bd.RenderTarget[0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
         bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        m_device->CreateBlendState(&bd, &blendAlpha);
+        m_device->CreateBlendState(&bd, &m_uiBlendState);
     }
     const float blendFactor[4] = { 0, 0, 0, 0 };
-    m_context->OMSetBlendState(blendAlpha.Get(), blendFactor, 0xFFFFFFFF);
+    m_context->OMSetBlendState(m_uiBlendState.Get(), blendFactor, 0xFFFFFFFF);
 
     m_context->VSSetShader(m_vertexShader.Get(), nullptr, 0);
     m_context->VSSetConstantBuffers(0, 1, m_transformCB.GetAddressOf());
@@ -2034,6 +2115,19 @@ void DX11Renderer::FlagIfDeviceLost(HRESULT hr, const wchar_t* site)
 
 bool DX11Renderer::ConsumeDeviceLost()
 {
+    // Present latches most losses, but a reset that lands between two
+    // presents leaves a whole iteration of capture upload, frame differ, and
+    // overlay work running against a removed device. Ask the device directly
+    // before the iteration starts, so that work is skipped and the rebuild
+    // begins at once.
+    if (!m_deviceLost && m_device) {
+        const HRESULT reason = m_device->GetDeviceRemovedReason();
+        if (FAILED(reason)) {
+            OutputDebugStringW((L"[NitLink/Renderer] graphics device lost (reason=" + HrToHex(reason)
+                + L"); flagging renderer rebuild\n").c_str());
+            m_deviceLost = true;
+        }
+    }
     bool v = m_deviceLost;
     m_deviceLost = false;
     return v;
@@ -2054,6 +2148,7 @@ void DX11Renderer::EndFrame()
         if (m_gpuQueryFrameCount < kGpuQueryRingSize) m_gpuQueryFrameCount++;
     }
 
+    const auto presentStart = std::chrono::steady_clock::now();
     HRESULT hrPresent = S_OK;
     if (m_vsync) {
         // Synced present: no tearing. On a VRR display the panel still drives
@@ -2068,6 +2163,8 @@ void DX11Renderer::EndFrame()
     // upgrade surfaces here as DXGI_ERROR_DEVICE_REMOVED/_RESET. Latch it for
     // the run loop instead of presenting into the void forever.
     FlagIfDeviceLost(hrPresent, L"Present");
+    m_phasePresentMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
+    m_phasePresents++;
     // Timestamp the present so the VRR present-rate cap (WaitForFrameReady) can pace
     // the next iteration just under the display's VRR ceiling.
     m_lastPresentTime = std::chrono::steady_clock::now();
@@ -3000,8 +3097,7 @@ float4 main(PS_IN i) : SV_TARGET {
     // frame show through. A one-shot blend state is required for this: the
     // normal capture path uses opaque rendering, so the default state has
     // blending disabled.
-    static ComPtr<ID3D11BlendState> diagBlendState;
-    if (!diagBlendState) {
+    if (!m_diagBlendState) {
         D3D11_BLEND_DESC bd{};
         bd.RenderTarget[0].BlendEnable           = TRUE;
         bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_SRC_ALPHA;
@@ -3011,11 +3107,11 @@ float4 main(PS_IN i) : SV_TARGET {
         bd.RenderTarget[0].DestBlendAlpha        = D3D11_BLEND_ZERO;
         bd.RenderTarget[0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
         bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        m_device->CreateBlendState(&bd, &diagBlendState);
+        m_device->CreateBlendState(&bd, &m_diagBlendState);
     }
-    if (diagBlendState) {
+    if (m_diagBlendState) {
         float bf[4] = { 1, 1, 1, 1 };
-        m_context->OMSetBlendState(diagBlendState.Get(), bf, 0xFFFFFFFF);
+        m_context->OMSetBlendState(m_diagBlendState.Get(), bf, 0xFFFFFFFF);
     }
 
     D3D11_VIEWPORT vp{ 0, 0, (float)m_windowWidth, (float)m_windowHeight, 0, 1 };

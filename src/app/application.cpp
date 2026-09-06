@@ -1561,6 +1561,14 @@ void Application::Run()
         // renderer within a frame. Gating on null instead retries the rebuild
         // every backoff interval until the GPU returns, and guarantees the
         // render path below runs only with a live renderer.
+        {
+            const auto iterStart = std::chrono::steady_clock::now();
+            if (m_loopPrevStart.time_since_epoch().count() != 0) {
+                m_loopPeriodSumMs += std::chrono::duration<double, std::milli>(iterStart - m_loopPrevStart).count();
+                m_loopIterations++;
+            }
+            m_loopPrevStart = iterStart;
+        }
         const bool deviceLost = !m_renderer || m_renderer->ConsumeDeviceLost();
         if (deviceLost) {
             if (!RecoverFromDeviceLost()) {
@@ -1822,8 +1830,10 @@ void Application::Run()
         // a sensible baseline.
         if (haveFreshFrame && freshFrameIsRealSource
             && m_frameDiffer && m_renderer->GetRawCaptureSRV()) {
+            const auto differStart = std::chrono::steady_clock::now();
             m_frameDiffer->Process(m_renderer->GetContext(),
                                      m_renderer->GetRawCaptureSRV());
+            m_loopDifferSumMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - differStart).count();
             isNewFrame = m_frameDiffer->WasPreviousFrameNew();
             if (isNewFrame) {
                 m_uniqueFrameCount++;
@@ -1901,8 +1911,36 @@ void Application::Run()
                        << L" haveFresh=" << (haveFreshFrame ? L"Y" : L"N")
                        << L" frameAge=" << m_frameAgeMs
                        << L" renderMs=" << m_renderLatencyMs;
+                    // Where the loop spent its time since the previous line:
+                    // period between iterations, frame-ready wait, capture
+                    // upload, differ, and Present, as per-iteration averages
+                    // (Present per presented frame).
+                    {
+                        const DX11Renderer::PhaseTimes ph =
+                            m_renderer ? m_renderer->ConsumePhaseTimes() : DX11Renderer::PhaseTimes{};
+                        const double iters = m_loopIterations > 0 ? (double)m_loopIterations : 1.0;
+                        ss << L" loopMs=" << (m_loopPeriodSumMs / iters)
+                           << L" waitMs=" << ph.waitMs
+                           << L" uploadMs=" << ph.uploadMs
+                           << L" differMs=" << (m_loopDifferSumMs / iters)
+                           << L" presentMs=" << ph.presentMs
+                           << L" iters=" << m_loopIterations
+                           << L" presents=" << ph.presents
+                           << L" readbackSkips=" << m_frameDiffer->GetReadbackSkips()
+                           << L" compMode=" << (m_renderer ? m_renderer->PresentationMode() : -1);
+                        m_loopPeriodSumMs = 0.0;
+                        m_loopDifferSumMs = 0.0;
+                        m_loopIterations  = 0;
+                    }
                     AppLog(ss.str());
                     lastDiffLog = now;
+                    const int mode = m_renderer ? m_renderer->PresentationMode() : -1;
+                    if (mode != m_lastPresentationMode) {
+                        AppLog(L"Presentation mode: " + std::to_wstring(m_lastPresentationMode)
+                               + L" -> " + std::to_wstring(mode)
+                               + L" (0 composed, 1 overlay, 2 none, 3 failure)");
+                        m_lastPresentationMode = mode;
+                    }
                 }
             }
         }

@@ -372,6 +372,14 @@ private:
     double m_captureLatencyMs = 0.0;
     double m_renderLatencyMs = 0.0;
     double m_frameAgeMs = 0.0;   // MF-delivery -> render-start, ms (rig localizer)
+    // Run-loop accumulators for the pacing diagnostic: period between
+    // iteration starts and time inside the frame differ, both summed since
+    // the previous log line.
+    std::chrono::steady_clock::time_point m_loopPrevStart{};
+    double   m_loopPeriodSumMs = 0.0;
+    double   m_loopDifferSumMs = 0.0;
+    uint32_t m_loopIterations  = 0;
+    int      m_lastPresentationMode = -2;  // last DXGI composition mode logged
     bool m_lowLatency = true;   // present-on-arrival (wait-then-read) vs VRR pacing; default ON, toggle Alt+L / F1
     double m_appliedPresentCapHz = -1.0;  // last cap pushed to the renderer, logged on change only
 

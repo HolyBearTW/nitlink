@@ -277,8 +277,20 @@ void Overlay::Shutdown()
     m_initialized = false;
 }
 
+bool Overlay::DeviceIsLost()
+{
+    if (m_deviceLost) return true;
+    if (m_device && FAILED(m_device->GetDeviceRemovedReason())) {
+        m_deviceLost = true;
+        ReleaseD2DResources();
+        OvLog(L"D3D device removed; overlay parked until the application rebuilds it");
+    }
+    return m_deviceLost;
+}
+
 void Overlay::Render(const Stats& stats)
 {
+    if (DeviceIsLost()) return;
     if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap ||
         !m_brushText || !m_brushAccent || !m_brushBg) {
         return;
@@ -628,14 +640,20 @@ void Overlay::Render(const Stats& stats)
     }
 
     HRESULT hr = m_d2dContext->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET) {
+    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+        hr == DXGI_ERROR_DEVICE_RESET) {
+        // A DXGI-surface target is only lost together with its device.
+        // Recreating it here would run Direct2D against a removed device;
+        // park instead and let the device-loss rebuild create a fresh overlay.
+        m_deviceLost = true;
         ReleaseD2DResources();
-        CreateD2DResources();
+        OvLog(L"EndDraw reported a lost target; overlay parked until the application rebuilds it");
     }
 }
 
 void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
 {
+    if (DeviceIsLost()) return;
     if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap) {
         return;
     }
@@ -807,15 +825,21 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
     }
 
     HRESULT hr = m_d2dContext->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET) {
+    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+        hr == DXGI_ERROR_DEVICE_RESET) {
+        // A DXGI-surface target is only lost together with its device.
+        // Recreating it here would run Direct2D against a removed device;
+        // park instead and let the device-loss rebuild create a fresh overlay.
+        m_deviceLost = true;
         ReleaseD2DResources();
-        CreateD2DResources();
+        OvLog(L"EndDraw reported a lost target; overlay parked until the application rebuilds it");
     }
 }
 
 void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
                          const wchar_t* text, float alpha)
 {
+    if (DeviceIsLost()) return;
     if (!m_initialized || !m_d2dContext || !m_d2dTargetBitmap) return;
     if (!text || alpha <= 0.0f) return;
     if (alpha > 1.0f) alpha = 1.0f;
@@ -884,9 +908,14 @@ void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
         fText.Get(), rText, bFg.Get());
 
     HRESULT hr = m_d2dContext->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET) {
+    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+        hr == DXGI_ERROR_DEVICE_RESET) {
+        // A DXGI-surface target is only lost together with its device.
+        // Recreating it here would run Direct2D against a removed device;
+        // park instead and let the device-loss rebuild create a fresh overlay.
+        m_deviceLost = true;
         ReleaseD2DResources();
-        CreateD2DResources();
+        OvLog(L"EndDraw reported a lost target; overlay parked until the application rebuilds it");
     }
 }
 

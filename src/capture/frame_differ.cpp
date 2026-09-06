@@ -264,8 +264,12 @@ bool FrameDiffer::CreateResultBuffers(ID3D11Device* device)
     sd.SampleDesc.Count = 1;
     sd.Usage            = D3D11_USAGE_STAGING;
     sd.CPUAccessFlags   = D3D11_CPU_ACCESS_READ;
-    hr = device->CreateTexture2D(&sd, nullptr, &m_resultStaging);
-    if (FAILED(hr)) { FDLogHr(L"staging CreateTexture2D failed", hr); return false; }
+    for (uint32_t i = 0; i < kStagingRing; ++i) {
+        hr = device->CreateTexture2D(&sd, nullptr, &m_resultStaging[i]);
+        if (FAILED(hr)) { FDLogHr(L"staging CreateTexture2D failed", hr); return false; }
+    }
+    m_stagingWrite   = 0;
+    m_stagingWritten = 0;
     return true;
 }
 
@@ -299,7 +303,9 @@ void FrameDiffer::Reset()
 
 void FrameDiffer::Shutdown()
 {
-    m_resultStaging.Reset();
+    for (auto& slot : m_resultStaging) slot.Reset();
+    m_stagingWrite   = 0;
+    m_stagingWritten = 0;
     m_resultUAV.Reset();
     m_resultTex.Reset();
     m_prevSRV.Reset();
@@ -324,10 +330,23 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
     // It establishes whether frame N-1 was new. By picking it up here
     // (one frame later than its dispatch), the GPU has long since written
     // it and the Map call is free.
-    if (!m_firstFrame) {
+    // Prefer the slot written one frame ago; when its copy is still in
+    // flight, fall back to the slot written two frames ago. DO_NOT_WAIT keeps
+    // a busy GPU from stalling the present loop: if neither copy is done the
+    // previous classification stands and the readback is retried next frame.
+    if (m_stagingWritten >= 1) {
+        uint32_t readSlot = (m_stagingWrite + kStagingRing - 1) % kStagingRing;
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        HRESULT hr = ctx->Map(m_resultStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-        if (SUCCEEDED(hr)) {
+        HRESULT hr = ctx->Map(m_resultStaging[readSlot].Get(), 0, D3D11_MAP_READ,
+                              D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+        if (hr == DXGI_ERROR_WAS_STILL_DRAWING && m_stagingWritten >= 2) {
+            readSlot = (m_stagingWrite + kStagingRing - 2) % kStagingRing;
+            hr = ctx->Map(m_resultStaging[readSlot].Get(), 0, D3D11_MAP_READ,
+                          D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+        }
+        if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+            m_readbackSkips++;
+        } else if (SUCCEEDED(hr)) {
             // Read the kTilesX x kTilesY grid of per-tile mean SADs. Take the
             // max (localized-motion rescue signal) and the average. Because the
             // tiles are equal-size, the average IS the old frame-global mean,
@@ -346,7 +365,7 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
                     if (v > maxTile) maxTile = v;
                 }
             }
-            ctx->Unmap(m_resultStaging.Get(), 0);
+            ctx->Unmap(m_resultStaging[readSlot].Get(), 0);
 
             m_lastMaxTile = maxTile;
             m_lastDiff    = sumTiles / static_cast<float>(kTilesX * kTilesY);
@@ -520,7 +539,9 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
         ctx->CSSetShaderResources(0, 2, nullSRVs);
 
         // Copy result to staging for CPU readback NEXT frame.
-        ctx->CopyResource(m_resultStaging.Get(), m_resultTex.Get());
+        ctx->CopyResource(m_resultStaging[m_stagingWrite].Get(), m_resultTex.Get());
+        m_stagingWrite = (m_stagingWrite + 1) % kStagingRing;
+        m_stagingWritten++;
     }
 
     // ---- Copy current to previous for next frame's diff ----

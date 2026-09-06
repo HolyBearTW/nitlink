@@ -133,6 +133,19 @@ public:
     // replaced by policy.
     bool SetPresentCap(double hz);
 
+    // Average milliseconds per phase since the previous call, then resets.
+    // waitMs and uploadMs are per iteration (WaitForFrameReady counts the
+    // iterations), presentMs is per presented frame.
+    struct PhaseTimes { double waitMs; double uploadMs; double presentMs; uint32_t iterations; uint32_t presents; };
+    PhaseTimes ConsumePhaseTimes();
+
+    // How the swap chain reached the screen on the last frame, as reported by
+    // DXGI (DXGI_FRAME_PRESENTATION_MODE: 0 composed by the desktop
+    // compositor, 1 hardware overlay, 2 none, 3 composition failure), or -1
+    // when the query is unavailable. Composed presentation costs a full
+    // compositor pass per present and adds a frame of latency.
+    int PresentationMode() const;
+
     ID3D11Device*        GetDevice()    const { return m_device.Get(); }
     ID3D11DeviceContext* GetContext()   const { return m_context.Get(); }
     IDXGISwapChain1*     GetSwapChain() const { return m_swapChain.Get(); }
@@ -302,6 +315,17 @@ private:
     bool                           m_presentCapFromMarker = false;
     std::chrono::steady_clock::time_point m_lastPresentTime{};
 
+    // Per-phase wall time accumulated between ConsumePhaseTimes calls, for
+    // the run loop's pacing diagnostic: the frame-ready wait, the capture
+    // upload, and Present. A loop that runs slower than the source shows up
+    // here as one phase growing, which separates a blocking Present (display
+    // or compositor side) from an upload or wait problem.
+    double   m_phaseWaitMs    = 0.0;
+    double   m_phaseUploadMs  = 0.0;
+    double   m_phasePresentMs = 0.0;
+    uint32_t m_phaseWaits     = 0;
+    uint32_t m_phasePresents  = 0;
+
     // Frame-latency telemetry. Averaged window of recent end-to-end render
     // times (BeginFrame to Present), reported into PushSettingsState so the
     // UI can show a live "render ms" number alongside capture latency.
@@ -327,6 +351,15 @@ private:
     double                         m_lastGpuMs = 0.0;
 
     ComPtr<ID3D11RenderTargetView> m_rtv;
+
+    // Blend states are owned per renderer so they are released with its
+    // device. Any device object that outlives a device-loss rebuild keeps the
+    // lost device alive, together with the backbuffer view still bound on its
+    // context and therefore the old swap chain; a window carries only one
+    // swap chain, so the replacement device's CreateSwapChainForHwnd is then
+    // refused on every retry.
+    ComPtr<ID3D11BlendState>       m_uiBlendState;
+    ComPtr<ID3D11BlendState>       m_diagBlendState;
 
     // Post-process input target: when m_postInputEnabled is true,
     // DrawCaptureFrame writes its Catmull-Rom + range-expanded output here

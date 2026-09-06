@@ -97,6 +97,9 @@ public:
 private:
     bool CreateD2DResources();
     void ReleaseD2DResources();
+    // True once the D3D device behind the Direct2D context is gone. Checked
+    // at every draw entry point.
+    bool DeviceIsLost();
     // Create a BGRA8 offscreen render target sized to the swap-chain
     // backbuffer, wrap it with D2D, and stash an SRV for compositing.
     // Used in HDR mode in place of the direct-to-backbuffer path.
@@ -120,6 +123,11 @@ private:
     ComPtr<ID3D11Texture2D>          m_offscreenTex;
     ComPtr<ID3D11ShaderResourceView> m_offscreenSRV;
     bool                             m_offscreenInUse = false;
+    // Set when Direct2D or the D3D device reports a lost device. Drawing
+    // stops until the application rebuilds the overlay on a fresh device.
+    // Direct2D is not robust to a removed device: recreating a target on
+    // one can fault inside d2d1.dll instead of returning an error.
+    bool                             m_deviceLost = false;
     uint32_t                         m_offscreenW = 0;
     uint32_t                         m_offscreenH = 0;
     ComPtr<IDWriteFactory>   m_dwriteFactory;

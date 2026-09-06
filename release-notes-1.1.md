@@ -28,7 +28,9 @@ First feature release after the 1.0.0 release-candidate series. Native Elgato 4K
 
 - Capture, renderer, audio, and Discord paths received lifetime, concurrency, and error-handling work: Direct3D device-loss recovery, checked Direct3D and Media Foundation results, bounded Discord IPC reads, a tightened WebView2 navigation allow-list, and checked WASAPI results throughout the audio router.
 
-- **Device-loss recovery retries.** If the GPU goes away mid-session (driver reset, sleep/resume, a TDR), the renderer and its dependents rebuild when the device comes back, and recovery keeps retrying while the GPU is unavailable instead of freezing the window or exiting. Swap-chain resize failures caused by a lost device route into the same recovery.
+- **Device-loss recovery retries.** If the GPU goes away mid-session (driver reset, sleep/resume, a TDR), the renderer and its dependents rebuild when the device comes back, and recovery keeps retrying while the GPU is unavailable instead of freezing the window or exiting. Swap-chain resize failures caused by a lost device route into the same recovery. Verified against forced GPU resets.
+
+- **The present loop never waits on the GPU.** The frame differ's readback is non-blocking, so when the GPU is busy with other work (another application, or the desktop compositor) NitLink keeps its cadence instead of dropping to two thirds of the source rate.
 
 - **Exit can no longer hang on Discord.** A stalled Discord Rich Presence connection is cancelled on shutdown so NitLink always closes promptly, and partially delivered IPC frames no longer park the worker.
 
