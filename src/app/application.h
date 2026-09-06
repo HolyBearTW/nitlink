@@ -153,6 +153,12 @@ private:
     // window resize, which also covers fullscreen toggles.
     void ApplyPresentCap();
 
+    // Pushes the configured aspect ratio to the renderer and returns the
+    // label shown in the panel. CycleAspectRatio steps through the preset
+    // list, persists the choice, and re-applies it.
+    std::wstring ApplyAspectRatio();
+    void CycleAspectRatio();
+
     // Signal-loss debounce. PS5 boot logos, source switches, and
     // SDR<->HDR handshakes all produce brief windows (typically 0.5 to
     // 2.0 s) where the HDMI link is renegotiating and no fresh frames

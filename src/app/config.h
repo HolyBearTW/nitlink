@@ -132,6 +132,13 @@ struct Config {
     // to the exe overrides all of these.
     int          presentCapHz = 0;
 
+    // Display aspect ratio. "auto" shows the source at the ratio the card
+    // reports. A fixed ratio ("4:3", "16:9", "16:10", "21:9", or any "W:H")
+    // squeezes or letterboxes the picture to that shape, for sources the
+    // card delivers stretched, such as 4:3 consoles inside a 16:9 frame.
+    // "stretch" fills the window and ignores the ratio entirely.
+    std::string  aspectRatio = "auto";
+
     // (hdrMode string field stripped: Reference/Vibrant was an earlier
     //  fake-HDR pipeline. The current path negotiates real HDR10 via
     //  P010 capture, with the Elgato hardware tone-map disabled at

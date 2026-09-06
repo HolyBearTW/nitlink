@@ -13,7 +13,7 @@ REM ============================================================================
 setlocal EnableDelayedExpansion
 
 REM --- Configuration ---------------------------------------------------------
-set VERSION=1.1.0
+set VERSION=1.1.1
 set BUILD_DIR=out\build\x64-Release
 set BUILD_DIR_ALT=build\Release
 set STAGING_DIR=NitLink-%VERSION%-win64
@@ -179,6 +179,7 @@ echo -------
 echo F1  Open / close settings menu
 echo Alt+H  Toggle HDR
 echo Alt+R  Cycle color-range override ^(Auto / Full / Limited^)
+echo Alt+A  Cycle aspect ratio ^(Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch^)
 echo Alt+L  Toggle low-latency mode
 echo Alt+Enter  Toggle fullscreen
 echo Alt+P  Toggle picture-in-picture

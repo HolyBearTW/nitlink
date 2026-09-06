@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <sstream>
 
@@ -22,6 +23,18 @@ static constexpr REFERENCE_TIME REFTIMES_PER_MILLISEC = 10000;
 
 // How long to wait before re-attempting an endpoint that failed to open.
 static constexpr int kRetryIntervalMs = 500;
+
+// Pump geometry. kFifoCapacityMs bounds how far capture may run ahead before
+// the oldest audio is discarded; kFifoTargetMs is the fill the drift control
+// steers toward and kFifoDeadbandMs the band it leaves alone. kRenderQueueMs
+// is how much audio stays queued inside the render endpoint: enough to ride
+// out scheduling jitter, small enough not to add noticeable latency.
+static constexpr int   kFifoCapacityMs  = 400;
+static constexpr int   kFifoTargetMs    = 40;
+static constexpr int   kFifoDeadbandMs  = 10;
+static constexpr int   kRenderQueueMs   = 30;
+static constexpr int   kStatsIntervalMs = 5000;
+static constexpr DWORD kPumpWaitMs      = 200;
 
 // KSDATAFORMAT_SUBTYPE_* live in ksmedia.h, which drags in the whole kernel
 // streaming header chain. These two are the only ones the router needs.
@@ -214,11 +227,19 @@ private:
 // AudioRouter
 // ---------------------------------------------------------------------------
 
-AudioRouter::AudioRouter() = default;
+AudioRouter::AudioRouter()
+{
+    m_captureEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    m_renderEvent  = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    m_stopEvent    = CreateEventW(nullptr, TRUE,  FALSE, nullptr);
+}
 
 AudioRouter::~AudioRouter()
 {
     Shutdown();
+    if (m_captureEvent) CloseHandle(m_captureEvent);
+    if (m_renderEvent)  CloseHandle(m_renderEvent);
+    if (m_stopEvent)    CloseHandle(m_stopEvent);
 }
 
 bool AudioRouter::Initialize(const std::wstring& nameHint)
@@ -237,6 +258,8 @@ bool AudioRouter::Initialize(const std::wstring& nameHint)
         m_startSucceeded = false;
     }
 
+    m_lastCaptureError = S_OK;
+    if (m_stopEvent) ResetEvent(m_stopEvent);
     m_running = true;
     m_thread = std::thread(&AudioRouter::RouteLoop, this);
 
@@ -252,6 +275,7 @@ bool AudioRouter::Initialize(const std::wstring& nameHint)
 void AudioRouter::Shutdown()
 {
     const bool wasRunning = m_running.exchange(false);
+    if (m_stopEvent) SetEvent(m_stopEvent);
     if (m_thread.joinable()) {
         if (wasRunning) AudioLog(L"Shutdown: stopping");
         m_thread.join();
@@ -313,7 +337,7 @@ bool AudioRouter::SetupCapture()
     HRESULT hr = captureDevice->Activate(
         __uuidof(IAudioClient), CLSCTX_ALL, nullptr,
         (void**)m_captureClient.ReleaseAndGetAddressOf());
-    if (FAILED(hr)) { AudioLog(L"capture Activate failed " + HrString(hr)); return false; }
+    if (FAILED(hr)) { AudioLog(L"capture Activate failed " + HrString(hr)); m_lastCaptureError = hr; return false; }
 
     hr = m_captureClient->GetMixFormat(&m_captureFormat);
     if (FAILED(hr)) { AudioLog(L"capture GetMixFormat failed " + HrString(hr)); return false; }
@@ -321,12 +345,15 @@ bool AudioRouter::SetupCapture()
     // Initialize with shared mode, 100ms buffer for safety
     hr = m_captureClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        0, // No event-driven (poll instead -- simpler)
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
         100 * REFTIMES_PER_MILLISEC,
         0,
         m_captureFormat,
         nullptr);
-    if (FAILED(hr)) { AudioLog(L"capture Initialize failed " + HrString(hr)); return false; }
+    if (FAILED(hr)) { AudioLog(L"capture Initialize failed " + HrString(hr)); m_lastCaptureError = hr; return false; }
+    hr = m_captureClient->SetEventHandle(m_captureEvent);
+    if (FAILED(hr)) { AudioLog(L"capture SetEventHandle failed " + HrString(hr)); return false; }
+    FifoReset(m_captureFormat->nBlockAlign, m_captureFormat->nSamplesPerSec);
 
     hr = m_captureClient->GetBufferSize(&m_captureBufferFrames);
     if (FAILED(hr)) return false;
@@ -337,6 +364,7 @@ bool AudioRouter::SetupCapture()
     hr = m_captureClient->Start();
     if (FAILED(hr)) { AudioLog(L"captureClient->Start failed " + HrString(hr)); return false; }
 
+    m_lastCaptureError = S_OK;
     AudioLog(L"Capture format: " + DescribeFormat(m_captureFormat));
     return true;
 }
@@ -374,7 +402,7 @@ bool AudioRouter::SetupRender()
 
     hr = m_renderClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        kConvertFlags,
+        kConvertFlags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
         100 * REFTIMES_PER_MILLISEC,
         0,
         m_captureFormat,
@@ -408,10 +436,13 @@ bool AudioRouter::SetupRender()
         }
 
         hr = m_renderClient->Initialize(
-            AUDCLNT_SHAREMODE_SHARED, 0, 100 * REFTIMES_PER_MILLISEC, 0, m_renderFormat, nullptr);
+            AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            100 * REFTIMES_PER_MILLISEC, 0, m_renderFormat, nullptr);
         if (FAILED(hr)) { AudioLog(L"render Initialize failed " + HrString(hr)); return false; }
     }
 
+    hr = m_renderClient->SetEventHandle(m_renderEvent);
+    if (FAILED(hr)) { AudioLog(L"render SetEventHandle failed " + HrString(hr)); return false; }
     hr = m_renderClient->GetBufferSize(&m_renderBufferFrames);
     if (FAILED(hr)) return false;
 
@@ -579,74 +610,21 @@ void AudioRouter::RouteLoop()
         }
         m_streaming = true;
 
-        // Recomputed per pass: a rebuilt endpoint can come back at a different
-        // rate or buffer size than the one it replaced.
-        const UINT32 bytesPerFrame = m_renderFormat->nBlockAlign;
-        const DWORD pollIntervalMs = std::max<DWORD>(1,
-            (DWORD)((m_captureBufferFrames * 1000.0 / m_captureFormat->nSamplesPerSec) / 4));
-
-        UINT32 packetLength = 0;
-        HRESULT hr = m_captureService->GetNextPacketSize(&packetLength);
-        if (FAILED(hr)) {
-            HandleStreamError(hr, L"GetNextPacketSize", true);
-            std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
+        // Sleep until either endpoint has something to do, or the stop event
+        // fires. Both sides are serviced on every wake, whichever event set
+        // it: capture may have queued more than one packet, and the render
+        // side is topped up from the FIFO regardless of which clock ticked.
+        HANDLE waits[3] = { m_stopEvent, m_captureEvent, m_renderEvent };
+        const DWORD wake = WaitForMultipleObjects(3, waits, FALSE, kPumpWaitMs);
+        if (wake == WAIT_OBJECT_0) break;
+        if (wake == WAIT_FAILED) {
+            AudioLog(L"WaitForMultipleObjects failed; retrying");
+            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
             continue;
         }
-
-        while (packetLength != 0 && m_running) {
-            BYTE* captureData = nullptr;
-            UINT32 framesAvailable = 0;
-            DWORD flags = 0;
-
-            hr = m_captureService->GetBuffer(&captureData, &framesAvailable, &flags, nullptr, nullptr);
-            if (FAILED(hr)) { HandleStreamError(hr, L"capture GetBuffer", true); break; }
-
-            // How many frames can be written to the render side right now?
-            UINT32 padding = 0;
-            hr = m_renderClient->GetCurrentPadding(&padding);
-            if (FAILED(hr)) {
-                m_captureService->ReleaseBuffer(framesAvailable);
-                HandleStreamError(hr, L"GetCurrentPadding", false);
-                break;
-            }
-
-            const UINT32 framesFree = (m_renderBufferFrames > padding)
-                                    ? (m_renderBufferFrames - padding) : 0;
-            const UINT32 framesToWrite = (std::min)(framesAvailable, framesFree);
-
-            if (framesToWrite > 0) {
-                BYTE* renderData = nullptr;
-                hr = m_renderService->GetBuffer(framesToWrite, &renderData);
-                if (FAILED(hr)) {
-                    m_captureService->ReleaseBuffer(framesAvailable);
-                    HandleStreamError(hr, L"render GetBuffer", false);
-                    break;
-                }
-
-                // Capture and render now share one format -- either because the
-                // engine is converting for us, or because the fallback verified
-                // they already agree -- so this is a straight frame-for-frame
-                // copy sized by the shared block alignment.
-                const size_t bytes = (size_t)framesToWrite * bytesPerFrame;
-                if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || m_muted.load()) {
-                    memset(renderData, 0, bytes);
-                } else {
-                    memcpy(renderData, captureData, bytes);
-                    const float vol = m_volume.load();
-                    if (vol < 0.999f) {
-                        ScaleInPlace(renderData, framesToWrite, m_renderFormat, vol);
-                    }
-                }
-                m_renderService->ReleaseBuffer(framesToWrite, 0);
-            }
-
-            m_captureService->ReleaseBuffer(framesAvailable);
-
-            hr = m_captureService->GetNextPacketSize(&packetLength);
-            if (FAILED(hr)) { HandleStreamError(hr, L"GetNextPacketSize", true); break; }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
+        if (!DrainCapture()) continue;
+        if (!FillRender())   continue;
+        LogStatsIfDue();
     }
 
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
@@ -666,6 +644,203 @@ void AudioRouter::RouteLoop()
     m_enumerator.Reset();
 
     CoUninitialize();
+}
+
+void AudioRouter::FifoReset(UINT32 bytesPerFrame, UINT32 samplesPerSec)
+{
+    m_bytesPerFrame = bytesPerFrame;
+    m_samplesPerSec = samplesPerSec;
+    const size_t frames = (size_t)samplesPerSec * kFifoCapacityMs / 1000;
+    m_fifo.assign(frames * bytesPerFrame, 0);
+    m_fifoHead   = 0;
+    m_fifoBytes  = 0;
+    m_fifoPrimed = false;
+    m_winStart   = std::chrono::steady_clock::now();
+    m_winIn = m_winOut = m_winUnderrun = m_winOverrun = m_winSlipDrop = m_winSlipDup = 0;
+    m_winFillMin = 0xFFFFFFFFu;
+    m_winFillMax = 0;
+}
+
+void AudioRouter::FifoPush(const BYTE* data, UINT32 frames, bool silent)
+{
+    if (m_fifo.empty() || m_bytesPerFrame == 0) return;
+    size_t bytes = (size_t)frames * m_bytesPerFrame;
+    const size_t cap = m_fifo.size();
+    if (bytes > cap) {
+        data  += (bytes - cap);
+        bytes  = cap;
+    }
+    const size_t free = cap - m_fifoBytes;
+    if (bytes > free) {
+        // Capture is ahead of playback and the FIFO is full: discard the
+        // oldest audio so latency stays bounded. Counted as overrun.
+        const size_t drop = bytes - free;
+        m_fifoHead   = (m_fifoHead + drop) % cap;
+        m_fifoBytes -= drop;
+        m_winOverrun    += drop / m_bytesPerFrame;
+        m_overrunFrames += drop / m_bytesPerFrame;
+    }
+    const size_t tail  = (m_fifoHead + m_fifoBytes) % cap;
+    const size_t first = (std::min)(bytes, cap - tail);
+    if (silent) {
+        memset(m_fifo.data() + tail, 0, first);
+        if (bytes > first) memset(m_fifo.data(), 0, bytes - first);
+    } else {
+        memcpy(m_fifo.data() + tail, data, first);
+        if (bytes > first) memcpy(m_fifo.data(), data + first, bytes - first);
+    }
+    m_fifoBytes += bytes;
+}
+
+UINT32 AudioRouter::FifoPop(BYTE* out, UINT32 frames)
+{
+    if (m_fifo.empty() || m_bytesPerFrame == 0) return 0;
+    size_t bytes = (std::min)((size_t)frames * m_bytesPerFrame, m_fifoBytes);
+    bytes -= bytes % m_bytesPerFrame;
+    const size_t cap   = m_fifo.size();
+    const size_t first = (std::min)(bytes, cap - m_fifoHead);
+    memcpy(out, m_fifo.data() + m_fifoHead, first);
+    if (bytes > first) memcpy(out + first, m_fifo.data(), bytes - first);
+    m_fifoHead   = (m_fifoHead + bytes) % cap;
+    m_fifoBytes -= bytes;
+    return (UINT32)(bytes / m_bytesPerFrame);
+}
+
+void AudioRouter::FifoSkip(UINT32 frames)
+{
+    if (m_fifo.empty() || m_bytesPerFrame == 0) return;
+    const size_t bytes = (std::min)((size_t)frames * m_bytesPerFrame, m_fifoBytes);
+    m_fifoHead   = (m_fifoHead + bytes) % m_fifo.size();
+    m_fifoBytes -= bytes;
+}
+
+bool AudioRouter::DrainCapture()
+{
+    UINT32 packetLength = 0;
+    HRESULT hr = m_captureService->GetNextPacketSize(&packetLength);
+    if (FAILED(hr)) { HandleStreamError(hr, L"GetNextPacketSize", true); return false; }
+    while (packetLength != 0 && m_running) {
+        BYTE*  data   = nullptr;
+        UINT32 frames = 0;
+        DWORD  flags  = 0;
+        hr = m_captureService->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+        if (FAILED(hr)) { HandleStreamError(hr, L"capture GetBuffer", true); return false; }
+        FifoPush(data, frames, (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
+        m_winIn += frames;
+        hr = m_captureService->ReleaseBuffer(frames);
+        if (FAILED(hr)) { HandleStreamError(hr, L"capture ReleaseBuffer", true); return false; }
+        hr = m_captureService->GetNextPacketSize(&packetLength);
+        if (FAILED(hr)) { HandleStreamError(hr, L"GetNextPacketSize", true); return false; }
+    }
+    return true;
+}
+
+bool AudioRouter::FillRender()
+{
+    if (m_bytesPerFrame == 0 || m_samplesPerSec == 0) return true;
+    UINT32 padding = 0;
+    HRESULT hr = m_renderClient->GetCurrentPadding(&padding);
+    if (FAILED(hr)) { HandleStreamError(hr, L"GetCurrentPadding", false); return false; }
+
+    const auto msToFrames = [this](int ms) {
+        return (UINT32)((uint64_t)m_samplesPerSec * (uint64_t)ms / 1000ull);
+    };
+    const UINT32 queueTarget = (std::min)(m_renderBufferFrames, msToFrames(kRenderQueueMs));
+    if (padding >= queueTarget) return true;
+    const UINT32 want = queueTarget - padding;
+
+    UINT32 fill = (UINT32)(m_fifoBytes / m_bytesPerFrame);
+    const uint32_t fillMs = (uint32_t)((uint64_t)fill * 1000ull / m_samplesPerSec);
+    m_fillMs = fillMs;
+    const UINT32 target = msToFrames(kFifoTargetMs);
+    const UINT32 band   = msToFrames(kFifoDeadbandMs);
+
+    // Priming: play silence until the FIFO holds the target once, so steady
+    // state starts with headroom instead of climbing to it one slip at a time.
+    if (!m_fifoPrimed) {
+        if (fill < target) {
+            BYTE* out = nullptr;
+            hr = m_renderService->GetBuffer(want, &out);
+            if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
+            m_renderService->ReleaseBuffer(want, AUDCLNT_BUFFERFLAGS_SILENT);
+            return true;
+        }
+        m_fifoPrimed = true;
+    }
+    m_winFillMin = (std::min)(m_winFillMin, fillMs);
+    m_winFillMax = (std::max)(m_winFillMax, fillMs);
+
+    // Drift control, decided on the fill before this wake consumes anything.
+    // Above the band: drop one frame this wake. Below it: repeat one frame.
+    // One frame per wake is far more correction than any real clock offset
+    // needs, so the fill settles inside the band and the slips stop.
+    bool dup = false;
+    if (fill > target + band && fill > 1) {
+        FifoSkip(1);
+        fill--;
+        m_winSlipDrop++;
+        m_slipCount++;
+    } else if (fill > 0 && fill + band < target) {
+        dup = true;
+    }
+
+    const UINT32 toWrite = (std::min)(want, fill + (dup ? 1u : 0u));
+    if (toWrite == 0) {
+        // Nothing buffered: keep the engine fed with silence so the stream
+        // never stops, and count the gap.
+        BYTE* out = nullptr;
+        hr = m_renderService->GetBuffer(want, &out);
+        if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
+        m_renderService->ReleaseBuffer(want, AUDCLNT_BUFFERFLAGS_SILENT);
+        m_winUnderrun   += want;
+        m_underrunFrames += want;
+        return true;
+    }
+    BYTE* out = nullptr;
+    hr = m_renderService->GetBuffer(toWrite, &out);
+    if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
+    UINT32 written = FifoPop(out, (std::min)(toWrite, fill));
+    if (dup && written > 0 && written < toWrite) {
+        memcpy(out + (size_t)written * m_bytesPerFrame,
+               out + (size_t)(written - 1) * m_bytesPerFrame, m_bytesPerFrame);
+        written++;
+        m_winSlipDup++;
+        m_slipCount++;
+    }
+    if (written < toWrite) {
+        memset(out + (size_t)written * m_bytesPerFrame, 0,
+               (size_t)(toWrite - written) * m_bytesPerFrame);
+        m_winUnderrun    += toWrite - written;
+        m_underrunFrames += toWrite - written;
+    }
+    DWORD releaseFlags = 0;
+    if (m_muted.load()) {
+        releaseFlags = AUDCLNT_BUFFERFLAGS_SILENT;
+    } else {
+        const float vol = m_volume.load();
+        if (vol < 0.999f) ScaleInPlace(out, toWrite, m_renderFormat, vol);
+    }
+    hr = m_renderService->ReleaseBuffer(toWrite, releaseFlags);
+    if (FAILED(hr)) { HandleStreamError(hr, L"render ReleaseBuffer", false); return false; }
+    m_winOut += toWrite;
+    return true;
+}
+
+void AudioRouter::LogStatsIfDue()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_winStart < std::chrono::milliseconds(kStatsIntervalMs)) return;
+    std::wstringstream ss;
+    ss << L"stats: fill " << m_fillMs.load() << L" ms (min "
+       << (m_winFillMin == 0xFFFFFFFFu ? 0u : m_winFillMin) << L", max " << m_winFillMax
+       << L"), in " << m_winIn << L", out " << m_winOut
+       << L", underrun " << m_winUnderrun << L", overrun " << m_winOverrun
+       << L", slip +" << m_winSlipDrop << L"/-" << m_winSlipDup;
+    AudioLog(ss.str());
+    m_winStart = now;
+    m_winIn = m_winOut = m_winUnderrun = m_winOverrun = m_winSlipDrop = m_winSlipDup = 0;
+    m_winFillMin = 0xFFFFFFFFu;
+    m_winFillMax = 0;
 }
 
 void AudioRouter::SetVolume(float volume)

@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -53,6 +54,21 @@ public:
     // device.
     bool  IsStreaming() const { return m_streaming; }
 
+    // HRESULT of the most recent failed capture endpoint setup, S_OK once an
+    // attempt succeeds. E_ACCESSDENIED (0x80070005) means the Windows
+    // Microphone privacy switch is blocking desktop apps, capture cards
+    // included.
+    HRESULT LastCaptureError() const { return m_lastCaptureError.load(); }
+
+    // Routing health, refreshed by the worker: FIFO fill in milliseconds and
+    // cumulative frames of silence written on an empty FIFO (underruns),
+    // frames discarded on a full FIFO (overruns), and single-frame drift
+    // corrections (slips).
+    uint32_t FifoFillMs() const { return m_fillMs.load(); }
+    uint64_t Underruns()  const { return m_underrunFrames.load(); }
+    uint64_t Overruns()   const { return m_overrunFrames.load(); }
+    uint64_t Slips()      const { return m_slipCount.load(); }
+
 private:
     class EndpointNotifier;
 
@@ -71,6 +87,17 @@ private:
 
     void RouteLoop();
 
+    // One wake of the pump: move every ready capture packet into the FIFO,
+    // then top the render endpoint up from it. Each returns false after a
+    // stream error was handed to HandleStreamError.
+    bool DrainCapture();
+    bool FillRender();
+    void FifoReset(UINT32 bytesPerFrame, UINT32 samplesPerSec);
+    void FifoPush(const BYTE* data, UINT32 frames, bool silent);
+    UINT32 FifoPop(BYTE* out, UINT32 frames);
+    void FifoSkip(UINT32 frames);
+    void LogStatsIfDue();
+
     std::wstring m_nameHint = L"Elgato";
 
     ComPtr<IMMDeviceEnumerator> m_enumerator;
@@ -87,6 +114,38 @@ private:
     WAVEFORMATEX*               m_renderFormat = nullptr;
     UINT32                      m_renderBufferFrames = 0;
     std::wstring                m_renderDeviceId;
+
+    // Endpoint events. The engine signals m_captureEvent when a packet is
+    // ready and m_renderEvent when the render buffer wants data; the worker
+    // waits on both together with m_stopEvent instead of polling on a timer.
+    HANDLE m_captureEvent = nullptr;
+    HANDLE m_renderEvent  = nullptr;
+    HANDLE m_stopEvent    = nullptr;
+
+    // FIFO between the two endpoint clocks, in capture-format frames. The
+    // capture card and the playback device each run on their own clock, so
+    // over minutes one side outruns the other. The worker holds the fill
+    // near a target by slipping single frames, which is inaudible, instead
+    // of letting the render buffer drain (gaps) or overflow (dropped packet
+    // tails); both showed up as periodic stutter on USB cards.
+    std::vector<BYTE> m_fifo;
+    size_t   m_fifoHead      = 0;      // read offset, bytes
+    size_t   m_fifoBytes     = 0;      // bytes held
+    bool     m_fifoPrimed    = false;  // fill reached the target once
+    UINT32   m_bytesPerFrame = 0;
+    UINT32   m_samplesPerSec = 0;
+
+    std::atomic<HRESULT>  m_lastCaptureError{S_OK};
+    std::atomic<uint32_t> m_fillMs{0};
+    std::atomic<uint64_t> m_underrunFrames{0};
+    std::atomic<uint64_t> m_overrunFrames{0};
+    std::atomic<uint64_t> m_slipCount{0};
+
+    // Per-window counters for the periodic stats line.
+    uint64_t m_winIn = 0, m_winOut = 0, m_winUnderrun = 0, m_winOverrun = 0;
+    uint64_t m_winSlipDrop = 0, m_winSlipDup = 0;
+    uint32_t m_winFillMin = 0xFFFFFFFFu, m_winFillMax = 0;
+    std::chrono::steady_clock::time_point m_winStart{};
 
     std::thread        m_thread;
     std::atomic<bool>  m_running{false};

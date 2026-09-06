@@ -146,6 +146,13 @@ public:
     // compositor pass per present and adds a frame of latency.
     int PresentationMode() const;
 
+    // Display aspect override. 0 shows the source at its own ratio, a
+    // positive value forces that width-to-height ratio (4:3 squeezes a
+    // stretched retro source back into shape), and a negative value fills
+    // the window with no letterboxing at all.
+    void  SetAspectOverride(float ratio) { m_aspectOverride = ratio; }
+    float GetAspectOverride() const { return m_aspectOverride; }
+
     ID3D11Device*        GetDevice()    const { return m_device.Get(); }
     ID3D11DeviceContext* GetContext()   const { return m_context.Get(); }
     IDXGISwapChain1*     GetSwapChain() const { return m_swapChain.Get(); }
@@ -313,6 +320,7 @@ private:
     // ALLOW_TEARING present just under the display's VRR max so VRR engages.
     double                         m_vrrCapHz = 0.0;
     bool                           m_presentCapFromMarker = false;
+    float                          m_aspectOverride = 0.0f;
     std::chrono::steady_clock::time_point m_lastPresentTime{};
 
     // Per-phase wall time accumulated between ConsumePhaseTimes calls, for

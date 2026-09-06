@@ -332,6 +332,15 @@
             <span class="band-hint">Non-native window sizes</span>
           </div>
 
+          <div class="row" data-action="cycleAspect"
+            title="Shape of the picture. Auto shows the source at the ratio the card reports. A fixed ratio squeezes or letterboxes it, for sources the card delivers stretched such as 4:3 consoles inside a 16:9 frame. Stretch fills the window. Alt+A cycles the same list.">
+            <span class="row-name">Aspect Ratio</span>
+            <div class="row-right">
+              <span class="row-value" id="aspect-val">Auto</span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </div>
+
           <div class="row" data-action="cycleScaler"
             title="Resampling method for non-native window sizes. Catmull-Rom is sharp bicubic without ringing, the same algorithm used by mpv and madVR.">
             <span class="row-name">Hardware Scaler</span>
@@ -387,6 +396,7 @@
           <div class="row kv"><span class="row-name">Low-Latency Mode</span><span class="row-value">Alt+L</span></div>
           <div class="row kv"><span class="row-name">HDR</span><span class="row-value">Alt+H</span></div>
           <div class="row kv"><span class="row-name">Color range: Auto / Full / Limited</span><span class="row-value">Alt+R</span></div>
+          <div class="row kv"><span class="row-name">Aspect ratio: Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch</span><span class="row-value">Alt+A</span></div>
           <div class="row kv"><span class="row-name">Fullscreen</span><span class="row-value">Alt+Enter</span></div>
           <div class="row kv"><span class="row-name">Picture-in-picture</span><span class="row-value">Alt+P</span></div>
           <div class="row kv"><span class="row-name">Nudge picture-in-picture (Shift for larger steps)</span><span class="row-value">Ctrl+Arrows</span></div>
@@ -403,7 +413,7 @@
         <section class="pane" id="pane-about">
           <div class="band">
             <span class="band-title">About</span>
-            <span class="band-hint">v1.1.0</span>
+            <span class="band-hint">v1.1.1</span>
           </div>
           <div class="row kv"><span class="row-name">Build</span><span class="row-value">1.1.0</span></div>
           <div class="row kv"><span class="row-name">Renderer</span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
@@ -888,6 +898,7 @@
         if (slider && slider._setFromCpp) slider._setFromCpp(s.volume * 100);
       }
       setText('scaler-val', s.scalerName);
+      if (s.aspectRatio) setText('aspect-val', s.aspectRatio);
       setText('meta-resolution', `${s.negotiatedWidth}x${s.negotiatedHeight} / ${s.negotiatedFps} FPS`);
       setText('meta-format', s.negotiatedFormat);
       setText('meta-link', s.linkText);

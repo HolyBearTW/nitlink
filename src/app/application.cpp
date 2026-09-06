@@ -648,6 +648,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
     AppLog(L"Initialize: capture device opened");
     ApplyPresentCap();
+    ApplyAspectRatio();
 
     // 4K Pro source-mode readout. Reads the connected HDMI source's
     // resolution + fps from the Elgato custom property set (props 210
@@ -790,6 +791,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     const std::wstring audioHint = DeriveAudioHint(m_currentDeviceInfo.name);
     if (!m_audioRouter->Initialize(audioHint)) {
         AppLog(L"Initialize: AudioRouter has no endpoints yet (worker keeps retrying)");
+        if (m_audioRouter->LastCaptureError() == E_ACCESSDENIED) {
+            // The Windows Microphone privacy switch blocks every capture
+            // endpoint, the card's audio included, and reports it as a plain
+            // access denial. Name the actual switch so the fix is one toggle.
+            ShowToast(L"No audio: Windows Microphone access is off. Settings > Privacy & security > Microphone.",
+                      std::chrono::milliseconds(8000));
+        }
     }
 
     m_overlay = std::make_unique<Overlay>();
@@ -964,6 +972,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 // disk during a drag. Save happens on exit and on
                 // discrete toggles instead.
             }
+            return;
+        }
+        if (action == L"cycleAspect") {
+            CycleAspectRatio();
             return;
         }
         if (action == L"cycleScaler") {
@@ -1309,6 +1321,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // "assume limited", which over-expands a full-range source and pushes skin
     // tones orange. Cycles Auto (MF) -> force Full -> force Limited so the
     // correct range can be found by eye, then locked in.
+    m_hotkeyManager->Register("cycle_aspect", {VK_MENU, 'A'},
+        [this]() { CycleAspectRatio(); });
+
     m_hotkeyManager->Register("cycle_color_range", {VK_MENU, 'R'},
         [this]() {
             m_sourceRangeOverride = (m_sourceRangeOverride + 1) % 3;
@@ -3161,6 +3176,54 @@ void Application::ApplyPresentCap()
     }
 }
 
+// Preset ratios offered by Alt+A and the panel, in cycle order. Any other
+// "W:H" string in nitlink.json is honored as a custom ratio but is not part
+// of the cycle.
+static const char* const kAspectPresets[] = { "auto", "4:3", "16:9", "16:10", "21:9", "stretch" };
+
+// Parses the config string into the renderer's override value: 0 for
+// auto, a negative value for stretch, otherwise width divided by height.
+// Anything unparseable falls back to auto so a typo cannot blank the picture.
+static float AspectOverrideFromString(const std::string& text)
+{
+    if (text == "auto")    return 0.0f;
+    if (text == "stretch") return -1.0f;
+    const size_t colon = text.find(':');
+    if (colon == std::string::npos) return 0.0f;
+    const float w = static_cast<float>(std::atof(text.substr(0, colon).c_str()));
+    const float h = static_cast<float>(std::atof(text.substr(colon + 1).c_str()));
+    if (w < 0.5f || h < 0.5f || w > 100.0f || h > 100.0f) return 0.0f;
+    return w / h;
+}
+
+std::wstring Application::ApplyAspectRatio()
+{
+    std::string text = m_config ? m_config->aspectRatio : std::string("auto");
+    const float ratio = AspectOverrideFromString(text);
+    if (ratio == 0.0f && text != "auto") text = "auto";
+    if (m_renderer) m_renderer->SetAspectOverride(ratio);
+    std::wstring label(text.begin(), text.end());
+    if (label == L"auto")    label = L"Auto";
+    if (label == L"stretch") label = L"Stretch";
+    return label;
+}
+
+void Application::CycleAspectRatio()
+{
+    if (!m_config) return;
+    const int count = static_cast<int>(sizeof(kAspectPresets) / sizeof(kAspectPresets[0]));
+    int next = 0;
+    for (int i = 0; i < count; ++i) {
+        if (m_config->aspectRatio == kAspectPresets[i]) { next = (i + 1) % count; break; }
+    }
+    m_config->aspectRatio = kAspectPresets[next];
+    m_config->Save("nitlink.json");
+    const std::wstring label = ApplyAspectRatio();
+    AppLog(L"Aspect ratio: " + label);
+    ShowToast(L"Aspect ratio: " + label);
+    if (m_settingsVisible) PushSettingsState();
+}
+
 bool Application::RecoverFromDeviceLost()
 {
     AppLog(L"Device lost: rebuilding renderer and device-dependent objects");
@@ -3235,6 +3298,7 @@ bool Application::RecoverFromDeviceLost()
     ApplyPresentCap();
     m_renderer->SetPostInputEnabled(wasPostInput);
     if (m_config) m_renderer->SetColorExpansion(m_config->colorExpansion);
+    ApplyAspectRatio();
 
     // Re-teach the new renderer how to interpret the capture stream, reading
     // the format the capture device is currently running. Mirrors the renderer
@@ -3430,6 +3494,7 @@ void Application::PushSettingsState()
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";
+    js << L"\"aspectRatio\":\"" << JsonEscapeWide(ApplyAspectRatio()) << L"\",";
 
     if (m_captureDevice) {
         auto fmt = m_captureDevice->GetOutputFormat();

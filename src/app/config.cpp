@@ -135,6 +135,7 @@ bool Config::Load(const std::string& path)
         if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
         if (key == "low_latency")     lowLatency = ParseBool(val);
         if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
+        if (key == "aspect_ratio")   aspectRatio  = val.substr(0, 16);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
         if (key == "show_overlay")    showOverlay   = ParseBool(val);
         if (key == "current_game")    currentGameId = val;
@@ -330,6 +331,11 @@ bool Config::Save(const std::string& path)
     file << "# 0 = automatic: monitor refresh minus 3, when that is at least the\n";
     file << "# source frame rate. 30-1000 = fixed cap. -1 = no cap.\n";
     file << "present_cap_hz = " << presentCapHz << "\n\n";
+
+    file << "# Display aspect ratio: auto (source ratio), stretch (fill the\n";
+    file << "# window), or a fixed ratio such as 4:3, 16:9, 16:10, 21:9.\n";
+    file << "# Cycle with Alt+A or from the F1 panel.\n";
+    file << "aspect_ratio = " << aspectRatio << "\n\n";
 
     file << "# Shaders\n";
     file << "enable_shaders = " << (enableShaders ? "true" : "false") << "\n\n";

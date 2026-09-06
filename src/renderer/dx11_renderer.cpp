@@ -1665,6 +1665,8 @@ void DX11Renderer::UpdateAspectTransform()
 
     float captureAspect = (float)m_captureWidth  / (float)m_captureHeight;
     float windowAspect  = (float)m_windowWidth   / (float)m_windowHeight;
+    if (m_aspectOverride > 0.0f) captureAspect = m_aspectOverride;
+    if (m_aspectOverride < 0.0f) captureAspect = windowAspect;
 
     TransformCB cb{};
     if (windowAspect > captureAspect) {
@@ -1975,6 +1977,8 @@ void DX11Renderer::CompositeUpscaledTexture(ID3D11ShaderResourceView* upscaledSR
     if (srcW && srcH && m_windowWidth && m_windowHeight) {
         float srcAspect = (float)srcW / (float)srcH;
         float winAspect = (float)m_windowWidth / (float)m_windowHeight;
+        if (m_aspectOverride > 0.0f) srcAspect = m_aspectOverride;
+        if (m_aspectOverride < 0.0f) srcAspect = winAspect;
         TransformCB cb{};
         if (winAspect > srcAspect) {
             cb.scaleX = srcAspect / winAspect;

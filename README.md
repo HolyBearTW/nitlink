@@ -151,6 +151,15 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 
 ---
 
+## Troubleshooting
+
+- **No audio at all.** Windows has a device-wide Microphone access switch (Settings, Privacy & security, Microphone) that also blocks capture-card audio for desktop apps. NitLink shows a notice when it hits that denial; turn the switch on and restart NitLink.
+- **A 120 Hz source captures at 1080p on the 4K Pro.** The card passes 4K120 through to the display but captures 4K only at 60 Hz, so with a 120 Hz source it offers 1080p120. A softer picture at 120 Hz is the card's ceiling, not a NitLink setting. Set the console to 60 Hz for 4K capture, or use a 4K X, which captures 4K120.
+- **HDR looks flat or washed out.** NitLink renders real HDR10 only while Windows HDR is on for the display. Turn it on in Windows display settings before pressing Alt+H.
+- **The picture is squeezed or stretched.** Some cards deliver 4:3 sources inside a 16:9 frame. Press Alt+A to cycle the aspect ratio, or set `aspect_ratio` in nitlink.json.
+
+---
+
 ## Download
 
 Get `NitLink-<version>-win64.zip` from the [Releases page](https://github.com/nitlink-dev/nitlink/releases/latest), extract it anywhere, and run `NitLink.exe`. Settings are saved next to the executable.
@@ -221,6 +230,7 @@ Output at `out/build/x64-Release/NitLink.exe` (VS) or `build/Release/NitLink.exe
 | `Alt + L` | **Low-Latency** present on/off (default: on; off adds up to one refresh of lag) |
 | `Alt + H` | Toggle HDR manually (override auto-detect) |
 | `Alt + R` | Cycle source color range: Auto → Full → Limited |
+| `Alt + A` | Cycle aspect ratio: Auto → 4:3 → 16:9 → 16:10 → 21:9 → Stretch |
 | `Alt + Enter` | Toggle fullscreen |
 | `Alt + P` | Toggle picture-in-picture |
 | `Ctrl + S` | Save screenshot (SDR `.png` + true-HDR `.jxr`) to `Pictures/NitLink/` |
@@ -248,6 +258,8 @@ Settings live in `nitlink.json` next to the executable. Plain text; auto-saves o
 - `vrr_present_pacing`: VRR pacing (default `false`). Set `true` on G-Sync / FreeSync displays.
 
 - `present_cap_hz`: present-rate cap in Hz for the low-latency present (default `0` = automatic: monitor refresh minus 3, applied when that is at least the source frame rate). `30` to `1000` = fixed cap, `-1` = off.
+
+- `aspect_ratio`: `auto` (default, the ratio the card reports), `stretch` (fill the window), or a fixed ratio such as `4:3`, `16:9`, `16:10`, `21:9`. Restores 4:3 sources that a card delivers stretched inside a 16:9 frame. Cycle with `Alt+A` or from the F1 panel.
 - `nis_enabled` / `nis_sharpness` / `nis_scale_mode`: NIS upscaler config.
 - `color_expansion`: limited→full range expansion (default off; NitLink auto-skips when the source is already full-range).
 - `audio_volume` / `audio_muted`: playback level.
