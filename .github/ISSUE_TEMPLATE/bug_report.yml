@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in NitLink misbehaves
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: NitLink version
+      description: Shown in the F1 panel's About pane, or the release you downloaded.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: card
+    attributes:
+      label: Capture card
+      options:
+        - Elgato 4K Pro
+        - Elgato 4K S
+        - Elgato 4K X
+        - Elgato Cam Link 4K
+        - Other (name it below)
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source and signal
+      placeholder: "PS5, 3840x2160 @ 60, HDR"
+  - type: input
+    id: system
+    attributes:
+      label: Windows build, GPU and driver version
+      placeholder: "Windows 11 24H2, RTX 4070, 560.94"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug output
+      description: NitLink logs through OutputDebugString. Run DebugView from Sysinternals, reproduce the problem, and paste the lines that start with [NitLink/ here.
+      render: text

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Latency methodology and raw data
+    url: https://github.com/nitlink-dev/nitlink/blob/main/docs/LATENCY.md
+    about: How the latency numbers were measured, every caveat, and the CSV.

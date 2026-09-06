@@ -1,0 +1,22 @@
+name: Feature request
+description: Something NitLink should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem this solves
+      description: What you are trying to do with your capture card and PC today, and where NitLink gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like NitLink to do
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Card and display
+      placeholder: "4K S, 120 Hz VRR monitor"

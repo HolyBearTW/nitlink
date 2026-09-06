@@ -1,8 +1,19 @@
+<p align="center">
+  <img src="docs/images/readme-hero.png" alt="NitLink" width="900">
+</p>
+
 # NitLink
 
 A capture card viewer for Windows. It makes your console feel like part of your PC: same screen, same workflow, real HDR10, VRR, lowest-latency preview, no extra monitor required.
 
 Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Link 4K (USB).
+
+<p align="center">
+  <a href="https://github.com/nitlink-dev/nitlink/releases/latest"><img src="https://img.shields.io/github/v/release/nitlink-dev/nitlink?label=release&color=E39A3B" alt="Latest release"></a>
+  <a href="https://github.com/nitlink-dev/nitlink/releases"><img src="https://img.shields.io/github/downloads/nitlink-dev/nitlink/total?label=downloads&color=E39A3B" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/nitlink-dev/nitlink?color=E39A3B" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6" alt="Windows 10 / 11">
+</p>
 
 <p align="center">
   <img src="docs/images/COMPARSIONS.webp" alt="NitLink HDR comparison" width="900">
@@ -13,13 +24,13 @@ Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Li
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/btLGDReiK-U">
-    <img src="https://img.youtube.com/vi/btLGDReiK-U/maxresdefault.jpg" alt="NitLink demo video" width="900">
+  <a href="https://youtu.be/w8Rq5Bonbgg">
+    <img src="docs/images/nitlink-thumbnail-1280x720.png" alt="NitLink 1.1.0 showcase video" width="900">
   </a>
 </p>
 
 <p align="center">
-  <em>Watch the NitLink demo video.</em>
+  <em>Watch the NitLink 1.1.0 showcase.</em>
 </p>
 
 ---
@@ -137,6 +148,16 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 <p align="center">
   <em>Branded no-signal screen, shown after the grace window expires.</em>
 </p>
+
+---
+
+## Download
+
+Get `NitLink-<version>-win64.zip` from the [Releases page](https://github.com/nitlink-dev/nitlink/releases/latest), extract it anywhere, and run `NitLink.exe`. Settings are saved next to the executable.
+
+Official builds are published only on that page. Anything else carrying the NitLink name is a third-party build.
+
+The executable is not code-signed yet, so Windows SmartScreen warns on the first launch. Click **More info**, then **Run anyway**.
 
 ---
 
