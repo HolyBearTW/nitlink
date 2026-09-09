@@ -75,7 +75,9 @@ public:
     // ReadElgatoHDRSource returned propertyAccessible=false. The 4K S
     // never recovers that capability, so the poller would just burn
     // CPU on a DirectShow round-trip that always fails.
-    void Start(const std::wstring& deviceName, bool initialIsHDR10);
+    // A successful init-time SDR probe also establishes query support.
+    void Start(const std::wstring& deviceName, bool initialIsHDR10,
+               bool initialPropertyAccessible = false);
 
     // Signal the worker to exit and join. Idempotent; safe to call
     // multiple times. Called automatically by the destructor.
@@ -101,7 +103,7 @@ private:
     // between probes. The sleep is broken into 100ms chunks so Stop()
     // doesn't have to wait up to a full second for the worker to
     // notice the stop flag.
-    void PollerThreadMain(std::wstring deviceName);
+    void PollerThreadMain(std::wstring deviceName, bool hadAccessibleProbe);
 
     std::thread       m_thread;
     std::atomic<bool> m_stop{false};        // worker exits when set

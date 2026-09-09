@@ -32,13 +32,15 @@ HDRSourcePoller::~HDRSourcePoller()
     Stop();
 }
 
-void HDRSourcePoller::Start(const std::wstring& deviceName, bool initialIsHDR10)
+void HDRSourcePoller::Start(const std::wstring& deviceName, bool initialIsHDR10,
+                          bool initialPropertyAccessible)
 {
     if (m_running.load(std::memory_order_acquire)) {
         // Already running. The caller is welcome to Stop() first and
         // re-Start, but silently double-starting would leak a thread.
         return;
     }
+    if (m_thread.joinable()) m_thread.join();
 
     // Seed the last-known state so the first probe that matches doesn't
     // fire a spurious transition report.
@@ -47,7 +49,8 @@ void HDRSourcePoller::Start(const std::wstring& deviceName, bool initialIsHDR10)
     m_stop.store(false, std::memory_order_release);
 
     m_running.store(true, std::memory_order_release);
-    m_thread = std::thread(&HDRSourcePoller::PollerThreadMain, this, deviceName);
+    m_thread = std::thread(&HDRSourcePoller::PollerThreadMain, this, deviceName,
+                          initialPropertyAccessible || initialIsHDR10);
 
     Log(L"started");
 }
@@ -88,7 +91,7 @@ bool HDRSourcePoller::AcceptUpdate(bool* outIsHDR10)
     return true;
 }
 
-void HDRSourcePoller::PollerThreadMain(std::wstring deviceName)
+void HDRSourcePoller::PollerThreadMain(std::wstring deviceName, bool hadAccessibleProbe)
 {
     using namespace std::chrono_literals;
 
@@ -117,18 +120,17 @@ void HDRSourcePoller::PollerThreadMain(std::wstring deviceName)
             // (4K S over USB) or there was a transient driver error.
             // Don't update state; preserve last-known-good.
             consecutiveFailures++;
-            if (consecutiveFailures >= kMaxInitialFailures
-                && !m_hasUpdate.load(std::memory_order_acquire)
-                && m_isHDR10.load(std::memory_order_acquire) == false)
+            if (consecutiveFailures >= kMaxInitialFailures && !hadAccessibleProbe)
             {
-                // Initial probes all failed and there was never a HDR10
-                // state to begin with: the card doesn't support this
+                // Initial probes all failed and no successful init-time
+                // or worker probe established support for this
                 // query. Bail out gracefully to avoid burning CPU on a
                 // DirectShow open/close every second forever.
                 Log(L"property unsupported on this device, stopping poll loop");
                 break;
             }
         } else {
+            hadAccessibleProbe = true;
             // Successful read. Reset the failure counter and look for
             // a transition vs. last-known state.
             consecutiveFailures = 0;
@@ -156,6 +158,7 @@ void HDRSourcePoller::PollerThreadMain(std::wstring deviceName)
             std::this_thread::sleep_for(kSleepChunk);
         }
     }
+    m_running.store(false, std::memory_order_release);
 }
 
 } // namespace NitLink

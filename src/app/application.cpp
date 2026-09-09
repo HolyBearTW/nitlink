@@ -330,6 +330,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // generate "property not supported" log lines for every launch
     // against a non-Elgato source.
     const bool isElgato = IsElgatoDevice(chosen.name);
+    std::wstring chosenLower = chosen.name;
+    std::transform(chosenLower.begin(), chosenLower.end(), chosenLower.begin(), ::towlower);
+    m_is4KS = isElgato && chosenLower.find(L"4k s") != std::wstring::npos;
     if (!isElgato) {
         AppLog(L"Initialize: selected device is not Elgato; skipping Elgato-specific HDR controls");
     }
@@ -407,7 +410,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         //
         // When the probe fails (HID error, MCU non-responsive), the
         // source-ID heuristic remains the fallback.
-        if (!srcInfo.propertyAccessible) {
+        if (!srcInfo.propertyAccessible && m_is4KS) {
             static bool s_4ksVendorHidFired = false;
             if (!s_4ksVendorHidFired) {
                 s_4ksVendorHidFired = true;
@@ -568,12 +571,12 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // card in HDR-passthrough mode while NitLink is set up to render
     // SDR, which makes the SDR picture look washed (HDR codes
     // interpreted as 100-nit-paper-white SDR). Always pair the two.
-    // Skipped on non-Elgato devices since the HID protocol is
+    // Sent only when the selected device is a 4K S, since the HID protocol is
     // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF).
     // Detect4KSHdmiSource already fired earlier in Initialize (before
     // the useP010 decision so the source-ID heuristic can feed into
     // it); no second call here.
-    if (isElgato && Set4KSTonemap(/*enableTonemap=*/ !useP010)) {
+    if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ !useP010)) {
         AppLog(useP010
             ? L"Initialize: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Initialize: 4K S HID tonemap ON sent for SDR/NV12");
@@ -633,8 +636,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // attempt failed and the pipeline is falling back to SDR
             // NV12. Flip the 4K S HID tonemap state to ON so the card
             // converts any HDR source to SDR for the upcoming capture.
-            // Same Elgato gating as the initial call above.
-            if (isElgato && Set4KSTonemap(/*enableTonemap=*/ true)) {
+            // Same selected-4K-S gating as the initial call above.
+            if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
                 AppLog(L"Initialize: 4K S HID tonemap ON sent for SDR retry");
             }
             if (!m_captureDevice->Open(chosen)) {
@@ -654,10 +657,15 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // resolution + fps from the Elgato custom property set (props 210
     // and 208), which populate only after the capture filter has been
     // opened. Stores the result in m_source4KProMode for later use by
-    // the window-title composer. Silent no-op on devices without the
-    // Elgato IKsPropertySet GUID (4K S and non-Elgato sources).
+    // the window-title composer. With no live HDMI signal, the registers can
+    // still be empty after Open; Run reads them again on the first real frame
+    // of the next signal lock. A successful startup read consumes that initial
+    // edge so a source already live at launch needs no duplicate query.
+    // Silent no-op on devices without the Elgato IKsPropertySet GUID
+    // (4K S and non-Elgato sources).
     if (isElgato && m_hdrDetectionAvailable && !m_is4KS) {
         m_source4KProMode = Detect4KProSourceMode(chosen.name);
+        m_prevSourceNoSignal = !m_source4KProMode.detected;
     }
 
     // 4K X source mode uses the UVC XU command mailbox. The destructive probe
@@ -694,7 +702,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // negotiated, flip the 4K S tonemap to ON so the card converts
     // the HDR source to clean SDR before delivering NV12. The shader
     // path then renders correctly regardless of Alt+H state.
-    if (isElgato && useP010) {
+    if (m_is4KS && useP010) {
         const bool actualIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
         if (!actualIsP010) {
             if (Set4KSTonemap(/*enableTonemap=*/ true)) {
@@ -1380,9 +1388,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Seed the poller with the init-time source state already captured
     // a few hundred lines up so the FIRST transition the worker reports
     // is a real change vs. the init state, not a redundant copy of it.
-    if (m_hdrDetectionAvailable) {
+    if (m_hdrDetectionAvailable && !m_is4KS && !m_is4KX) {
         m_hdrPoller = std::make_unique<HDRSourcePoller>();
-        m_hdrPoller->Start(m_currentDeviceInfo.name, m_sourceIsHDR10);
+        m_hdrPoller->Start(m_currentDeviceInfo.name, m_sourceIsHDR10, m_hdrDetectionAvailable);
     } else {
         AppLog(L"Initialize: HDR source poller skipped (property unsupported on this device)");
     }
@@ -1801,6 +1809,28 @@ void Application::Run()
         // both the HDR and SDR no-signal trigger sites.
         const bool showNoSignalNow = ShouldShowNoSignal();
 
+        // 4K Pro source timing (props 210 and 208) needs a live HDMI signal.
+        // UpdateWindowTitle only composes cached state, so a startup read with
+        // no source must be followed by a new read on the signal-return edge.
+        // Keep that edge armed until a fresh, non-placeholder frame arrives:
+        // startup/reacquire grace can hide the no-signal page without proving
+        // that the card's source registers are populated yet.
+        //
+        // Consume the edge before querying, including on a failed read. The
+        // DirectShow filter open and property calls run once per signal return,
+        // never once per render iteration. HDR InfoFrame availability does not
+        // gate these separate timing properties. The 4K S and 4K X retain their
+        // own source-information paths; the Pro result only refreshes the title.
+        if (showNoSignalNow) {
+            m_prevSourceNoSignal = true;
+        } else if (m_prevSourceNoSignal && haveFreshFrame && freshFrameIsRealSource) {
+            m_prevSourceNoSignal = false;
+            if (!m_is4KS && !m_is4KX && IsElgatoDevice(m_currentDeviceInfo.name)) {
+                m_source4KProMode = Detect4KProSourceMode(m_currentDeviceInfo.name);
+                UpdateWindowTitle();
+            }
+        }
+
         // 4K X: a background poller reads the live source mode off the render
         // thread (Detect4KXSourceMode opens a DirectShow filter, ~50-100ms; too
         // slow for this loop). Start is idempotent. On a source-mode change, force
@@ -1821,7 +1851,6 @@ void Application::Run()
                        + (m_source4KProMode.hdrActive ? L" HDR" : L" SDR"));
             }
         }
-        m_prev4KXNoSignal = showNoSignalNow;
 
         // =====================================================================
         // VRR PRESENT PACING: differ-driven Present
@@ -2361,6 +2390,7 @@ void Application::Run()
 void Application::Shutdown()
 {
     m_running = false;
+    m_4kxPoller.Stop();
 
     // Stop the HDR source poller FIRST. Its worker thread can be mid-call
     // to ReadElgatoHDRSource, which opens a DirectShow graph against the
@@ -2828,7 +2858,28 @@ bool Application::ReconcileCaptureFormat(bool force)
     }
     const bool isP010       = m_captureDevice->IsP010Requested();
 
-    if (wantP010 == isP010 && !force) {
+    // Run reaches this decision every render iteration. A failed Open can
+    // leave the requested format equal to wantP010 while capture is stopped;
+    // that state still needs recovery after ConsumeNeedsReopen has cleared
+    // the one-shot flag. Only a running stream may take the same-format no-op.
+    //
+    // Automatic retries use a steady-clock deadline armed below, 1000 ms from
+    // the start of each attempt. Enumeration, source activation and format
+    // negotiation are expensive main-thread operations; repeating them at
+    // render frequency would monopolize the loop and flood the driver/log
+    // while a disconnected card cannot open. One second spaces those calls
+    // and gives device re-enumeration time to settle between automatic
+    // attempts. The deadline survives failed Open and missing-device
+    // returns, so an absent source takes this cheap early return
+    // between attempts instead of spinning through teardown and enumeration.
+    // A successful restart clears the deadline. Explicit forced reconciles
+    // bypass it so a device switch or newly reported stream failure is handled
+    // immediately rather than inheriting an unrelated retry delay.
+    const bool captureStopped = !m_captureDevice->IsCapturing();
+    const auto retryNow = std::chrono::steady_clock::now();
+    if (captureStopped && !force && retryNow < m_nextCaptureRetry) return false;
+
+    if (wantP010 == isP010 && !force && !captureStopped) {
         // Device is already in the format the current state dictates.
         // The renderer-side flag updates (m_hdrEnabled, sourceIsHDR10) flow
         // through the cbuffer every frame, so the shader picks up the
@@ -2836,6 +2887,8 @@ bool Application::ReconcileCaptureFormat(bool force)
         // Cheap no-op: this method runs every reconcile trigger.
         return false;
     }
+
+    m_nextCaptureRetry = retryNow + std::chrono::milliseconds(1000);
 
     if (force && wantP010 == isP010) {
         AppLog(wantP010
@@ -2882,9 +2935,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     }
 
     // Re-enumerate first to handle the edge case where the user replugged
-    // the card mid-session (the cached symbolic link would still resolve
-    // but the device index can shift). Fall back to the cached DeviceInfo
-    // if enumeration comes up empty for some transient reason.
+    // the card mid-session (the device index can shift). Keep the selected
+    // source and wait for it to return when enumeration cannot find it.
     DeviceInfo deviceToOpen = m_currentDeviceInfo;
     {
         auto devices = DeviceEnumerator::FindCaptureDevices();
@@ -2900,19 +2952,16 @@ bool Application::ReconcileCaptureFormat(bool force)
                     break;
                 }
             }
-            // Fallback path: the previously-open device is gone from
-            // the enumeration. Route through PickPreferredDevice so the
-            // user's preferred_device config still wins and the
-            // Elgato-bias still applies, matching Initialize's
-            // selection logic.
+            // A missing source must not silently open a different card
+            // using the old card's format/HDR policy. Keep retrying the
+            // selected source; switching cards goes through SwitchCaptureDevice.
             if (!matched) {
-                int idx = DeviceEnumerator::PickPreferredDevice(
-                    devices, m_config ? m_config->preferredDevice : std::wstring{});
-                if (idx < 0 || static_cast<size_t>(idx) >= devices.size()) idx = 0;
-                deviceToOpen = devices[idx];
+                AppLog(L"Reconcile: selected capture device unavailable; will retry");
+                return false;
             }
         } else {
-            AppLog(L"Reconcile: device enumeration returned empty, using cached DeviceInfo");
+            AppLog(L"Reconcile: no capture devices available; will retry");
+            return false;
         }
     }
 
@@ -2922,10 +2971,9 @@ bool Application::ReconcileCaptureFormat(bool force)
     // (same rationale as Initialize). On Alt+H toggling from HDR to SDR
     // this re-sends ON so the card stops passing raw HDR10 through and
     // starts delivering clean SDR for the NV12 capture; on toggling
-    // back to HDR it re-sends OFF. Same Elgato gate as above: the HID
-    // protocol is 4K S-specific (VID 0x0FD9), so non-Elgato sources
-    // skip the call.
-    if (isElgato && Set4KSTonemap(/*enableTonemap=*/ !wantP010)) {
+    // back to HDR it re-sends OFF. The HID protocol is 4K S-specific;
+    // selecting another card must not change a connected 4K S.
+    if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ !wantP010)) {
         AppLog(wantP010
             ? L"Reconcile: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Reconcile: 4K S HID tonemap ON sent for SDR/NV12");
@@ -3000,9 +3048,9 @@ bool Application::ReconcileCaptureFormat(bool force)
         // Same retry-fallback HID flip as Initialize: tonemap was
         // sent OFF for the P010 attempt, that failed, so the pipeline
         // is falling back to SDR capture; flip the card's tonemap
-        // state to ON so the NV12 frames come out clean. Elgato-gated
+        // state to ON so the NV12 frames come out clean. 4K-S-gated
         // like the call above.
-        if (isElgato && Set4KSTonemap(/*enableTonemap=*/ true)) {
+        if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
             AppLog(L"Reconcile: 4K S HID tonemap ON sent for SDR retry");
         }
         opened = m_captureDevice->Open(deviceToOpen);
@@ -3024,6 +3072,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // Successful open: rebuild the frame buffer at the new format, refresh
     // the renderer's row-order and range hints (driver flips between paths
     // can change either), and restart the capture worker.
+    m_captureDevice->LogAvailableFormats();
     auto format = m_captureDevice->GetOutputFormat();
 
     // Same post-Open tonemap reconciliation as Initialize. If wantP010
@@ -3032,7 +3081,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // (set OFF earlier for the P010 attempt, but capture is now NV12).
     // Flip tonemap to ON so NV12 frames carry clean SDR. See Initialize
     // for the long-form rationale.
-    if (isElgato && wantP010) {
+    if (m_is4KS && wantP010) {
         const bool actualIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
         if (!actualIsP010) {
             if (Set4KSTonemap(/*enableTonemap=*/ true)) {
@@ -3120,13 +3169,18 @@ bool Application::ReconcileCaptureFormat(bool force)
         }
     }
 
-    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
+    const bool started = m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
                                           int64_t arrivalWallNs, uint64_t deviceTimestamp) {
         if (DropPlaceholderFrame(data, size)) return;
         if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
 
     m_currentDeviceInfo = deviceToOpen;
+    if (!started) {
+        AppLog(L"Reconcile: capture start failed; will retry");
+        return false;
+    }
+    m_nextCaptureRetry = {};
     ApplyPresentCap();
     AppLog(L"Reconcile: capture restarted in new format");
     return true;
@@ -3480,6 +3534,21 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     const bool previousSourceIsHDR10 = m_sourceIsHDR10;
     const bool previousHdrDetectionAvailable = m_hdrDetectionAvailable;
     const std::wstring previousPreferredDevice = m_config->preferredDevice;
+    const bool previousIs4KS = m_is4KS, previousIs4KX = m_is4KX;
+    const bool previousHdrEnabled = m_config->hdrEnabled;
+    const auto previousSourceMode = m_source4KProMode;
+    const auto previousHdmiSource = m_detectedHdmiSource;
+
+    // No update from an old device may be applied to the new session.
+    if (m_hdrPoller) { m_hdrPoller->Stop(); m_hdrPoller.reset(); }
+    m_4kxPoller.Stop();
+    const auto restartHdrPoller = [this] {
+        if (m_hdrDetectionAvailable && !m_is4KS && !m_is4KX) {
+            m_hdrPoller = std::make_unique<HDRSourcePoller>();
+            m_hdrPoller->Start(m_currentDeviceInfo.name, m_sourceIsHDR10, m_hdrDetectionAvailable);
+        }
+        // The 4K X poller starts in Run after the new stream has signal.
+    };
 
     {
         std::wstringstream ss;
@@ -3494,6 +3563,14 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     // to the new device instead of re-opening the previous one.
     m_currentDeviceInfo = newDevice;
     m_config->preferredDevice = deviceName;
+    std::wstring nameLower = newDevice.name;
+    std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::towlower);
+    m_is4KS = IsElgatoDevice(newDevice.name) && nameLower.find(L"4k s") != std::wstring::npos;
+    m_is4KX = IsElgatoDevice(newDevice.name) && nameLower.find(L"4k x") != std::wstring::npos;
+    m_source4KProMode = {};
+    m_detectedHdmiSource.clear();
+    m_prevSourceNoSignal = true;
+    m_4kxForceReconcile = false;
 
     // Refresh HDR detection state for the new device. The InfoFrame
     // read is an Elgato-specific property call; skip it for non-Elgato
@@ -3504,6 +3581,13 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         HDRSourceInfo srcInfo = ReadElgatoHDRSource(newDevice.name);
         m_hdrDetectionAvailable = srcInfo.propertyAccessible;
         m_sourceIsHDR10 = srcInfo.propertyAccessible ? srcInfo.isHDR10 : false;
+        if (m_is4KS) {
+            const auto source = Detect4KSHdmiSource();
+            if (source.detected) m_detectedHdmiSource = source.label;
+            const auto probe = Probe4KSHdrMetadata();
+            m_hdrDetectionAvailable = probe.queryOk;
+            m_sourceIsHDR10 = probe.queryOk ? probe.hdrActive : m_config->hdrEnabled;
+        }
     } else {
         m_hdrDetectionAvailable = false;
         m_sourceIsHDR10 = false;
@@ -3531,11 +3615,23 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         m_sourceIsHDR10 = previousSourceIsHDR10;
         m_hdrDetectionAvailable = previousHdrDetectionAvailable;
         m_config->preferredDevice = previousPreferredDevice;
+        m_config->hdrEnabled = previousHdrEnabled;
+        m_is4KS = previousIs4KS;
+        m_is4KX = previousIs4KX;
+        m_source4KProMode = previousSourceMode;
+        m_detectedHdmiSource = previousHdmiSource;
         if (!ReconcileCaptureFormat(/*force=*/ true)) {
             AppLog(L"SwitchCaptureDevice: rollback reconcile also failed; capture pipeline is down");
         }
+        restartHdrPoller();
         return false;
     }
+    restartHdrPoller();
+    if (IsElgatoDevice(newDevice.name) && !m_is4KS && !m_is4KX) {
+        m_source4KProMode = Detect4KProSourceMode(newDevice.name);
+        m_prevSourceNoSignal = !m_source4KProMode.detected;
+    }
+    UpdateWindowTitle();
 
     // Re-route audio to the new device. The audio router was bound to the
     // previous device at Initialize time; without this re-init, audio

@@ -289,6 +289,8 @@ private:
     // has the HDR toggle on, the pipeline negotiates P010 capture and uses
     // the HDR10 shader path. When false, the pipeline stays on BGRA + SDR.
     bool m_sourceIsHDR10 = false;
+    // Failed opens retry without tying recovery to another format change.
+    std::chrono::steady_clock::time_point m_nextCaptureRetry{};
 
     // True when ANY direct HDR detection succeeded at Initialize:
     //   - 4K Pro: IKsPropertySet HDR InfoFrame property GUID was readable
@@ -316,12 +318,16 @@ private:
     // shader handles SDR tonemap when userWantsHDR is false.
     bool m_is4KS = false;
 
-    // 4K X: name-matched device flag + edge-detect state for the once-per-lock
-    // UVC XU source-mode read (Detect4KXSourceMode). The X reads the LIVE
-    // source, so the read fires on each signal (re)lock edge in Run(), not at
-    // init.
-    bool m_is4KX           = false;
-    bool m_prev4KXNoSignal = true;
+    // 4K X device flag, selected by name. Run starts its background source-mode
+    // reader; UVC XU timing and InfoFrame reads need a live, locked signal.
+    bool m_is4KX = false;
+
+    // Shared no-signal history for the 4K Pro's source-timing refresh in Run.
+    // Starts armed until a successful startup read or the first real frame;
+    // the no-signal page and device switches re-arm it. Only a fresh source
+    // frame consumes the return edge, so startup grace and card placeholders
+    // cannot spend the single property read before live signal arrives.
+    bool m_prevSourceNoSignal = true;
     // Set by the Run-loop 4K X source read when the source resolution, fps, or
     // HDR state changes; consumed (forced) by the next ReconcileCaptureFormat so
     // capture re-matches the source.
@@ -336,8 +342,9 @@ private:
     // by UpdateWindowTitle to surface the source's actual signal
     // dimensions in the title bar (4K Pro path only; the 4K S exposes
     // equivalent info via its vendor HID sub_cmd 0x00). detected ==
-    // false when the device isn't a 4K Pro or the post-Open read
-    // failed.
+    // false when the device isn't a 4K Pro or the read failed. Run refreshes
+    // this cache on each no-signal to real-frame edge, since Open alone does
+    // not establish that the HDMI source is sending timing information.
     Source4KProMode m_source4KProMode{};
 
     // Manual source color-range override (Alt+R), layered on top of Media
