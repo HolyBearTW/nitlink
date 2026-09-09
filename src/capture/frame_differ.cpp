@@ -287,6 +287,21 @@ bool FrameDiffer::Initialize(ID3D11Device* device)
 
 void FrameDiffer::Reset()
 {
+    // Ignore all readbacks from the previous stream. ReconcileCaptureFormat
+    // calls Reset when capture restarts, including device switches and
+    // HDR/SDR changes, but a staging slot can still hold an unread duplicate
+    // vote from the preceding stream. Reading that vote in the next Process
+    // would classify the first frame of the new stream as a duplicate and
+    // overwrite the initial m_wasNew=true state below. Application::Run's
+    // unique pacing would then withhold the new image, potentially until its
+    // roughly 250 ms fallback present despite capture already delivering it.
+    //
+    // Invalidate the readback ring before accepting any new-stream result.
+    // D3D commands on this context stay ordered; only copies submitted after
+    // Reset are eligible, so keeping the GPU allocations does not make old
+    // readbacks eligible for the new stream's classification.
+    m_stagingWrite = 0;
+    m_stagingWritten = 0;
     // Per-stream state only; GPU resources stay alive. The next Process()
     // call will repopulate m_prevTex via the copy at the end of the
     // dispatch, and rebuild the ring buffer from the first kSmoothWindow

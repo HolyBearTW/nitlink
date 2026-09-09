@@ -1485,15 +1485,15 @@ void DX11Renderer::UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint
         return;
     }
 
-    // Size sanity check against the DECLARED format. With MF's source reader
-    // returning a contiguous packed buffer (via ConvertToContiguousBuffer),
-    // the byte count should match exactly; a small tolerance is allowed for
-    // driver-side row padding. A frame that's way off the expected size is
-    // a partial/transient frame from a signal-loss window: drop it rather
-    // than upload garbage. This is the failure mode that produced the
-    // green-frame symptom; threading the GUID through made it possible to
-    // catch and discard those frames here instead of silently switching
-    // formats.
+    // Validate the byte count against the declared format's complete packed
+    // image. MF's ConvertToContiguousBuffer combines sample buffers into one
+    // allocation, or returns the existing buffer when there is only one; it
+    // does not promise that every driver supplies an exact packed byte count.
+    // Alignment padding can add unused bytes after pixel rows, so contiguity
+    // alone is not evidence that the sample length must match exactly.
+    // The upload below retains the declared packed row/plane layout: this
+    // size guard does not infer another pixel format or an arbitrary stride.
+    // Reference: https://learn.microsoft.com/en-us/windows/win32/medfound/image-stride
     uint32_t expectedSize;
     switch (m_sourceFormat) {
         case CaptureFormatKind::BGRA: expectedSize = width * height * 4;     break;
@@ -1501,17 +1501,27 @@ void DX11Renderer::UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint
         case CaptureFormatKind::P010: expectedSize = width * height * 3;     break;
         default:                       expectedSize = 0;                       break;
     }
-    // 5% tolerance, floored at 1KB so small-resolution paths still get a
-    // useful slack window. MF row padding on the contiguous buffer is
-    // typically zero or a few bytes per row; this is generous enough not
-    // to false-positive on legitimate frames.
+    // Permit surplus bytes up to 5% of the packed size, with a 1 KiB floor.
+    // A percentage scales the allowance with resolution instead of imposing
+    // one small fixed limit on every frame; the floor leaves alignment slack
+    // for small images whose percentage alone would be only a few bytes.
+    // Padding can increase a buffer's length, never replace missing pixels,
+    // so the allowance applies only above expectedSize.
+    //
+    // Reject a short sample outright rather than clamping a partial copy.
+    // FrameBuffer::Write overwrites only the delivered bytes of a reused slot;
+    // its unwritten tail can still contain pixels from a previous frame.
+    // Treating that prefix as a complete image would expose the stale tail,
+    // while shortening the upload would leave part of the image unwritten.
+    // Rejection happens before Map, preserving the last complete capture
+    // texture until a full sample arrives, including across HDMI signal gaps.
     const uint32_t tolerance = (std::max)(expectedSize / 20, 1024u);
     if (expectedSize == 0 ||
-        size + tolerance < expectedSize ||
+        size < expectedSize ||
         size > expectedSize + tolerance) {
         std::wstringstream ss;
         ss << L"[NitLink/Renderer] UpdateCaptureTexture: size mismatch (got "
-           << size << L", expected " << expectedSize << L" +/-" << tolerance
+           << size << L", expected " << expectedSize << L" to " << expectedSize + tolerance
            << L"), dropping partial/transient frame\n";
         OutputDebugStringW(ss.str().c_str());
         return;
@@ -3013,7 +3023,9 @@ void DX11Renderer::DrawHDRDiagnostics()
     // quad as DrawHDRTestPattern, but the shader paints calibrated
     // reference patches over the bottom band of the screen and leaves
     // the top portion fully transparent (alpha=0) so the captured frame
-    // shows through. The patches use KNOWN scRGB values for visual A/B
+    // shows through. The patches start with known linear BT.709 values
+    // in scRGB units, then convert to BT.2020 and PQ for the HDR10 target.
+    // This permits visual A/B
     // against the same patches rendered natively (PS5 direct to TV via
     // the diag test pattern).
     if (!m_hdrDiagPS) {
@@ -3081,7 +3093,19 @@ float4 main(PS_IN i) : SV_TARGET {
         col = float3(0, 0, 0);
     }
 
-    return float4(col, 1.0);
+    float3 linear2020;
+    linear2020.r = 0.6274 * col.r + 0.3293 * col.g + 0.0433 * col.b;
+    linear2020.g = 0.0691 * col.r + 0.9195 * col.g + 0.0114 * col.b;
+    linear2020.b = 0.0164 * col.r + 0.0880 * col.g + 0.8956 * col.b;
+    // scRGB 1.0 = 80 nits. ST.2084 normalizes 10000 nits to 1.0.
+    const float m1 = 2610.0 / 16384.0;
+    const float m2 = 2523.0 / 32.0;
+    const float c1 = 3424.0 / 4096.0;
+    const float c2 = 2413.0 / 128.0;
+    const float c3 = 2392.0 / 128.0;
+    float3 lm1 = pow(max(linear2020 * (80.0 / 10000.0), 0.0), m1);
+    float3 pq = pow((c1 + c2 * lm1) / (1.0 + c3 * lm1), m2);
+    return float4(saturate(pq), 1.0);
 }
 )";
         ComPtr<ID3DBlob> psBlob, err;
