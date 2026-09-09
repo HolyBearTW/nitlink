@@ -586,6 +586,17 @@
       // index 0 with empty value so the cascade's wildcard semantics map
       // directly to falsy values in the change handler; no special
       // casing for "Auto" needed.
+      let sourceSelects = {};
+      const updateSelect = (sel, options, currentValue) => {
+        sel.innerHTML = '';
+        [{ value: '', label: 'Auto' }, ...options].forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = String(o.value);
+          opt.textContent = o.label;
+          sel.appendChild(opt);
+        });
+        sel.value = currentValue;
+      };
       const makeSelectRow = (labelText, options, currentValue, onChange) => {
         const row = document.createElement('div');
         row.className = 'source-popover-select-row';
@@ -594,17 +605,8 @@
         const sel = document.createElement('select');
         sel.className = 'source-popover-select';
 
-        const autoOpt = document.createElement('option');
-        autoOpt.value = '';
-        autoOpt.textContent = 'Auto';
-        sel.appendChild(autoOpt);
-
-        options.forEach(o => {
-          const opt = document.createElement('option');
-          opt.value = String(o.value);
-          opt.textContent = o.label;
-          sel.appendChild(opt);
-        });
+        sourceSelects[labelText] = sel;
+        updateSelect(sel, options, currentValue);
 
         // Setting .value to a string not present in options falls back to
         // the first option (Auto), which is the correct UX when the
@@ -690,12 +692,30 @@
       // the backend falls back to Auto and the next state push carries
       // state.notification = "Capture format unavailable, ..." which
       // surfaces a toast via showToast() in applyState.
+      const refreshSourceSelects = () => {
+        const choices = {
+          Resolution: [uniqueResolutions().map(([key]) => ({ value: key, label: key })),
+            lastOverride.width ? `${lastOverride.width}x${lastOverride.height}` : ''],
+          Framerate: [uniqueFps().map(f => ({ value: f, label: `${f} fps` })),
+            lastOverride.fps ? String(lastOverride.fps) : ''],
+          Format: [uniqueFormats().map(f => ({ value: f, label: f })), lastOverride.format],
+        };
+        Object.entries(choices).forEach(([label, [options, value]]) => {
+          const sel = sourceSelects[label];
+          // Keep an open native dropdown intact; its dependent controls can
+          // still follow the new resolution/FPS without replacing the row.
+          if (sel && sel !== document.activeElement) updateSelect(sel, options, value);
+        });
+      };
       const sendOverride = (ov) => {
+        lastOverride = ov;
+        refreshSourceSelects();
         post('setCaptureFormatOverride', ov);
       };
 
       const renderPopover = () => {
         pop.innerHTML = '';
+        sourceSelects = {};
 
         // Device list: only when there is more than one to pick from.
         if (lastDevices.length > 1) {
@@ -850,6 +870,11 @@
       document.addEventListener('keydown', e => {
         if (e.key === 'Escape') closePop();
       });
+      pop.addEventListener('focusout', () => {
+        queueMicrotask(() => {
+          if (pop.dataset.open === 'true') refreshSourceSelects();
+        });
+      });
 
       // Public update entry point. applyState pushes the full set on
       // every state refresh; the picker re-renders the popover in
@@ -874,6 +899,7 @@
           const interacting = document.activeElement
             && pop.contains(document.activeElement);
           if (!interacting) renderPopover();
+          else refreshSourceSelects();
         }
       };
     })();

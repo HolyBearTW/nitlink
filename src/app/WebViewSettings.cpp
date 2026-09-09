@@ -36,6 +36,9 @@ void WVLogHr(const std::wstring& prefix, HRESULT hr) {
 } // namespace
 
 bool WebViewSettings::Initialize(HWND parent, int width, int height) {
+    Shutdown();
+    m_callbackLifetime = std::make_shared<int>(0);
+    const std::weak_ptr<int> lifetime = m_callbackLifetime;
     m_parent = parent;
 
     // WebView2 user-data folder under %LOCALAPPDATA%\NitLink\WebView2.
@@ -51,14 +54,19 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
         userDataFolder.c_str(),
         nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-            [this](HRESULT envHr, ICoreWebView2Environment* env) -> HRESULT {
+            [this, lifetime](HRESULT envHr, ICoreWebView2Environment* env) -> HRESULT {
+                if (lifetime.expired()) return S_OK;
                 if (FAILED(envHr) || !env) {
                     WVLogHr(L"environment creation failed", envHr);
                     return envHr;
                 }
                 HRESULT hr2 = env->CreateCoreWebView2Controller(m_parent,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                        [this](HRESULT ctlHr, ICoreWebView2Controller* controller) -> HRESULT {
+                        [this, lifetime](HRESULT ctlHr, ICoreWebView2Controller* controller) -> HRESULT {
+                            if (lifetime.expired()) {
+                                if (controller) controller->Close();
+                                return S_OK;
+                            }
                             if (FAILED(ctlHr) || !controller) {
                                 WVLogHr(L"controller creation failed", ctlHr);
                                 return ctlHr;
@@ -70,8 +78,11 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
                             m_controller->put_Bounds(ComputeBounds());
                             ApplyBackground();
 
-                            // Start HIDDEN; Show(true) flips it on when F1 pressed.
-                            m_controller->put_IsVisible(FALSE);
+                            // Honor F1/first-launch Show requests made while
+                            // the asynchronous controller was being created.
+                            m_controller->put_IsVisible(m_visible ? TRUE : FALSE);
+                            if (m_visible)
+                                m_controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 
                             // Message handler. JS posts an object, so the
                             // handler uses get_WebMessageAsJson (not
@@ -79,8 +90,9 @@ bool WebViewSettings::Initialize(HWND parent, int width, int height) {
                             // for non-string payloads).
                             m_webview->add_WebMessageReceived(
                                 Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                                    [this](ICoreWebView2*,
+                                    [this, lifetime](ICoreWebView2*,
                                             ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                        if (lifetime.expired()) return S_OK;
                                         wil::unique_cotaskmem_string json;
                                         HRESULT hr = args->get_WebMessageAsJson(&json);
                                         if (SUCCEEDED(hr) && json && m_onMessage) {
@@ -298,6 +310,7 @@ void WebViewSettings::PostMessage(const std::wstring& json) {
 }
 
 void WebViewSettings::Shutdown() {
+    m_callbackLifetime.reset();
     if (m_webview && m_messageToken.value != 0) {
         m_webview->remove_WebMessageReceived(m_messageToken);
         m_messageToken = {};

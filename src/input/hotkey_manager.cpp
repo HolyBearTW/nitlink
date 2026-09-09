@@ -46,6 +46,24 @@ void HotkeyManager::Poll()
             }
         }
 
+        // Match modifiers exactly: Ctrl+Shift+Left must not also run the
+        // Ctrl+Left action. Either side of a modifier satisfies its family.
+        constexpr int modifiers[][3] = {
+            {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
+            {VK_SHIFT, VK_LSHIFT, VK_RSHIFT},
+            {VK_MENU, VK_LMENU, VK_RMENU},
+            {VK_LWIN, VK_RWIN, 0}
+        };
+        for (const auto& family : modifiers) {
+            bool required = false, pressed = false;
+            for (int key : family) {
+                if (key == 0) continue;
+                required |= std::find(hk.keys.begin(), hk.keys.end(), key) != hk.keys.end();
+                pressed |= (GetAsyncKeyState(key) & 0x8000) != 0;
+            }
+            if (pressed != required) allPressed = false;
+        }
+
         if (allPressed && !hk.wasPressed) {
             // Key combo just pressed (edge trigger, not held)
             hk.callback();

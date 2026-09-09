@@ -188,7 +188,7 @@ void Window::SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity
         // monitor layout still lands somewhere visible. -1 / -1 sentinel
         // means "use the default bottom-right corner".
         int pipX, pipY;
-        if (m_pipPreferredX >= 0 && m_pipPreferredY >= 0) {
+        if (m_pipPreferredX != -1 || m_pipPreferredY != -1) {
             pipX = m_pipPreferredX;
             pipY = m_pipPreferredY;
             const int maxX = mi.rcWork.right  - (int)width;

@@ -4,6 +4,7 @@
 #include <WebView2.h>
 #include <string>
 #include <functional>
+#include <memory>
 
 // WebViewSettings: host a WebView2 control as a CHILD of the main window,
 // occupying the full client rect when visible. When the menu opens, the
@@ -13,6 +14,10 @@
 class WebViewSettings {
 public:
     using MessageCallback = std::function<void(const std::wstring&)>;
+    WebViewSettings() = default;
+    ~WebViewSettings() { Shutdown(); }
+    WebViewSettings(const WebViewSettings&) = delete;
+    WebViewSettings& operator=(const WebViewSettings&) = delete;
 
     // Initialize attaches WebView2 to `parent` (the main app HWND).
     // Width/height are the initial parent client size; the controller
@@ -48,6 +53,9 @@ public:
     void Shutdown();
 
 private:
+    // Host methods and WebView callbacks run on the UI thread. Invalidating
+    // this token prevents callbacks from an old initialization using this.
+    std::shared_ptr<int> m_callbackLifetime;
     HWND m_parent  = nullptr;
     bool m_visible = false;
     Dock m_dock = Dock::Full;
