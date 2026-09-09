@@ -3,282 +3,469 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080808">
   <title>NitLink · Your console as a window on your PC</title>
-  <meta name="description" content="NitLink is a free, open-source capture card viewer for Windows. Real HDR10, VRR in a window, and the lowest preview latency measured on a photon rig. Elgato 4K Pro, 4K X, 4K S.">
+  <meta name="description" content="Your console, right on your desktop. NitLink is a free, open-source capture card viewer for Windows with HDR10, variable refresh, and measured low latency. Built for Elgato 4K Pro, 4K X, and 4K S.">
   <meta property="og:title" content="NitLink · Your console as a window on your PC">
   <meta property="og:description" content="Free, open-source capture card viewer for Windows. HDR10, VRR, lowest latency measured.">
-  <meta property="og:image" content="https://nitlink-dev.github.io/nitlink/images/nitlink-thumbnail-1280x720.png">
+  <meta property="og:image" content="https://nitlink-dev.github.io/nitlink/images/nitlink-thumbnail-1280x720.webp">
   <meta property="og:type" content="website">
   <link rel="icon" href="images/favicon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --accent: #E39A3B;
-      --accent-text: #F0B265;
-      --bg: #0C0D0F;
-      --bg-soft: #131418;
-      --card: #1A1A1A;
-      --band: #232323;
-      --hair: rgba(255, 255, 255, 0.08);
-      --hair2: rgba(255, 255, 255, 0.14);
-      --ink: #EDEDED;
-      --ink2: #B4B4B4;
-      --ink3: #8A8A8A;
-      --sans: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
-      --max: 1120px;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
-    a { color: var(--accent-text); text-decoration: none; }
-    a:hover { color: var(--accent); }
-    img { max-width: 100%; display: block; }
-    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
-
-    /* Top bar */
-    .top { position: sticky; top: 0; z-index: 10; background: rgba(12, 13, 15, 0.85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--hair); }
-    .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-    .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; letter-spacing: 0.02em; }
-    .brand-mark { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: #1B1B1B; display: grid; place-items: center; font-weight: 700; font-size: 15px; }
-    .nav { display: flex; gap: 22px; font-size: 13px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
-    .nav a { color: var(--ink2); }
-    .nav a:hover { color: var(--ink); }
-    @media (max-width: 640px) { .nav { display: none; } }
-
-    /* Hero */
-    .hero { padding: 84px 0 40px; border-bottom: 1px solid var(--hair); background: radial-gradient(1200px 500px at 70% -10%, rgba(227, 154, 59, 0.10), transparent 60%); }
-    .hero .wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 48px; align-items: center; }
-    @media (max-width: 860px) { .hero .wrap { grid-template-columns: 1fr; } .hero { padding-top: 56px; } }
-    .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-text); margin-bottom: 18px; }
-    h1 { font-size: clamp(38px, 5.4vw, 60px); line-height: 1.02; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
-    h1 span { color: var(--accent); }
-    .lede { margin-top: 22px; font-size: 18px; color: var(--ink2); max-width: 46ch; text-wrap: pretty; }
-    .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
-    .btn { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 6px; font-weight: 600; font-size: 15px; transition: transform .12s ease, background .12s ease; }
-    .btn:active { transform: translateY(1px); }
-    .btn-primary { background: var(--accent); color: #1B1B1B; }
-    .btn-primary:hover { background: #F0B265; color: #1B1B1B; }
-    .btn-ghost { border: 1px solid var(--hair2); color: var(--ink); background: transparent; }
-    .btn-ghost:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
-    .meta { margin-top: 18px; font-size: 13px; color: var(--ink3); }
-    .meta code { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; color: var(--ink2); }
-    .hero-art { position: relative; border: 1px solid var(--hair2); border-radius: 10px; overflow: hidden; background: var(--bg-soft); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
-    .hero-art img { width: 100%; height: auto; }
-    .hero-art .tag { position: absolute; left: 14px; bottom: 14px; padding: 6px 10px; border-radius: 4px; background: rgba(18, 18, 18, 0.85); border: 1px solid var(--hair2); font-size: 12px; color: var(--ink2); }
-
-    /* Stats strip */
-    .strip { border-bottom: 1px solid var(--hair); background: var(--bg-soft); }
-    .strip .wrap { display: grid; grid-template-columns: repeat(4, 1fr); }
-    @media (max-width: 720px) { .strip .wrap { grid-template-columns: repeat(2, 1fr); } }
-    .stat { padding: 22px 18px; border-right: 1px solid var(--hair); }
-    .stat:last-child { border-right: 0; }
-    .stat b { display: block; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-    .stat span { font-size: 12.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.08em; }
-
-    /* Sections */
-    section { padding: 72px 0; border-bottom: 1px solid var(--hair); }
-    .kicker { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink3); margin-bottom: 12px; }
-    h2 { font-size: clamp(28px, 3.6vw, 40px); line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; max-width: 24ch; }
-    .sub { margin-top: 14px; color: var(--ink2); max-width: 62ch; font-size: 17px; text-wrap: pretty; }
-    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 36px; }
-    @media (max-width: 820px) { .grid3 { grid-template-columns: 1fr; } }
-    .card { padding: 24px; border: 1px solid var(--hair); border-radius: 10px; background: var(--card); }
-    .card h3 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
-    .card p { color: var(--ink2); font-size: 15px; }
-    .card .n { display: inline-block; width: 30px; height: 30px; border-radius: 6px; background: rgba(227, 154, 59, 0.16); color: var(--accent-text); font-weight: 700; display: grid; place-items: center; margin-bottom: 14px; font-size: 13px; }
-
-    /* Latency table */
-    .table { margin-top: 32px; border: 1px solid var(--hair); border-radius: 10px; overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 15px; }
-    th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--hair); }
-    th { background: var(--band); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink2); }
-    tr:last-child td { border-bottom: 0; }
-    td.win { color: var(--accent-text); font-weight: 600; }
-    td.num { font-variant-numeric: tabular-nums; }
-    .note { margin-top: 14px; font-size: 13.5px; color: var(--ink3); max-width: 78ch; }
-
-    /* Video */
-    .video { position: relative; margin-top: 36px; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; border: 1px solid var(--hair2); background: #000; }
+    :root { color-scheme: dark; --bg: #080808; --surface: #141414; --ink: #f3f3f3; --secondary: #b9b9b9; --muted: #949494; --line: #303030; --accent: #e6a147; --font: 'Segoe UI', Arial, sans-serif; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-padding-top: 88px; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.65 var(--font); -webkit-font-smoothing: antialiased; }
+    h1, h2, h3, p, figure, dl, dd { margin: 0; }
+    a { color: inherit; text-underline-offset: 5px; text-decoration-color: #727272; }
+    a:hover { color: var(--accent); text-decoration-color: currentColor; }
+    img { max-width: 100%; height: auto; display: block; }
+    button { font: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+    ::selection { color: #080808; background: var(--accent); }
+    [hidden] { display: none !important; }
+    .wrap { width: min(1200px, calc(100% - 80px)); margin-inline: auto; }
+    .skip { position: absolute; top: 10px; left: 10px; z-index: 50; padding: 8px 16px; color: var(--bg); background: var(--accent); transform: translateY(-200%); }
+    .skip:focus { transform: none; }
+    .global-header { border-bottom: 1px solid #232323; }
+    .header-inner { min-height: 70px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-size: 1.35rem; font-weight: 650; }
+    .brand img { width: 29px; height: 29px; }
+    .header-links { display: flex; gap: 25px; align-items: center; color: var(--secondary); font-size: .875rem; }
+    .header-links a { text-decoration: none; padding-block: 12px; }
+    .hero { padding: 88px 0 92px; }
+    .hero-grid { display: grid; grid-template-columns: .85fr 1.35fr; gap: 64px; align-items: center; }
+    .hero-grid > *, .performance-grid > *, .showcase-grid > *, .support-grid > * { min-width: 0; }
+    .product-label { font-size: 1rem; color: var(--secondary); margin-bottom: 18px; font-weight: 550; }
+    h1 { font-size: clamp(2.9rem, 4.4vw, 4rem); line-height: 1.06; letter-spacing: -.035em; font-weight: 650; }
+    h1 span { display: block; }
+    .hero-description { margin-top: 24px; max-width: 38ch; color: #c4c4c4; font-size: 1.125rem; line-height: 1.6; }
+    .actions { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; margin-top: 30px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 11px 21px; background: var(--accent); color: #18140f; text-decoration: none; font-size: .9375rem; font-weight: 650; border: 0; border-radius: 2px; cursor: pointer; }
+    .button:hover { color: #18140f; background: #f6b764; }
+    .button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+    .text-link { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; font-size: .9375rem; font-weight: 550; text-decoration: none; }
+    .text-link:hover { text-decoration: underline; }
+    .hero-meta { margin-top: 19px; color: var(--muted); font-size: .8125rem; }
+    .desktop-visual { width: 100%; }
+    .desktop-visual > img { width: 100%; height: auto; }
+    .product-nav { position: sticky; top: 0; z-index: 15; background: #171717; border-block: 1px solid #2b2b2b; }
+    .product-nav-inner { min-height: 66px; display: flex; align-items: center; gap: 35px; }
+    .nav-name { font-size: 1.125rem; font-weight: 600; margin-right: auto; text-decoration: none; }
+    .section-links { display: flex; align-items: center; gap: 28px; }
+    .section-links a { display: block; padding-block: 20px; color: #c4c4c4; text-decoration: none; font-size: .875rem; white-space: nowrap; }
+    .section-links a:hover { color: white; }
+    .nav-download { min-height: 40px; padding: 8px 17px; font-size: .875rem; }
+    .feature-section { padding-block: 94px; }
+    .section-intro { text-align: center; max-width: 740px; margin: 0 auto 42px; }
+    .feature-label { color: var(--secondary); font-size: 1rem; font-weight: 550; margin-bottom: 12px; }
+    h2 { font-size: clamp(2rem, 3.2vw, 2.65rem); line-height: 1.14; font-weight: 600; letter-spacing: -.025em; }
+    .section-description { color: var(--secondary); margin-top: 22px; font-size: 1.0625rem; line-height: 1.65; }
+    .hdr-figure img { width: 100%; }
+    .hdr-figure > a { display: block; }
+    figcaption { margin-top: 15px; color: var(--muted); font-size: .8125rem; line-height: 1.6; }
+    .hdr-figure figcaption { max-width: 92ch; margin-inline: auto; text-align: center; }
+    .feature-note { color: var(--muted); font-size: .8125rem; margin-top: 17px; }
+    .performance-section { background: var(--surface); }
+    .performance-grid { display: grid; grid-template-columns: .88fr 1.3fr; gap: 85px; align-items: center; }
+    .performance-copy h2 { max-width: 13ch; }
+    .performance-copy .text-link { color: var(--accent); margin-top: 24px; }
+    .chart { padding: 10px 0; }
+    .chart figcaption { margin-top: 0; margin-bottom: 19px; color: #c3c3c3; font-size: .875rem; }
+    .chart-scale { display: flex; justify-content: space-between; margin: 0 63px 0 64px; color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
+    .chart-group { margin-top: 25px; }
+    .chart-group-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 9px; font-size: .9375rem; }
+    .chart-group-heading strong { font-weight: 600; }
+    .chart-group-heading small { color: var(--muted); margin-left: 8px; font-size: .8125rem; }
+    .chart-delta { color: #c8c8c8; font-size: .8125rem; }
+    .bar-row { display: grid; grid-template-columns: 56px minmax(0,1fr) 55px; align-items: center; gap: 8px; min-height: 30px; font-size: .8125rem; }
+    .bar-label { color: var(--secondary); }
+    .bar-track { height: 22px; background-image: repeating-linear-gradient(90deg, #343434 0 1px, transparent 1px 25%); border-right: 1px solid #343434; }
+    .bar { display: block; width: var(--value); height: 100%; background: var(--accent); }
+    .bar.elgato { background: #727272; }
+    .bar-value { color: #e5e5e5; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .measurement-details { margin-top: 42px; border-top: 1px solid #343434; }
+    summary { cursor: pointer; }
+    .measurement-details > summary { padding-top: 18px; color: #c9c9c9; font-size: .875rem; }
+    .measurement-content { padding-top: 20px; }
+    .table-scroll { overflow-x: auto; width: 100%; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: .875rem; }
+    th, td { padding: 12px 15px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th:first-child, td:first-child { padding-left: 0; }
+    th:last-child, td:last-child { padding-right: 0; }
+    thead th { color: var(--muted); font-weight: 400; font-size: .8125rem; }
+    tbody th { font-weight: 550; }
+    td { color: var(--secondary); font-variant-numeric: tabular-nums; }
+    .latency-table { min-width: 520px; }
+    .references { display: flex; flex-wrap: wrap; gap: 9px 24px; margin-top: 18px; font-size: .875rem; }
+    .showcase-grid { display: grid; grid-template-columns: 1.48fr .92fr; gap: 60px; align-items: center; }
+    .app-visual img { width: 100%; border: 1px solid #333; }
+    .view-tabs { display: flex; gap: 28px; margin-bottom: 26px; }
+    .view-tabs button { appearance: none; padding: 9px 0 12px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font-size: .875rem; }
+    .view-tabs button[aria-selected="true"] { border-color: var(--accent); color: white; }
+    .view-tabs button:hover { color: white; }
+    .app-copy h2 { max-width: 16ch; }
+    kbd { color: #e0e0e0; font: .875rem/1.6 Consolas, monospace; white-space: nowrap; }
+    .workflow-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 40px; }
+    .workflow-notes h3 { font-size: 1.0625rem; font-weight: 600; margin-bottom: 7px; }
+    .workflow-notes p { color: var(--secondary); font-size: 1rem; }
+    .controls { margin-top: 30px; border-top: 1px solid var(--line); }
+    .controls summary { color: #c4c4c4; padding-top: 17px; font-size: .875rem; }
+    .shortcut-list { display: grid; grid-template-columns: 140px 1fr; gap: 13px 25px; padding-top: 20px; font-size: .9375rem; }
+    .shortcut-list dd { color: var(--secondary); }
+    .video-section { padding-top: 0; }
+    .video-layout { display: grid; grid-template-columns: .85fr 1.2fr; gap: 90px; align-items: center; border-top: 1px solid var(--line); padding-top: 64px; }
+    .video-layout > * { min-width: 0; }
+    .video-layout .text-link { margin-top: 20px; color: var(--accent); }
+    .video { position: relative; aspect-ratio: 16/9; border: 1px solid var(--line); background: #000; overflow: hidden; }
+    .video-trigger { position: absolute; inset: 0; display: block; }
+    .video-trigger img { width: 100%; height: 100%; object-fit: cover; }
+    .play { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 64px; height: 48px; display: grid; place-items: center; background: #171717ec; color: white; border: 1px solid #ffffff85; border-radius: 4px; }
+    .play svg { width: 23px; height: 23px; fill: currentColor; margin-left: 4px; }
+    .video-trigger:hover .play { background: var(--accent); color: var(--bg); border-color: var(--accent); }
     .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-
-    /* Feature list */
-    .features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 40px; margin-top: 36px; }
-    @media (max-width: 720px) { .features { grid-template-columns: 1fr; } }
-    .feature { display: grid; grid-template-columns: 22px 1fr; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--hair); }
-    .feature .dot { width: 10px; height: 10px; margin-top: 7px; border-radius: 2px; background: var(--accent); }
-    .feature b { display: block; font-weight: 600; }
-    .feature span { color: var(--ink2); font-size: 15px; }
-    .shot { margin-top: 40px; border: 1px solid var(--hair2); border-radius: 10px; overflow: hidden; background: var(--bg-soft); }
-    .shot figcaption { padding: 12px 16px; font-size: 13px; color: var(--ink3); border-top: 1px solid var(--hair); }
-
-    /* Cards table */
-    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 36px; }
-    @media (max-width: 820px) { .cards { grid-template-columns: 1fr; } }
-    .cardrow { padding: 22px; border: 1px solid var(--hair); border-radius: 10px; background: var(--card); }
-    .cardrow h3 { font-size: 17px; font-weight: 600; }
-    .cardrow .bus { font-size: 12px; color: var(--ink3); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
-    .cardrow p { margin-top: 12px; color: var(--ink2); font-size: 14.5px; }
-
-    /* FAQ */
-    .faq { margin-top: 32px; border-top: 1px solid var(--hair); }
-    details { border-bottom: 1px solid var(--hair); }
-    summary { cursor: pointer; list-style: none; padding: 18px 0; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-    summary::-webkit-details-marker { display: none; }
-    summary::after { content: '+'; color: var(--ink3); font-weight: 400; font-size: 20px; }
-    details[open] summary::after { content: '–'; }
-    details p { padding: 0 0 18px; color: var(--ink2); max-width: 78ch; }
-
-    /* Footer */
-    footer { padding: 40px 0 60px; color: var(--ink3); font-size: 14px; }
-    footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
-    footer a { color: var(--ink2); }
+    .video-note { color: var(--muted); font-size: .75rem; margin-top: 9px; }
+    .support-section { background: #111; border-top: 1px solid #252525; padding-block: 68px; }
+    .support-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; }
+    .support-grid h2 { font-size: 1.75rem; margin-bottom: 23px; }
+    .hardware-list > div { padding-block: 16px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .hardware-list > div:first-child { padding-top: 0; }
+    .hardware-list dt { font-weight: 550; }
+    .hardware-list dd { color: var(--secondary); text-align: right; font-size: .9375rem; }
+    .support-details { margin-top: 19px; font-size: .875rem; }
+    .support-details summary { color: #c6c6c6; padding-block: 6px; }
+    .support-details p { margin-top: 14px; color: var(--secondary); }
+    .faq details { border-bottom: 1px solid var(--line); }
+    .faq summary { display: flex; justify-content: space-between; gap: 16px; padding: 13px 0; list-style: none; font-size: .9375rem; }
+    .faq details:first-child summary { padding-top: 0; }
+    .faq summary::-webkit-details-marker { display: none; }
+    .faq summary::after { content: '+'; color: #a3a3a3; flex-shrink: 0; }
+    .faq details[open] summary::after { content: '−'; }
+    .faq details p { padding: 0 0 17px; color: var(--secondary); font-size: .875rem; }
+    .footer-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px 25px; min-height: 100px; padding-block: 24px; font-size: .8125rem; color: var(--muted); }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 9px 24px; }
+    .footer-links a { padding-block: 8px; text-decoration: none; }
+    @media (max-width: 1050px) {
+      .wrap { width: calc(100% - 48px); }
+      .hero-grid { gap: 35px; grid-template-columns: .9fr 1.1fr; }
+      .hero { padding-block: 65px; }
+      h1 { font-size: 3.1rem; }
+      .section-links { gap: 22px; }
+      .product-nav-inner { gap: 24px; }
+      .performance-grid { gap: 45px; }
+      .showcase-grid { gap: 35px; }
+      .support-grid { gap: 42px; }
+      .video-layout { gap: 50px; }
+    }
+    @media (max-width: 760px) {
+      html { scroll-padding-top: 125px; }
+      .header-inner { min-height: 60px; }
+      .header-links { gap: 17px; }
+      .header-links > span { display: none; }
+      .hero { padding: 44px 0 40px; }
+      .hero-grid { grid-template-columns: 1fr; gap: 35px; }
+      h1 { font-size: clamp(2.75rem, 9vw, 3.75rem); }
+      .hero-description { max-width: 45ch; margin-top: 19px; font-size: 1.0625rem; }
+      .actions { margin-top: 24px; }
+      .product-nav-inner { flex-wrap: wrap; gap: 0 20px; padding-top: 11px; }
+      .nav-name { font-size: 1rem; }
+      .section-links { order: 3; width: 100%; justify-content: space-between; gap: 18px; overflow-x: auto; }
+      .section-links a { padding-block: 13px; font-size: .8125rem; }
+      .feature-section { padding-block: 62px; }
+      .section-intro { margin-bottom: 30px; text-align: left; }
+      h2 { font-size: 2rem; }
+      .section-description { margin-top: 18px; font-size: 1rem; }
+      .hdr-figure figcaption { text-align: left; }
+      .performance-grid, .showcase-grid, .support-grid, .video-layout { grid-template-columns: 1fr; gap: 32px; }
+      .performance-copy h2, .app-copy h2 { max-width: none; }
+      .measurement-details { margin-top: 28px; }
+      .view-tabs { margin-bottom: 20px; }
+      .app-copy { grid-row: 1; }
+      .workflow-notes { gap: 24px; margin-top: 30px; }
+      .video-section { padding-top: 0; }
+      .video-layout { padding-top: 40px; }
+      .support-section { padding-block: 50px; }
+      .support-grid { gap: 44px; }
+    }
+    @media (max-width: 440px) {
+      .wrap { width: calc(100% - 36px); }
+      .header-links { font-size: .8125rem; }
+      .workflow-notes { grid-template-columns: 1fr; }
+      .chart-group-heading { flex-wrap: wrap; gap: 2px 10px; }
+      .chart-group-heading small { margin-left: 5px; }
+      .bar-row { grid-template-columns: 48px minmax(0,1fr) 53px; gap: 7px; font-size: .75rem; }
+      .chart-scale { margin-left: 55px; margin-right: 60px; }
+      .shortcut-list { grid-template-columns: 98px 1fr; gap: 14px; }
+      .section-links { gap: 18px; }
+      .hardware-list > div { grid-template-columns: .9fr 1.1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   </style>
 </head>
 <body>
-
-  <header class="top">
-    <div class="wrap">
-      <a class="brand" href="#"><span class="brand-mark">N</span>NitLink</a>
-      <nav class="nav">
-        <a href="#latency">Latency</a>
-        <a href="#features">Features</a>
-        <a href="#cards">Cards</a>
-        <a href="#faq">FAQ</a>
-        <a href="https://github.com/nitlink-dev/nitlink">GitHub</a>
-      </nav>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="global-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#" aria-label="NitLink home"><img src="images/favicon.png" width="48" height="48" alt="">NitLink</a>
+      <div class="header-links"><span>Open-source capture card viewer</span><a href="https://github.com/nitlink-dev/nitlink">GitHub ↗</a></div>
     </div>
   </header>
-
-  <section class="hero">
-    <div class="wrap">
-      <div>
-        <div class="eyebrow">Free · Open source · Windows</div>
-        <h1>Your console as a <span>window</span> on your PC.</h1>
-        <p class="lede">NitLink turns an Elgato capture card into a normal Windows app: real HDR10, VRR that follows the game's frame rate, and the lowest preview latency measured on a photon rig. No input switching, no second monitor.</p>
-        <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/nitlink-dev/nitlink/releases/latest">Download for Windows</a>
-          <a class="btn btn-ghost" href="https://github.com/nitlink-dev/nitlink">View on GitHub</a>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-heading">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="product-label">NitLink for Windows</p>
+          <h1 id="hero-heading">Your console.<span>On your PC.</span></h1>
+          <p class="hero-description">Play your console in a Windows window, with HDR10, variable refresh, and measured low latency. Keep your game and the rest of your desktop on the same screen.</p>
+          <div class="actions">
+            <a class="button" href="https://github.com/nitlink-dev/nitlink/releases/latest"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/></svg>Download for Windows</a>
+            <a class="text-link" href="#video">Watch demo <span aria-hidden="true">›</span></a>
+          </div>
+          <p class="hero-meta">Windows 10 / 11 · Free · No account or telemetry</p>
         </div>
-        <p class="meta">Windows 10 / 11 · Elgato 4K Pro, 4K X, 4K S · MIT license · no telemetry</p>
+        <figure class="desktop-visual">
+          <img src="images/desktop-hero.webp" width="1920" height="1080"
+               alt="Demon's Souls running in NitLink beside Discord and a trophy guide on the Windows desktop"
+               fetchpriority="high">
+        </figure>
       </div>
-      <figure class="hero-art">
-        <img src="images/f1-settings.webp" alt="NitLink showing a PS5 game with the settings drawer open beside it">
-        <span class="tag">PS5 · HDR10 · 4K60 · F1 panel open</span>
-      </figure>
-    </div>
-  </section>
+    </section>
 
-  <div class="strip">
-    <div class="wrap">
-      <div class="stat"><b>−7.3 ms</b><span>vs Elgato's app, 4K S</span></div>
-      <div class="stat"><b>HDR10</b><span>10-bit P010, no conversion</span></div>
-      <div class="stat"><b>VRR</b><span>in a window, real frame rate</span></div>
-      <div class="stat"><b>&lt; 1 ms</b><span>present to glass</span></div>
-    </div>
-  </div>
+    <nav class="product-nav" aria-label="Product navigation">
+      <div class="wrap product-nav-inner">
+        <a class="nav-name" href="#main">NitLink</a>
+        <div class="section-links"><a href="#features">HDR10</a><a href="#latency">Latency</a><a href="#everyday">Features</a><a href="#cards">Compatibility</a><a href="#faq">Support</a></div>
+        <a class="button nav-download" href="https://github.com/nitlink-dev/nitlink/releases/latest">Download</a>
+      </div>
+    </nav>
 
-  <section id="why">
-    <div class="wrap">
-      <div class="kicker">Why it exists</div>
-      <h2>Capture software is built for recording. This is built for playing.</h2>
-      <p class="sub">Every capture utility shows you a preview as an afterthought: stereo, SDR, a frame or two late, in a window that fights your desktop. NitLink is only a viewer, so every decision goes to the picture and the delay between the console and your eyes.</p>
-      <div class="grid3">
-        <div class="card"><span class="n">01</span><h3>Present on arrival</h3><p>Each captured frame is presented the instant it lands instead of waiting for the next refresh. Tearing-allowed, capped just under your display's refresh, so a VRR panel absorbs it.</p></div>
-        <div class="card"><span class="n">02</span><h3>Real HDR10</h3><p>The card is asked for 10-bit P010 and the swap chain is HDR10 PQ. Zero color conversion between the console and the panel. Auto-detected on the 4K Pro and 4K X.</p></div>
-        <div class="card"><span class="n">03</span><h3>VRR that means it</h3><p>Cards deliver a fixed 60 or 120 frames. A GPU frame differ finds the frames that actually changed and presents only those, so G-Sync and FreeSync follow the game, not the card.</p></div>
+    <section class="feature-section" id="features" aria-labelledby="hdr-heading">
+      <div class="wrap">
+        <div class="section-intro">
+          <p class="feature-label">Native HDR10</p>
+          <h2 id="hdr-heading">Keep your game in HDR.</h2>
+          <p class="section-description">A native 10-bit capture path carries HDR10 from your console to your display. NitLink follows HDR sources automatically on the Elgato 4K Pro and 4K X.</p>
+        </div>
+        <figure class="hdr-figure">
+          <a href="images/COMPARSIONS.webp" aria-label="Open the full-size HDR comparison"><img src="images/COMPARSIONS.webp" width="9802" height="4284" alt="The same game scene on an LG C3: native HDMI on the left, NitLink HDR10 in the middle, and Elgato Studio on the right" loading="lazy" decoding="async"></a>
+          <figcaption>Photographed on the same LG C3 with exposure, focus, and white balance locked. This web image illustrates the comparison; it cannot reproduce the display’s full HDR range. <a href="images/COMPARSIONS.webp">View full size</a>.</figcaption>
+        </figure>
+        <p class="feature-note">Requires an HDR display with Windows HDR enabled. The 4K S supports manual HDR at 1080p.</p>
+      </div>
+    </section>
+
+    <section class="feature-section performance-section" id="latency" aria-labelledby="latency-heading">
+      <div class="wrap">
+        <div class="performance-grid">
+          <div class="performance-copy">
+            <p class="feature-label">Low-latency preview</p>
+            <h2 id="latency-heading">Less delay.<br>Measured.</h2>
+            <p class="section-description">NitLink presents captured frames as they arrive. In back-to-back tests against Elgato’s 4K Capture Utility, it was faster on the 4K Pro and 4K S, and statistically tied on the 4K X.</p>
+            <a class="text-link" href="https://github.com/nitlink-dev/nitlink/blob/main/docs/LATENCY.md">See how it was tested <span aria-hidden="true">›</span></a>
+          </div>
+          <figure class="chart" aria-labelledby="chart-caption">
+            <figcaption id="chart-caption">Median latency in milliseconds · Lower is better</figcaption>
+            <div class="chart-scale" aria-hidden="true"><span>0</span><span>20</span><span>40</span><span>60</span><span>80</span></div>
+            <div class="chart-group" role="group" aria-label="Elgato 4K Pro at 1080p144">
+              <div class="chart-group-heading"><strong>4K Pro <small>1080p144</small></strong><span class="chart-delta">NitLink −5.9 ms</span></div>
+              <div class="bar-row"><span class="bar-label">NitLink</span><div class="bar-track" aria-hidden="true"><span class="bar" style="--value:48%"></span></div><span class="bar-value">38.4 ms</span></div>
+              <div class="bar-row"><span class="bar-label">Elgato</span><div class="bar-track" aria-hidden="true"><span class="bar elgato" style="--value:55.25%"></span></div><span class="bar-value">44.2 ms</span></div>
+            </div>
+            <div class="chart-group" role="group" aria-label="Elgato 4K X at 4K120">
+              <div class="chart-group-heading"><strong>4K X <small>4K120</small></strong><span class="chart-delta">Statistical tie</span></div>
+              <div class="bar-row"><span class="bar-label">NitLink</span><div class="bar-track" aria-hidden="true"><span class="bar" style="--value:59.625%"></span></div><span class="bar-value">47.7 ms</span></div>
+              <div class="bar-row"><span class="bar-label">Elgato</span><div class="bar-track" aria-hidden="true"><span class="bar elgato" style="--value:60.5%"></span></div><span class="bar-value">48.4 ms</span></div>
+            </div>
+            <div class="chart-group" role="group" aria-label="Elgato 4K S at 4K60">
+              <div class="chart-group-heading"><strong>4K S <small>4K60</small></strong><span class="chart-delta">NitLink −7.3 ms</span></div>
+              <div class="bar-row"><span class="bar-label">NitLink</span><div class="bar-track" aria-hidden="true"><span class="bar" style="--value:84.75%"></span></div><span class="bar-value">67.8 ms</span></div>
+              <div class="bar-row"><span class="bar-label">Elgato</span><div class="bar-track" aria-hidden="true"><span class="bar elgato" style="--value:93.875%"></span></div><span class="bar-value">75.1 ms</span></div>
+            </div>
+            <p class="feature-note">100 samples per app and card. Compare apps within each pair; different source modes do not rank the cards.</p>
+          </figure>
+        </div>
+        <details class="measurement-details">
+          <summary>Full results and test setup</summary>
+          <div class="measurement-content">
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Full latency results; scroll horizontally if needed">
+              <table class="latency-table">
+                <thead><tr><th scope="col">Card / source</th><th scope="col">NitLink</th><th scope="col">Elgato</th><th scope="col">Difference</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">4K Pro · 1080p144</th><td>38.4 ms</td><td>44.2 ms</td><td>−5.9 ms</td></tr>
+                  <tr><th scope="row">4K X · 4K120</th><td>47.7 ms</td><td>48.4 ms</td><td>Statistical tie</td></tr>
+                  <tr><th scope="row">4K S · 4K60</th><td>67.8 ms</td><td>75.1 ms</td><td>−7.3 ms</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="feature-note">RTX 5080 · LG C3 OLED at 120 Hz · Windows 11 · NitLink 1.1 pre-release · June 5, 2026. Absolute results include the rig’s source and trigger path and are specific to this setup. Differences use unrounded medians.</p>
+            <div class="references"><a href="https://github.com/nitlink-dev/nitlink/blob/main/docs/LATENCY.md">Test rig and methodology</a><a href="latency-raw.csv" download>All 600 samples (CSV)</a></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="feature-section" id="everyday" aria-label="NitLink on your desktop">
+      <div class="wrap">
+        <div class="view-tabs" id="view-tabs" role="tablist" aria-label="Explore the NitLink interface" hidden>
+          <button type="button" id="settings-tab" role="tab" aria-selected="true" aria-controls="settings-view" tabindex="0">Settings</button>
+          <button type="button" id="hud-tab" role="tab" aria-selected="false" aria-controls="hud-view" tabindex="-1">Performance HUD</button>
+        </div>
+        <div id="settings-view" role="tabpanel" aria-labelledby="settings-tab" tabindex="0">
+          <div class="showcase-grid">
+            <figure class="app-visual">
+              <img src="images/f1-settings.webp" width="1920" height="1117" alt="NitLink displaying a PS5 game with the F1 Video settings panel open on the right, including presentation, color, scaling, and panel position controls" loading="lazy" decoding="async">
+              <figcaption>Actual NitLink interface · Elgato 4K X · 3840 × 2160 / 60 FPS</figcaption>
+            </figure>
+            <div class="app-copy">
+              <p class="feature-label">The F1 settings panel</p>
+              <h2>Make an adjustment.<br>Keep playing.</h2>
+              <p class="section-description">Change your capture source, picture settings, and audio without leaving the game. Press <kbd>F1</kbd> to bring up the panel, make your change, and close it again.</p>
+              <p class="feature-note">Switch capture cards and formats without restarting.</p>
+            </div>
+          </div>
+        </div>
+        <div id="hud-view" role="tabpanel" aria-labelledby="hud-tab" tabindex="0" hidden>
+          <div class="showcase-grid">
+            <figure class="app-visual">
+              <img src="images/hud-overlay.webp" width="1299" height="786" alt="NitLink's performance HUD over gameplay, showing 59 FPS, 4.0 ms app ingest time, and GPU and pipeline status" loading="lazy" decoding="async">
+              <figcaption>Actual NitLink HUD. App ingest time is only part of the capture-to-display pipeline.</figcaption>
+            </figure>
+            <div class="app-copy">
+              <p class="feature-label">Live performance HUD</p>
+              <h2>See how your<br>capture is running.</h2>
+              <p class="section-description">Frame rate, app ingest latency, GPU time, and pipeline status are a keypress away. Use <kbd>Ctrl + F3</kbd> to show the overlay while you play.</p>
+              <p class="feature-note">Read the current session directly, without opening another tool.</p>
+            </div>
+          </div>
+        </div>
+        <noscript><p class="feature-note"><a href="images/hud-overlay.webp">View the performance HUD screenshot</a>.</p></noscript>
+        <div class="workflow-notes">
+          <div><h3>Fullscreen or picture-in-picture</h3><p>Play fullscreen, or use <kbd>Alt + P</kbd> to pin the console in a corner. Share the window in Discord or capture it in OBS.</p></div>
+          <div><h3>Variable refresh that follows the game</h3><p>Source frame rate pacing detects duplicate frames on the GPU, so a compatible G-Sync or FreeSync display can follow the actual game frame rate.</p></div>
+        </div>
+        <details class="controls">
+          <summary>Shortcuts, image controls, and requirements</summary>
+          <dl class="shortcut-list">
+            <dt><kbd>F1</kbd></dt><dd>Open settings. Select a capture device and format, route audio, adjust volume, or mute.</dd>
+            <dt><kbd>Alt + H</kbd></dt><dd>Toggle HDR on supported capture paths. On the 4K S, switch between 4K SDR and 1080p HDR.</dd>
+            <dt><kbd>Alt + P</kbd></dt><dd>Toggle picture-in-picture. <kbd>Ctrl + Arrows</kbd> adjusts its position.</dd>
+            <dt><kbd>Ctrl + F3</kbd></dt><dd>Show frame rate, ingest latency, GPU time, and pipeline status.</dd>
+            <dt><kbd>Ctrl + S</kbd></dt><dd>Save a shareable PNG plus a true-HDR JXR file when capturing HDR.</dd>
+            <dt>Image scaling</dt><dd>Catmull-Rom resampling and optional NVIDIA Image Scaling for GPU upscaling and sharpening.</dd>
+            <dt>Aspect ratio</dt><dd>Auto, 4:3, 16:9, 16:10, 21:9, or stretch.</dd>
+            <dt>Frame pacing</dt><dd>Low-latency mode is on by default. The present-rate cap stays just below the display refresh when the source allows it. Source frame rate pacing can add up to one capture interval of latency.</dd>
+            <dt>Display setup</dt><dd>Enable Windows HDR on an HDR display. Variable refresh needs a compatible display with VRR enabled. Low-latency presentation may tear on fixed-refresh displays.</dd>
+          </dl>
+        </details>
+      </div>
+    </section>
+
+    <section class="feature-section video-section" id="video" aria-labelledby="video-heading">
+      <div class="wrap video-layout">
+        <div>
+          <p class="feature-label">NitLink in action</p>
+          <h2 id="video-heading">See a full session.</h2>
+          <p class="section-description">From setup to a PS5 Pro game. An eight-minute walkthrough of HDR, variable refresh, and the controls in NitLink 1.1.</p>
+          <a class="text-link" href="https://youtu.be/w8Rq5Bonbgg">Watch on YouTube <span aria-hidden="true">›</span></a>
+        </div>
+        <div>
+          <div class="video" id="showcase-player">
+            <a class="video-trigger" href="https://youtu.be/w8Rq5Bonbgg" aria-label="Play the NitLink 1.1 showcase">
+              <img src="images/nitlink-thumbnail-1280x720.webp" alt="" width="1280" height="720" loading="lazy" decoding="async">
+              <span class="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 3 15 9-15 9z"/></svg></span>
+            </a>
+          </div>
+          <p class="video-note">YouTube loads only when you press play.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="support-section">
+      <div class="wrap support-grid">
+        <section id="cards" aria-labelledby="cards-heading">
+          <h2 id="cards-heading">Capture card compatibility</h2>
+          <dl class="hardware-list">
+            <div><dt>Elgato 4K Pro</dt><dd>4K60 HDR10</dd></div>
+            <div><dt>Elgato 4K X</dt><dd>Up to 4K120 capture</dd></div>
+            <div><dt>Elgato 4K S</dt><dd>4K60 SDR / 1080p HDR</dd></div>
+          </dl>
+          <p class="feature-note">Cam Link 4K is also supported. Other Media Foundation cards use the generic capture path.</p>
+          <details class="support-details">
+            <summary>Capture formats and system requirements</summary>
+            <p><strong>4K Pro:</strong> PCIe, HDMI 2.1. Automatic HDR detection and live source details. VRR passthrough; 120 Hz capture uses a lower resolution.</p>
+            <p><strong>4K X:</strong> USB, HDMI 2.1. Automatic HDR detection. Native controls expose the source name, resolution, and HDR state. Available HDR formats depend on resolution and frame rate.</p>
+            <p><strong>4K S:</strong> USB, HDMI 2.0. USB bandwidth limits HDR capture to 1080p. Use <kbd>Alt + H</kbd> to switch between 4K SDR and 1080p HDR.</p>
+            <p><strong>Windows:</strong> Windows 10 (1809+) or Windows 11, a DirectX 11-capable GPU, and Microsoft Edge WebView2. HDR and VRR require a compatible display and enabled Windows/display settings.</p>
+            <p>Generic Media Foundation cards work without Elgato-specific controls. <a href="https://github.com/nitlink-dev/nitlink/issues">Report your hardware results</a>.</p>
+          </details>
+          <details class="support-details" id="why">
+            <summary>About the project</summary>
+            <p>NitLink started with a PS5 and a 42-inch monitor that was already the main PC display. The goal was to play the console in a normal window, without switching inputs or adding another screen.</p>
+            <p>NitLink is free, MIT-licensed, and developed by Klosed Lab.</p>
+          </details>
+        </section>
+        <section id="faq" aria-labelledby="faq-heading">
+          <h2 id="faq-heading">Questions and support</h2>
+          <div class="faq">
+            <details><summary>Is it as fast as direct HDMI?</summary><p>A capture card adds latency compared with a direct connection. NitLink minimizes the viewer’s part of that delay. For the least possible delay in competitive play, use a direct connection or HDMI passthrough. Low-latency presentation can tear on fixed-refresh displays.</p></details>
+            <details><summary>Can I record with OBS?</summary><p>Yes. Open the card in NitLink, then add NitLink as a Game Capture source in OBS. The same card can only be opened by one app at a time. Recording overhead depends on your hardware and OBS settings.</p></details>
+            <details><summary>Does surround sound work?</summary><p>The supported Elgato cards deliver stereo PCM to NitLink. Set the console to Linear PCM, 2.0 channels, to avoid losing dialogue or other channels in the card’s downmix.</p></details>
+            <details><summary>How much CPU does it use?</summary><p>About half of one CPU core at 4K60 on the project’s tested setup. Pixel processing runs on the GPU; the CPU handles capture and frame transfer. Usage varies with your card, resolution, GPU, and processing options.</p></details>
+            <details><summary>Why does SmartScreen warn?</summary><p>The executable isn’t code-signed yet. Get it from the <a href="https://github.com/nitlink-dev/nitlink/releases/latest">official GitHub releases</a>. If you’ve verified the download and choose to run it, select “More info,” then “Run anyway.” The source is public.</p></details>
+            <details><summary>How do I install it? Is it free?</summary><p>Download the release ZIP, extract it, and run NitLink.exe. It’s free and MIT-licensed, with no account or telemetry. You can support development through <a href="https://ko-fi.com/klosed89">Ko-fi</a>.</p></details>
+          </div>
+          <a class="text-link" href="https://github.com/nitlink-dev/nitlink/issues">Get help on GitHub <span aria-hidden="true">›</span></a>
+        </section>
       </div>
     </div>
-  </section>
-
-  <section id="latency">
-    <div class="wrap">
-      <div class="kicker">Measured, not claimed</div>
-      <h2>Ahead or even on every card tested. Never loses.</h2>
-      <p class="sub">Same rig, same session, same card and display, NitLink against Elgato's own capture software. Photon-to-photon, medians of 100 samples. The rig, the method, every caveat, and the raw data are published.</p>
-      <div class="table">
-        <table>
-          <thead><tr><th>Card / source mode</th><th>NitLink</th><th>Elgato</th><th>Difference</th></tr></thead>
-          <tbody>
-            <tr><td>4K Pro @ 1080p144</td><td class="num win">38.4 ms</td><td class="num">44.2 ms</td><td class="win">−5.9 ms</td></tr>
-            <tr><td>4K X @ 4K120</td><td class="num win">47.7 ms</td><td class="num">48.4 ms</td><td>tie, within noise</td></tr>
-            <tr><td>4K S @ 4K60</td><td class="num win">67.8 ms</td><td class="num">75.1 ms</td><td class="win">−7.3 ms</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="note">Absolute numbers depend on your panel and setup; the trustworthy figure is the back-to-back delta on identical hardware, which is what's shown. Methodology and raw data: <a href="https://github.com/nitlink-dev/nitlink/blob/main/docs/LATENCY.md">docs/LATENCY.md</a>.</p>
-    </div>
-  </section>
-
-  <section id="video">
-    <div class="wrap">
-      <div class="kicker">Eight minutes</div>
-      <h2>See it run.</h2>
-      <p class="sub">The 1.1 showcase: install, HDR, VRR, the panel, and a PS5 Pro session played inside a window.</p>
-      <div class="video">
-        <iframe src="https://www.youtube-nocookie.com/embed/w8Rq5Bonbgg" title="NitLink 1.1 showcase" allow="accelerometer; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
-      </div>
-    </div>
-  </section>
-
-  <section id="features">
-    <div class="wrap">
-      <div class="kicker">What's in the box</div>
-      <h2>Everything a viewer should do, nothing a recorder does.</h2>
-      <div class="features">
-        <div class="feature"><span class="dot"></span><div><b>Settings drawer</b><span>F1 opens a translucent panel beside the picture; the game keeps running under it.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Low-latency mode</b><span>On by default. Present on arrival with an automatic cap just under your refresh rate.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>HDR10 auto-detect</b><span>Follows the source on the 4K Pro and 4K X. Alt+H flips it by hand anywhere.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Aspect ratio</b><span>Auto, 4:3, 16:9, 16:10, 21:9, stretch. Fixes retro consoles a card delivers stretched.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Picture-in-picture</b><span>Alt+P pins the console in a corner while you work; Ctrl+Arrows nudges it.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>NVIDIA Image Scaling</b><span>Compute-shader upscale and sharpening at non-native window sizes.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>HUD</b><span>Ctrl+F3: frame rate, app ingest latency, GPU time, and pipeline badges, live.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Source picker</b><span>Switch cards and force a capture format without restarting.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Screenshots</b><span>Ctrl+S saves the frame; JXR in HDR so nothing is clipped.</span></div></div>
-        <div class="feature"><span class="dot"></span><div><b>Plays nice with everything</b><span>Share the window in Discord, record it with OBS, run it beside a PC game.</span></div></div>
-      </div>
-      <figure class="shot">
-        <img src="images/COMPARSIONS.webp" alt="HDR comparison between NitLink and a standard capture preview">
-        <figcaption>HDR10 through NitLink against a standard SDR preview of the same scene.</figcaption>
-      </figure>
-    </div>
-  </section>
-
-  <section id="cards">
-    <div class="wrap">
-      <div class="kicker">Hardware</div>
-      <h2>Built and tested on the Elgato cards people actually own.</h2>
-      <div class="cards">
-        <div class="cardrow"><h3>Elgato 4K Pro</h3><div class="bus">PCIe · HDMI 2.1</div><p>4K60 HDR10 with VRR passthrough. HDR auto-detect and source mode read straight from the driver. The lowest-latency card tested.</p></div>
-        <div class="cardrow"><h3>Elgato 4K X</h3><div class="bus">USB · HDMI 2.1</div><p>4K120 capture. Native support through the card's own control interface: source name, resolution, HDR state, live source-follow.</p></div>
-        <div class="cardrow"><h3>Elgato 4K S</h3><div class="bus">USB · HDMI 2.0</div><p>4K60 SDR or 1080p HDR10, a USB bandwidth ceiling. HDR is one keypress away. Cam Link 4K works too.</p></div>
-      </div>
-      <p class="note">Other Media Foundation cards run through the generic path without the Elgato extras. Reports welcome on GitHub.</p>
-    </div>
-  </section>
-
-  <section id="faq">
-    <div class="wrap">
-      <div class="kicker">Questions people ask</div>
-      <h2>Straight answers.</h2>
-      <div class="faq">
-        <details><summary>Does it add lag compared to plugging the console into the monitor?</summary><p>The capture card adds its own latency and NitLink adds almost none on top: present-to-glass is under a millisecond. Through the 4K Pro the whole chain feels like a direct connection for everything short of frame-perfect competitive play. Numbers above.</p></details>
-        <details><summary>Can OBS record while I play in NitLink?</summary><p>Yes. A capture card can only be opened by one app at a time, so don't point OBS at the card. Add NitLink as a Game Capture source in OBS and record the window; it adds nothing to your play latency.</p></details>
-        <details><summary>Surround sound?</summary><p>No capture card from Elgato forwards more than stereo PCM to the PC, so NitLink plays two channels. Set the console to Linear PCM 2.0 so the center channel isn't lost in the card's downmix.</p></details>
-        <details><summary>How heavy is it on the CPU?</summary><p>About half of one core at 4K60. Nothing is computed on the CPU; the pixel work is on the GPU, and the CPU's job is copying each frame from the driver to the GPU. It doesn't fight a game for cores.</p></details>
-        <details><summary>Windows SmartScreen warns about the download.</summary><p>The binary isn't code-signed yet. Click "More info", then "Run anyway". The source is public and every release is built from a tagged commit.</p></details>
-        <details><summary>Is it really free?</summary><p>Free and MIT-licensed, no telemetry, no account. If it saved you a second monitor, there's a Ko-fi in the app's About panel.</p></details>
-      </div>
-    </div>
-  </section>
-
+  </main>
   <footer>
-    <div class="wrap">
+    <div class="wrap footer-inner">
       <span>NitLink · Klosed Lab · MIT license</span>
-      <span><a href="https://github.com/nitlink-dev/nitlink">GitHub</a> · <a href="https://github.com/nitlink-dev/nitlink/issues">Issues</a> · <a href="https://youtu.be/w8Rq5Bonbgg">YouTube</a> · <a href="https://ko-fi.com/klosed89">Ko-fi</a></span>
+      <nav class="footer-links" aria-label="Project links"><a href="https://github.com/nitlink-dev/nitlink">GitHub</a><a href="https://github.com/nitlink-dev/nitlink/issues">Issues</a><a href="https://youtu.be/w8Rq5Bonbgg">YouTube</a><a href="https://ko-fi.com/klosed89">Ko-fi</a></nav>
     </div>
   </footer>
-
+  <script>
+    (() => {
+      const tabList = document.getElementById('view-tabs');
+      const tabs = Array.from(tabList.querySelectorAll('[role="tab"]'));
+      const activate = (tab, moveFocus = false) => {
+        tabs.forEach((item) => {
+          const selected = item === tab;
+          item.setAttribute('aria-selected', String(selected));
+          item.tabIndex = selected ? 0 : -1;
+          document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+        });
+        if (moveFocus) tab.focus();
+      };
+      tabList.hidden = false;
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => activate(tab));
+        tab.addEventListener('keydown', (event) => {
+          let next;
+          if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+          else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+          else if (event.key === 'Home') next = 0;
+          else if (event.key === 'End') next = tabs.length - 1;
+          else return;
+          event.preventDefault();
+          activate(tabs[next], true);
+        });
+      });
+      const trigger = document.querySelector('.video-trigger');
+      trigger.addEventListener('click', (event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        const frame = document.createElement('iframe');
+        frame.src = 'https://www.youtube-nocookie.com/embed/w8Rq5Bonbgg?autoplay=1';
+        frame.title = 'NitLink 1.1 showcase';
+        frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+        frame.allowFullscreen = true;
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        document.getElementById('showcase-player').replaceChildren(frame);
+        frame.focus();
+      });
+    })();
+  </script>
 </body>
 </html>

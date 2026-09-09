@@ -25,7 +25,7 @@ Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Li
 
 <p align="center">
   <a href="https://youtu.be/w8Rq5Bonbgg">
-    <img src="docs/images/nitlink-thumbnail-1280x720.png" alt="NitLink 1.1.0 showcase video" width="900">
+    <img src="docs/images/nitlink-thumbnail-1280x720.webp" alt="NitLink 1.1.0 showcase video" width="900">
   </a>
 </p>
 
