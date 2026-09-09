@@ -66,7 +66,7 @@ NitLink is NOT for you if:
 
 - **Real HDR10 passthrough**: auto-detects HDR sources from the Elgato HDR InfoFrame on cards that expose it, negotiates native 10-bit P010 capture (BT.2020 PQ), presents through an R10G10B10A2 + `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020` swap chain. Zero color conversion. The card's internal HDR-to-SDR tonemapper is disabled at startup. Color range is handled per the HDR-over-HDMI standard (limited-range luma, full-range chroma) so skin tones and blacks render the way the source intended — no orange shift, no milky blacks. `Alt+R` gives a manual range override (Auto / Full / Limited) for third-party cards or edge cases.
 - **Lowest-latency preview, measured.** NitLink presents each captured frame the instant it arrives (low-latency mode, ON by default). On a fixed photon rig, back-to-back against Elgato's own preview software on the same card, NitLink comes out ahead or even on every card tested and never loses. This comes from a low-latency tearing/VRR present — a deliberate tradeoff: lowest latency, but it can tear on a fixed-refresh display, so it's best paired with VRR. `Alt+L` (or the F1 panel) turns low-latency off if you want it, which only adds input lag; the present stays tearing-allowed. See [Performance](#performance).
-- **VRR (G-Sync / FreeSync) in a window.** Capture cards deliver frames at the negotiated rate regardless of the source's actual framerate (HDMI-level frame duplication). NitLink's GPU frame differ detects unique vs duplicate frames and, with VRR pacing on, only presents unique frames so the monitor's VRR follows the real game framerate. Defaults to OFF; toggle on from the F1 panel (or `vrr_present_pacing = true`) on a G-Sync / FreeSync display. Leave OFF on fixed-refresh displays.
+- **Present pacing (VRR, frame generation, and 30 fps judder).** Capture cards deliver frames at the negotiated HDMI rate regardless of the source's actual framerate, duplicating frames to fill it: a 30 fps game arrives as 60 frames a second. The Present Pacing row in the F1 panel chooses which rate NitLink presents at. **Display refresh** (default) presents every frame the monitor draws, the lowest-latency behavior. **Capture rate** presents once per frame the card delivers. **Source frame rate** uses the GPU frame differ to present only when the picture actually changes, so a G-Sync / FreeSync monitor follows the real game framerate, external frame-generation tools such as Lossless Scaling read the real frame rate instead of the panel rate, and 30 fps content stops juddering against a present rate that is not a multiple of it. Both paced modes cost up to one capture interval of latency and turn the present cap off. `present_pacing` in `nitlink.json`.
 - **Live source detection in the title bar.** On supported Elgato cards NitLink reads the HDMI source identifier, resolution, fps, and HDR state straight from the card's vendor protocol and shows them in the window title (e.g. `NitLink - PlayStation 5 [HDR]` or `NitLink - 3840x2160 @ 60Hz [HDR]`), updating live as the source changes.
 - **True-HDR screenshots.** `Ctrl+S` saves a shareable tonemapped SDR `.png` and, when capturing HDR, a true-HDR `.jxr` (scRGB FP16) sidecar that opens as real HDR in the Windows Photos app.
 - **MJP-style Catmull-Rom resampling**: sharp bicubic without ringing artifacts, the same algorithm used by mpv and madVR.
@@ -79,11 +79,11 @@ NitLink is NOT for you if:
 - **Smart signal handling.** Brief HDMI handshake windows (PS5 boot logo, source switch, SDR ↔ HDR transitions) keep showing the last good frame instead of the card's NO SIGNAL placeholder. Real signal loss is detected by format-tagged content fingerprints with a temporal-stability gate.
 
 <p align="center">
-  <img src="docs/images/f1-settings.png" alt="NitLink F1 settings panel" width="900">
+  <img src="docs/images/f1-settings.webp" alt="NitLink F1 settings panel" width="900">
 </p>
 
 <p align="center">
-  <em>F1 settings panel: capture-device picker, HDR, low-latency mode, VRR pacing, image scaling, audio, hotkeys.</em>
+  <em>F1 settings panel: capture-device picker, HDR, low-latency mode, present pacing, image scaling, audio, hotkeys.</em>
 </p>
 
 ---
@@ -156,6 +156,7 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 - **No audio at all.** Windows has a device-wide Microphone access switch (Settings, Privacy & security, Microphone) that also blocks capture-card audio for desktop apps. NitLink shows a notice when it hits that denial; turn the switch on and restart NitLink.
 - **A 120 Hz source captures at 1080p on the 4K Pro.** The card passes 4K120 through to the display but captures 4K only at 60 Hz, so with a 120 Hz source it offers 1080p120. A softer picture at 120 Hz is the card's ceiling, not a NitLink setting. Set the console to 60 Hz for 4K capture, or use a 4K X, which captures 4K120.
 - **HDR looks flat or washed out.** NitLink renders real HDR10 only while Windows HDR is on for the display. Turn it on in Windows display settings before pressing Alt+H.
+- **Surround sound.** Every Elgato capture device delivers stereo PCM to the PC; Dolby, DTS, and multichannel LPCM are not forwarded by the card, so NitLink can only play two channels. Set the console to Linear PCM, 2.0 channels, so the center channel is not lost in the card's downmix.
 - **The picture is squeezed or stretched.** Some cards deliver 4:3 sources inside a 16:9 frame. Press Alt+A to cycle the aspect ratio, or set `aspect_ratio` in nitlink.json.
 
 ---
@@ -255,7 +256,7 @@ Settings live in `nitlink.json` next to the executable. Plain text; auto-saves o
 
 - `low_latency`: low-latency present mode (default `true`). `true` = present-on-arrival (lowest input lag). `false` = the frame is held after capture and the swap-chain wait moves before present, so the picture is up to one refresh older. The present is tearing-allowed either way; `false` only adds input lag. Toggle with `Alt+L` or the F1 panel.
 - `hdr_enabled`: HDR mode. 4K Pro/X follow the source automatically; on the 4K S it's opt-in (HDR clamps to 1080p over USB).
-- `vrr_present_pacing`: VRR pacing (default `false`). Set `true` on G-Sync / FreeSync displays.
+- `present_pacing`: how often the picture is presented (default `refresh`). `refresh` = every frame the monitor draws, the lowest latency. `captured` = once per frame the card delivers. `unique` = only when the picture actually changes, which is what a G-Sync / FreeSync display needs to follow the game, what a frame-generation tool needs to read the real frame rate, and what removes 30 fps judder. Both paced modes add up to one capture interval of latency and turn the present cap off. Cycle from the F1 panel. A `vrr_present_pacing = true` written by an earlier version is migrated to `unique`.
 
 - `present_cap_hz`: present-rate cap in Hz for the low-latency present (default `0` = automatic: monitor refresh minus 3, applied when that is at least the source frame rate). `30` to `1000` = fixed cap, `-1` = off.
 
@@ -280,7 +281,7 @@ Media Foundation  (P010 for HDR10, NV12 for SDR; row order + nominal range detec
   ▼
 GPU upload (DYNAMIC texture)
   ▼
-GPU frame differ (640x360 SAD) classifies unique vs duplicate  → gates Present when VRR pacing on
+GPU frame differ (640x360 SAD) classifies unique vs duplicate  → gates Present in Source frame rate pacing
   ▼
 Capture shader  (P010 → BT.2020-PQ passthrough; NV12/BGRA → Catmull-Rom + range-aware decode)
   ▼

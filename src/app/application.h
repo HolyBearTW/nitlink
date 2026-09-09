@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <mutex>
 #include <chrono>
 
 namespace NitLink {
@@ -163,6 +164,10 @@ private:
     // WebView2 host and returns the label shown in the panel.
     std::wstring ApplyPanelLayout();
     void CyclePanelSide();
+
+    // Steps present pacing through refresh -> captured -> unique
+    // and reports the new mode in the log and a toast.
+    void CyclePresentPacing();
 
     // Signal-loss debounce. PS5 boot logos, source switches, and
     // SDR<->HDR handshakes all produce brief windows (typically 0.5 to
@@ -407,8 +412,9 @@ private:
     uint32_t m_currentContentFps = 0;   // game unique-frame rate (from differ)
     uint64_t m_uniqueFrameCount  = 0;
     uint64_t m_skippedFrameCount = 0;   // frames skipped by VRR present pacing (total)
-    uint32_t m_consecutiveSkips  = 0;   // consecutive skips: used to force a Present
-                                         // periodically so DWM doesn't mark the app unresponsive
+    // Keep skip counts for pacing diagnostics. Capture stalls make iteration
+    // counts unsuitable for measuring the time between presents.
+    uint32_t m_consecutiveSkips  = 0;
 
     // Session timing: when the app started, used for screenshot
     // filenames and any future "session uptime" telemetry.
@@ -441,6 +447,24 @@ private:
     // Latched for log-once-on-transition into / out of the placeholder
     // branch in the run loop.
     bool m_inPlaceholderState = false;
+
+    // Copy gate for the capture thread. The 4K Pro can deliver its NO SIGNAL
+    // image at over 200 frames per second, so copying full frames wastes
+    // memory bandwidth while the source is disconnected. Compare incoming
+    // fingerprints with the confirmed placeholder before copying. The first
+    // changed fingerprint releases the gate so the detector can classify
+    // returning source content.
+    std::atomic<bool>                      m_placeholderHold{false};
+    std::mutex                             m_placeholderFpMutex;
+    PlaceholderDetector::Fingerprint       m_placeholderFp{};
+    PlaceholderDetector::CaptureFormatKind m_placeholderFmt = PlaceholderDetector::CaptureFormatKind::BGRA;
+    uint32_t                               m_placeholderW = 0;
+    uint32_t                               m_placeholderH = 0;
+    std::atomic<uint64_t>                  m_placeholderDropped{0};
+
+    // Capture-thread side of the gate: true when the frame matches the held
+    // placeholder fingerprint and must not be copied.
+    bool DropPlaceholderFrame(const uint8_t* data, uint32_t size);
 
     // Motion-recency suppression for false-positive ConfirmedPlaceholder.
     //

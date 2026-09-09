@@ -106,6 +106,13 @@ public:
     // FrameClassification above for the full state-machine semantics.
     FrameClassification Process(const Fingerprint& fp, CaptureFormatKind format);
 
+    // Drop only unchanged fingerprints at the producer. A luma change must
+    // reach the detector's stability check so returning source content can
+    // release the placeholder state.
+    static bool Matches(const Fingerprint& a, const Fingerprint& b) {
+        return a == b;
+    }
+
     // Drop detector state. Call from ReconcileCaptureFormat after the
     // FrameBuffer is rebuilt: the new capture format may encode luma
     // differently, so any in-flight match streak is meaningless.

@@ -39,6 +39,13 @@ struct CaptureFormatOverride {
     }
 };
 
+// How often the render loop presents a frame. See Config::presentPacing.
+enum PresentPacing {
+    kPacingRefresh  = 0,
+    kPacingCaptured = 1,
+    kPacingUnique   = 2,
+};
+
 struct Config {
     // Window
     uint32_t windowWidth  = 1920;
@@ -97,23 +104,36 @@ struct Config {
     // keep purely config-driven behavior (hdrEnabled alone decides).
     bool         hdrAutoFromSource = true;
 
-    // VRR present pacing.
-    // When ON: Present is gated by the GPU frame differ. With Independent
-    //   Flip + ALLOW_TEARING active (both set on the swap chain), the
-    //   monitor's VRR (G-Sync / FreeSync) follows the actual source unique-
-    //   frame rate instead of the Elgato's constant 60 Hz HDMI delivery
-    //   rate. Verified on LG C3 OLED via the C3's Game Dashboard refresh-
-    //   rate indicator.
-    // When OFF: Present every iteration. Same end-to-end pipeline, no
-    //   differ-driven skip.
+    // Present pacing: how often the render loop presents a frame.
     //
-    // Default is OFF. ON is unsafe on fixed-refresh displays: low-motion
-    // game intros and splash screens drop the differ-classified unique-
-    // frame rate to near zero, so gating Present on that signal collapses
-    // visible cadence into the single digits and looks like stutter to
-    // the user. The toggle is exposed in the F1 settings panel so users
-    // on G-Sync / FreeSync panels can opt in.
-    bool         vrrPresentPacing = false;
+    //   kPacingRefresh   Present every loop iteration, so the present rate
+    //                    tracks the display refresh rate. Lowest latency,
+    //                    and the default.
+    //   kPacingCaptured  Present once per frame the card delivers. The loop
+    //                    blocks on the capture buffer, so the present rate
+    //                    follows the HDMI delivery cadence, typically 60 Hz.
+    //   kPacingUnique    Present only when the GPU frame differ classifies a
+    //                    delivered frame as new content, so the present rate
+    //                    follows the real source frame rate.
+    //
+    // kPacingUnique is what a variable refresh display needs in order to
+    // follow the source instead of the card's constant delivery rate
+    // (verified on an LG C3 OLED via its Game Dashboard refresh-rate
+    // indicator), and what an external frame-generation tool needs in order
+    // to read the real frame rate: such tools derive it from the present
+    // rate, so presenting every refresh reports the panel rate to them and
+    // leaves nothing to interpolate. It also removes the judder a 30 fps
+    // source shows against a present rate that is not a multiple of it.
+    //
+    // Both paced modes cost up to one capture interval of added latency and
+    // turn the present cap off, because the source cadence already sits
+    // below the panel rate. On a fixed refresh display, kPacingUnique drops
+    // low-motion content such as a game intro to the safety floor, because
+    // the differ-classified rate there falls to near zero.
+    //
+    // Persisted as present_pacing = refresh | captured | unique. Configs
+    // written before that key existed are migrated from vrr_present_pacing.
+    int          presentPacing = kPacingRefresh;
 
     // Low-latency present mode (Alt+L, default ON). When ON: wait the swap
     // chain at the top of the loop, then read the freshest captured frame and

@@ -82,6 +82,12 @@ bool Config::Load(const std::string& path)
     // schemas are accepted: the legacy flat keys from rc2 (one anonymous
     // override) and the new per-device indexed keys (rc3+). Both feed
     // into the post-loop reconciliation below.
+    // present_pacing replaced the vrr_present_pacing boolean. Both are
+    // accepted here and reconciled after the loop so key order in the file
+    // does not decide the winner.
+    bool sawPresentPacing  = false;
+    bool sawLegacyVrrPacing = false;
+    bool legacyVrrPacing    = false;
     bool sawLegacyOverride = false;
     CaptureFormatOverride legacyOverride;
     std::map<int, std::wstring>         indexedOverrideDevice;
@@ -132,7 +138,16 @@ bool Config::Load(const std::string& path)
         if (key == "nis_sharpness")   nisSharpness = ParseFloatClamped(val, nisSharpness, 0.0f, 1.0f);
         if (key == "hdr_enabled")     hdrEnabled   = ParseBool(val);
         if (key == "hdr_auto_from_source") hdrAutoFromSource = ParseBool(val);
-        if (key == "vrr_present_pacing") vrrPresentPacing = ParseBool(val);
+        if (key == "present_pacing") {
+            if      (val == "captured") presentPacing = kPacingCaptured;
+            else if (val == "unique")   presentPacing = kPacingUnique;
+            else                        presentPacing = kPacingRefresh;
+            sawPresentPacing = true;
+        }
+        if (key == "vrr_present_pacing") {
+            legacyVrrPacing    = ParseBool(val);
+            sawLegacyVrrPacing = true;
+        }
         if (key == "low_latency")     lowLatency = ParseBool(val);
         if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
         if (key == "aspect_ratio")   aspectRatio  = val.substr(0, 16);
@@ -218,6 +233,13 @@ bool Config::Load(const std::string& path)
     // it to).
     if (sawLegacyOverride && captureFormatOverrides.empty() && !preferredDevice.empty()) {
         captureFormatOverrides[preferredDevice] = legacyOverride;
+    }
+
+    // Legacy migration: vrr_present_pacing was a boolean that meant "gate
+    // Present on the frame differ", which is kPacingUnique here. It only
+    // applies when the file carried no present_pacing key of its own.
+    if (!sawPresentPacing && sawLegacyVrrPacing && legacyVrrPacing) {
+        presentPacing = kPacingUnique;
     }
 
     return true;
@@ -310,16 +332,25 @@ bool Config::Save(const std::string& path)
     file << "# Set false to keep classic config-driven behavior (hdr_enabled alone decides).\n";
     file << "hdr_auto_from_source = " << (hdrAutoFromSource ? "true" : "false") << "\n\n";
 
-    file << "# VRR present pacing\n";
-    file << "# When true, Present only fires on unique frames detected by the GPU\n";
-    file << "# frame differ. Recommended only on G-Sync / FreeSync displays: the\n";
-    file << "# monitor's VRR follows the source's actual unique-frame rate instead\n";
-    file << "# of the Elgato's constant 60 Hz HDMI delivery rate.\n";
-    file << "# On fixed-refresh displays, leave false: low-motion content like game\n";
-    file << "# intros drops the differ-classified unique-frame rate to near zero,\n";
-    file << "# and gating Present on that collapses visible cadence into the single\n";
-    file << "# digits. Default false; toggle from the F1 settings panel.\n";
-    file << "vrr_present_pacing = " << (vrrPresentPacing ? "true" : "false") << "\n\n";
+    file << "# Present pacing: refresh | captured | unique\n";
+    file << "# refresh  = Present every loop iteration, so the present rate\n";
+    file << "#            tracks the display refresh rate. Lowest latency.\n";
+    file << "# captured = Present once per frame the card delivers, so the\n";
+    file << "#            present rate follows the HDMI cadence, usually 60.\n";
+    file << "# unique   = Present only on frames the GPU differ classifies as\n";
+    file << "#            new content, so the present rate follows the real\n";
+    file << "#            source frame rate. This is what a variable refresh\n";
+    file << "#            display and an external frame-generation tool both\n";
+    file << "#            need, and it removes 30 fps judder against a\n";
+    file << "#            present rate that is not a multiple of the content.\n";
+    file << "# Both paced modes add up to one capture interval of latency and\n";
+    file << "# turn the present cap off. On a fixed refresh display, unique\n";
+    file << "# drops low-motion content to the safety floor. Cycle from the F1\n";
+    file << "# settings panel.\n";
+    file << "present_pacing = "
+         << (presentPacing == kPacingUnique   ? "unique"
+           : presentPacing == kPacingCaptured ? "captured"
+                                              : "refresh") << "\n\n";
 
     file << "# Low-latency present mode (Alt+L, default true)\n";
     file << "# When true, present each frame the instant it arrives for the\n";

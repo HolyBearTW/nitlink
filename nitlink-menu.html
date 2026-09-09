@@ -329,12 +329,12 @@
             </div>
           </div>
 
-          <div class="row" data-action="toggleVrrPacing"
-            title="Locks presents to the source's unique-frame cadence on G-Sync / FreeSync displays. Leave off on fixed-refresh displays: low-motion content drops the detected rate to near zero and gating presents on that collapses visible cadence.">
-            <span class="row-name">VRR Present Pacing</span>
+          <div class="row" data-action="cyclePresentPacing"
+            title="How often the picture is presented. Display refresh presents every frame the monitor draws and has the lowest latency. Capture rate presents once per frame the card delivers, usually 60. Source frame rate presents only when the picture actually changes, so a variable refresh monitor follows the game, frame-generation tools such as Lossless Scaling read the real frame rate, and 30 fps content stops juddering. Both paced modes add up to one capture interval of latency.">
+            <span class="row-name">Present Pacing</span>
             <div class="row-right">
-              <span class="row-chip">G-Sync / FreeSync</span>
-              <div class="toggle" id="toggle-vrr-pacing"></div>
+              <span class="row-value" id="pacing-val">Display refresh</span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
 
@@ -466,9 +466,9 @@
         <section class="pane" id="pane-about">
           <div class="band">
             <span class="band-title">About</span>
-            <span class="band-hint">v1.1.1</span>
+            <span class="band-hint">v1.2.0</span>
           </div>
-          <div class="row kv"><span class="row-name">Build</span><span class="row-value">1.1.1</span></div>
+          <div class="row kv"><span class="row-name">Build</span><span class="row-value">1.2.0</span></div>
           <div class="row kv"><span class="row-name">Renderer</span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
           <div class="about-copy">
             <p>Low-latency capture viewer for HDR10, VRR, and clean device control.</p>
@@ -942,8 +942,12 @@
       setToggle('toggle-hdr', s.hdrEnabled);
       setToggle('toggle-color', s.colorExpansion);
       setToggle('toggle-nis', s.nisEnabled);
-      setToggle('toggle-vrr-pacing', s.vrrPresentPacing);
       setToggle('toggle-low-latency', s.lowLatency);
+      if (s.presentPacing) {
+        setText('pacing-val',
+          s.presentPacing === 'unique'   ? 'Source frame rate' :
+          s.presentPacing === 'captured' ? 'Capture rate'      : 'Display refresh');
+      }
       setToggle('toggle-mute', s.audioMuted);
 
       if (typeof s.volume === 'number') {

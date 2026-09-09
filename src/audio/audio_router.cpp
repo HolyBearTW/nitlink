@@ -771,16 +771,17 @@ bool AudioRouter::FillRender()
     m_winFillMax = (std::max)(m_winFillMax, fillMs);
 
     // Drift control, decided on the fill before this wake consumes anything.
-    // Above the band: drop one frame this wake. Below it: repeat one frame.
-    // One frame per wake is far more correction than any real clock offset
-    // needs, so the fill settles inside the band and the slips stop.
+    // Above the band: drop one frame this wake. At or below its lower edge,
+    // repeat one frame so the next clock deficit has a frame of headroom.
+    // Correction remains active while the endpoint clocks differ; the
+    // deadband limits how often frames are slipped near the target fill.
     bool dup = false;
     if (fill > target + band && fill > 1) {
         FifoSkip(1);
         fill--;
         m_winSlipDrop++;
         m_slipCount++;
-    } else if (fill > 0 && fill + band < target) {
+    } else if (fill > 0 && fill + band <= target) {
         dup = true;
     }
 
@@ -799,7 +800,11 @@ bool AudioRouter::FillRender()
     BYTE* out = nullptr;
     hr = m_renderService->GetBuffer(toWrite, &out);
     if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
-    UINT32 written = FifoPop(out, (std::min)(toWrite, fill));
+    // A repeat must consume one fewer FIFO frame than the render request
+    // so the fill can recover toward the lower band. Single-frame requests
+    // need their one source frame because no earlier output exists to repeat.
+    const UINT32 toRead = (dup && toWrite > 1) ? toWrite - 1 : toWrite;
+    UINT32 written = FifoPop(out, (std::min)(toRead, fill));
     if (dup && written > 0 && written < toWrite) {
         memcpy(out + (size_t)written * m_bytesPerFrame,
                out + (size_t)(written - 1) * m_bytesPerFrame, m_bytesPerFrame);

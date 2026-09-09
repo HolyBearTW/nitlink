@@ -919,34 +919,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             m_config->Save("nitlink.json");
             return;
         }
-        if (action == L"toggleVrrPacing" && m_config) {
-            // VRR Present Pacing on/off. The run loop reads
-            // m_config->vrrPresentPacing each iteration when deciding
-            // whether to gate Present on the FrameDiffer's classification,
-            // so no pipeline rebuild is needed: the next iteration picks
-            // up the new value. FrameDiffer continues to run regardless
-            // (its output feeds the HUD content-fps readout and the
-            // VRR-pacing diagnostic log line); its classification only
-            // gates Present when the flag is true.
-            m_config->vrrPresentPacing = !m_config->vrrPresentPacing;
-            if (!m_config->vrrPresentPacing) {
-                // Disabling: clear the consecutive-skip counter. The
-                // counter is dormant while pacing is off (the off path
-                // never reads or writes it), but the periodic VRR-pacing
-                // diagnostic line would otherwise keep reporting whatever
-                // value the counter held at the moment of toggle, which
-                // reads as stale state in the log. Zeroing here also
-                // means a subsequent re-enable starts the skip budget
-                // from a clean slate. The session-monotonic
-                // m_skippedFrameCount (logged as totalSkipped) is
-                // intentionally left untouched so session-long diagnostic
-                // comparisons stay consistent.
-                m_consecutiveSkips = 0;
-            }
-            m_config->Save("nitlink.json");
-            AppLog(m_config->vrrPresentPacing
-                ? L"VRR pacing: enabled (Present gated by frame differ)"
-                : L"VRR pacing: disabled (Present every iteration)");
+        if (action == L"cyclePresentPacing" && m_config) {
+            CyclePresentPacing();
             return;
         }
         if (action == L"toggleLowLatency" && m_config) {
@@ -1415,6 +1389,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
                                           int64_t arrivalWallNs, uint64_t deviceTimestamp) {
+        if (DropPlaceholderFrame(data, size)) return;
         if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
     AppLog(L"Initialize: capture started, entering run loop");
@@ -1426,6 +1401,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 void Application::Run()
 {
     using Clock = std::chrono::high_resolution_clock;
+
+    // A stalled capture stream still needs periodic presents to keep the
+    // swap chain fed and make no-signal and settings changes visible.
+    constexpr auto kPresentKeepaliveInterval = std::chrono::milliseconds(250);
+    auto lastPresentTime = std::chrono::steady_clock::now();
     
     auto lastFpsUpdate = Clock::now();
     uint64_t lastFramesWritten    = 0;
@@ -1597,7 +1577,21 @@ void Application::Run()
             }
         }
 
-        if (m_lowLatency && m_renderer) m_renderer->WaitForFrameReady();
+        // The paced modes advance the loop at the source cadence, so they
+        // block on the capture buffer's frame-ready event rather than on the
+        // swap chain. Limit the wait to the remaining present deadline so a
+        // stall after duplicate frames cannot extend the keepalive interval.
+        const int pacing = m_config ? m_config->presentPacing : kPacingRefresh;
+        if (pacing != kPacingRefresh) {
+            const auto remaining = lastPresentTime + kPresentKeepaliveInterval
+                - std::chrono::steady_clock::now();
+            const auto waitMs = std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
+            if (m_frameBuffer) {
+                m_frameBuffer->WaitForFrame(waitMs > 0 ? static_cast<unsigned long>(waitMs) : 0);
+            }
+        } else if (m_lowLatency && m_renderer) {
+            m_renderer->WaitForFrameReady();
+        }
 
         auto captureStart = Clock::now();
 
@@ -1634,10 +1628,10 @@ void Application::Run()
             // frame is treated as real source and the existing pipeline runs
             // unchanged.
             PlaceholderDetector::Fingerprint fp{};
+            auto fmt = PlaceholderDetector::CaptureFormatKind::BGRA;
             auto cls = PlaceholderDetector::FrameClassification::Real;
             if (m_placeholderDetector && m_captureDevice) {
                 const auto subtype = m_captureDevice->GetOutputFormat().subtype;
-                PlaceholderDetector::CaptureFormatKind fmt;
                 if (IsEqualGUID(subtype, MFVideoFormat_P010)) {
                     fmt = PlaceholderDetector::CaptureFormatKind::P010;
                 } else if (IsEqualGUID(subtype, MFVideoFormat_NV12)) {
@@ -1719,6 +1713,11 @@ void Application::Run()
                     AppLog(L"Signal: real source frames resumed");
                     m_inPlaceholderState = false;
                 }
+                if (m_placeholderHold.exchange(false, std::memory_order_acq_rel)) {
+                    AppLog(L"Signal: copy gate released after dropping " +
+                           std::to_wstring(m_placeholderDropped.load(std::memory_order_relaxed)) +
+                           L" placeholder frames");
+                }
 
                 // HDR levels readout (Ctrl+F6): measure this frame's code
                 // range so the per-card color range is read off the signal,
@@ -1769,6 +1768,19 @@ void Application::Run()
                     if (!m_inPlaceholderState) {
                         AppLog(L"Signal: Elgato placeholder detected, holding last real frame, no upload");
                         m_inPlaceholderState = true;
+                    }
+                    // Arm the capture-thread copy gate with the confirmed
+                    // fingerprint so the placeholder stream stops being copied.
+                    {
+                        std::lock_guard<std::mutex> lk(m_placeholderFpMutex);
+                        m_placeholderFp  = fp;
+                        m_placeholderFmt = fmt;
+                        m_placeholderW   = frame.width;
+                        m_placeholderH   = frame.height;
+                    }
+                    if (!m_placeholderHold.exchange(true, std::memory_order_acq_rel)) {
+                        m_placeholderDropped.store(0, std::memory_order_relaxed);
+                        AppLog(L"Signal: placeholder frames now dropped before copy");
                     }
                 }
                 // else: suppress confirmation. Stay out of m_inPlaceholderState
@@ -1965,76 +1977,44 @@ void Application::Run()
             }
         }
 
-        // Decision: should this iteration render+Present?
+        // Decision: should this iteration render and Present?
         //
-        // VRR pacing OFF (legacy): always render every loop iteration. This
-        //   is the v1.0 behavior. Present rate ends up near the desktop
-        //   refresh rate via the waitable swap chain.
+        // kPacingRefresh: Present every iteration. The waitable swap chain
+        //   paces the loop near the desktop refresh rate, which is the
+        //   lowest-latency behavior and the default.
         //
-        // VRR pacing ON: render only when there's a new capture frame AND
-        //   the differ says it's unique content. This makes the Present
-        //   rate track the actual game framerate, and the monitor's VRR
-        //   syncs to it.
+        // kPacingCaptured: Present once per frame the card delivers. The loop
+        //   already blocked on the capture buffer above, so a fresh frame is
+        //   the normal case and the present rate follows the HDMI cadence.
         //
-        //   Safety floor: if too many consecutive frames have been skipped
-        //   (static content like a paused menu, or differ falsely flagging
-        //   real frames as duplicates), force a Present every kMaxSkipFrames
-        //   iterations to keep DWM happy. At ~16ms capture cadence, kMax=15
-        //   means a Present at minimum every ~250ms (~4Hz), which is well
-        //   within the VRR window's minimum and well above DWM's "this
-        //   window is unresponsive" threshold.
-        const bool vrrPacingActive = m_config && m_config->vrrPresentPacing;
-        constexpr uint32_t kMaxConsecutiveSkips = 15;
+        // kPacingUnique: Present only on a fresh frame the differ classifies
+        //   as new content, so the present rate follows the real source frame
+        //   rate. A variable refresh monitor then syncs to the source instead
+        //   of the card's constant delivery rate, an external frame-generation
+        //   tool reads the real frame rate off the present rate, and a 30 fps
+        //   source stops juddering against a present rate that is not a
+        //   multiple of the content rate.
+        //
+        // Use elapsed time for the safety floor: duplicate-frame cadence can
+        // vary, and a stalled capture stream produces no frame-ready events.
         bool shouldRender;
-        if (!vrrPacingActive) {
+        if (pacing == kPacingRefresh) {
             shouldRender = true;
         } else if (!haveFreshFrame) {
-            // No new frame from the capture worker this iteration. The
-            // capture worker delivers at the HDMI cadence (~60 Hz on a
-            // healthy source, one frame every ~16.7 ms) while the render
-            // loop polls at a much higher rate (sub-millisecond between
-            // iterations during the skip path), so a large majority of
-            // renderer iterations naturally have no fresh frame even
-            // during smooth 60 fps playback.
-            //
-            // The VRR pacing design intent is to collapse Present rate
-            // down to the SOURCE'S UNIQUE-FRAME RATE so monitor VRR
-            // follows real game framerate. The signal that drives
-            // unique-frame rate is the FrameDiffer's isNewFrame
-            // classification on a fresh frame, NOT "did the renderer
-            // get a fresh frame this poll cycle." A no-fresh-frame
-            // iteration carries zero information about whether the
-            // content is new or duplicate; it just means the renderer
-            // outran the producer this tick.
-            //
-            // Skipping Present on these iterations starves the swap
-            // chain and produces visible stutter on non-VRR monitors
-            // during legitimate low-motion content (game intros, slow
-            // fades, splash screens), because the kMaxConsecutiveSkips
-            // safety floor drops Present rate into the single digits.
-            // That was the symptom the user saw with 1-5 fps dips
-            // during game intros.
-            //
-            // Render anyway. Leave m_consecutiveSkips untouched: this
-            // iteration is neither a real duplicate (so it should not
-            // burn the skip budget) nor a real new frame (so it should
-            // not reset the budget either). The budget is fed only by
-            // genuine fresh+duplicate iterations below.
+            // The frame-ready wait timed out: the source is stalled or gone.
+            shouldRender = false;
+        } else if (pacing == kPacingCaptured || isNewFrame) {
             shouldRender = true;
-        } else if (isNewFrame) {
-            shouldRender = true;
-            m_consecutiveSkips = 0;
-        } else if (m_consecutiveSkips >= kMaxConsecutiveSkips) {
-            shouldRender = true;
-            m_consecutiveSkips = 0;
         } else {
             shouldRender = false;
         }
 
-        // Low-Latency mode never skips a Present: it always shows the freshest
-        // frame (the wait already happened at the top, so it stays paired 1:1
-        // with Present). Trades VRR content-rate pacing for minimum latency.
-        if (m_lowLatency) shouldRender = true;
+        if (shouldRender) {
+            m_consecutiveSkips = 0;
+        } else if (std::chrono::steady_clock::now() - lastPresentTime >= kPresentKeepaliveInterval) {
+            shouldRender = true;
+            m_consecutiveSkips = 0;
+        }
 
         if (!shouldRender) {
             // Duplicate frame detected, VRR pacing on: skip the entire
@@ -2077,6 +2057,11 @@ void Application::Run()
         // composited via CompositeUI in this branch.
         const bool hdrActive = m_renderer && m_renderer->IsHDREnabled();
 
+        // Source-paced modes already wait for capture arrivals. Waiting on
+        // DXGI after selecting a frame would age it and allow later capture
+        // frames to replace one another before the next read.
+        const bool waitForSwapChain = pacing == kPacingRefresh && !m_lowLatency;
+
         // When the settings overlay is visible, render a solid black
         // frame underneath the WebView2 child every iteration. This is
         // simpler and more reliable than freezing the last rendered
@@ -2096,8 +2081,9 @@ void Application::Run()
         const bool panelCoversPicture = m_settingsVisible && m_webviewSettings &&
             m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
         if (panelCoversPicture) {
-            m_renderer->BeginFrame(!m_lowLatency);   // clears to (0,0,0,1): solid black
+            m_renderer->BeginFrame(waitForSwapChain);   // clears to (0,0,0,1): solid black
             m_renderer->EndFrame();     // presents the black frame
+            lastPresentTime = std::chrono::steady_clock::now();
             continue;                    // skip the rest of the pipeline
         }
 
@@ -2111,7 +2097,7 @@ void Application::Run()
             // into the unused intermediate, leaving the backbuffer black.
             m_renderer->SetPostInputEnabled(false);
 
-            m_renderer->BeginFrame(!m_lowLatency);
+            m_renderer->BeginFrame(waitForSwapChain);
             m_renderer->DrawCaptureFrame();
 
             // HDR color-fidelity diagnostic overlay (Ctrl+F4). Draws known
@@ -2217,6 +2203,7 @@ void Application::Run()
             }
 
             m_renderer->EndFrame();
+            lastPresentTime = std::chrono::steady_clock::now();
         }
 
         if (!hdrActive) {
@@ -2227,7 +2214,7 @@ void Application::Run()
         const bool nisActive = m_nisUpscaler && m_config && m_config->nisEnabled;
         m_renderer->SetPostInputEnabled(nisActive);
 
-        m_renderer->BeginFrame(!m_lowLatency);
+        m_renderer->BeginFrame(waitForSwapChain);
         m_renderer->DrawCaptureFrame();
 
         if (nisActive && m_renderer->GetCaptureOutputSRV()) {
@@ -2363,6 +2350,7 @@ void Application::Run()
         }
 
         m_renderer->EndFrame();
+        lastPresentTime = std::chrono::steady_clock::now();
         } // end if (!hdrActive)
         
         auto renderEnd = Clock::now();
@@ -2517,6 +2505,32 @@ void Application::ToggleSettings()
         // (Alt+H for HDR, Ctrl+G for game cycle).
         if (m_settingsVisible) PushSettingsState();
     }
+}
+
+bool Application::DropPlaceholderFrame(const uint8_t* data, uint32_t size)
+{
+    if (!m_placeholderHold.load(std::memory_order_acquire)) return false;
+    PlaceholderDetector::Fingerprint       held;
+    PlaceholderDetector::CaptureFormatKind fmt;
+    uint32_t w, h;
+    {
+        std::lock_guard<std::mutex> lk(m_placeholderFpMutex);
+        held = m_placeholderFp;
+        fmt  = m_placeholderFmt;
+        w    = m_placeholderW;
+        h    = m_placeholderH;
+    }
+    if (w == 0 || h == 0) return false;
+    // 144 sampled bytes out of the driver's buffer instead of a 12 MB copy.
+    const auto fp = PlaceholderDetector::Compute(data, size, w, h, fmt);
+    if (!PlaceholderDetector::Matches(fp, held)) {
+        // Release before copying so subsequent source frames can reach the
+        // detector even while the render thread is processing this frame.
+        m_placeholderHold.store(false, std::memory_order_release);
+        return false;
+    }
+    m_placeholderDropped.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 bool Application::RecentSourceActivity(std::chrono::steady_clock::time_point now) const
@@ -3051,6 +3065,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // the same Elgato placeholder encodes to different zone luma in NV12
     // vs P010 vs BGRA, so any in-flight match streak is invalid post-swap.
     if (m_placeholderDetector) m_placeholderDetector->Reset();
+    m_placeholderHold.store(false, std::memory_order_release);
     m_inPlaceholderState = false;
 
     if (m_renderer) {
@@ -3107,6 +3122,7 @@ bool Application::ReconcileCaptureFormat(bool force)
 
     m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
                                           int64_t arrivalWallNs, uint64_t deviceTimestamp) {
+        if (DropPlaceholderFrame(data, size)) return;
         if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
 
@@ -3135,6 +3151,22 @@ bool Application::ReconcileCaptureFormat(bool force)
 void Application::ApplyPresentCap()
 {
     if (!m_renderer) return;
+
+    // The cap exists to hold a tearing-allowed present a few Hz under the
+    // panel maximum so a variable refresh display stays inside its VRR
+    // window. Frame-generation friendly mode already paces Present from the
+    // source cadence, which sits below the panel rate, so a cap on top of
+    // that would drop captured frames without buying anything.
+    if (m_config && m_config->presentPacing != kPacingRefresh) {
+        const bool capOff = m_renderer->SetPresentCap(0.0);
+        if (m_appliedPresentCapHz != 0.0) {
+            m_appliedPresentCapHz = 0.0;
+            AppLog(capOff
+                ? L"PresentCap: off (present pacing follows the source)"
+                : L"PresentCap: VRR_CAP.txt pins the renderer cap; source-paced policy not applied");
+        }
+        return;
+    }
 
     const int cfg = m_config->presentCapHz;
     double capHz = 0.0;
@@ -3215,6 +3247,30 @@ std::wstring Application::ApplyAspectRatio()
     if (label == L"auto")    label = L"Auto";
     if (label == L"stretch") label = L"Stretch";
     return label;
+}
+
+// Steps present pacing refresh -> captured -> unique -> refresh. The run
+// loop reads m_config->presentPacing every iteration, so the next iteration
+// picks the new mode up with no pipeline rebuild. The present cap is
+// re-evaluated because the paced modes drive Present from the source cadence
+// and a cap on top of that would drop delivered frames. The consecutive-skip
+// counter is zeroed so the periodic pacing diagnostic does not report a count
+// left over from the previous mode.
+void Application::CyclePresentPacing()
+{
+    if (!m_config) return;
+    m_config->presentPacing = (m_config->presentPacing + 1) % 3;
+    m_consecutiveSkips = 0;
+    ApplyPresentCap();
+    m_config->Save("nitlink.json");
+
+    const std::wstring label =
+        m_config->presentPacing == kPacingUnique   ? L"Source frame rate"
+      : m_config->presentPacing == kPacingCaptured ? L"Capture rate"
+                                                   : L"Display refresh";
+    AppLog(L"Present pacing: " + label);
+    ShowToast(L"Present pacing: " + label);
+    if (m_settingsVisible) PushSettingsState();
 }
 
 void Application::CycleAspectRatio()
@@ -3525,7 +3581,10 @@ void Application::PushSettingsState()
     js << L"\"hdrAutoDetectAvailable\":" << (m_hdrDetectionAvailable ? L"true" : L"false") << L",";
     js << L"\"colorExpansion\":"    << (m_config->colorExpansion    ? L"true" : L"false") << L",";
     js << L"\"nisEnabled\":"        << (m_config->nisEnabled        ? L"true" : L"false") << L",";
-    js << L"\"vrrPresentPacing\":"  << (m_config->vrrPresentPacing  ? L"true" : L"false") << L",";
+    js << L"\"presentPacing\":\""
+       << (m_config->presentPacing == kPacingUnique   ? L"unique"
+         : m_config->presentPacing == kPacingCaptured ? L"captured"
+                                                      : L"refresh") << L"\",";
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
