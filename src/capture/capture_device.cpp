@@ -8,8 +8,78 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <condition_variable>
+#include <wrl/implements.h>
 
 namespace NitLink {
+
+// Asynchronous Media Foundation reader and capture-worker handoff.
+// Synchronous ReadSample can remain blocked when a card stops delivering
+// samples. CaptureDevice's stop flag cannot cancel that in-flight call, so a
+// worker executing it cannot observe shutdown or finish its join. An async
+// reader returns from ReadSample immediately and leaves CaptureLoop waiting
+// on a condition variable that StopCapture can wake without another frame.
+//
+// Open creates one CaptureReadState shared by CaptureDevice and this callback.
+// Media Foundation retains the callback through MF_SOURCE_READER_ASYNC_CALLBACK;
+// a pending completion can keep it alive after Close releases the reader and
+// after CaptureDevice is destroyed. The callback owns only the shared state,
+// never a CaptureDevice pointer, so that longer lifetime cannot reach an
+// expired frame callback, FrameBuffer, renderer or application object.
+//
+// CaptureLoop keeps one ReadSample request outstanding. On a Media Foundation
+// thread, OnReadSample stores the HRESULT, flags, timestamp and a COM reference
+// to the sample under the state mutex, marks the completion ready, then wakes
+// the worker. CaptureLoop takes that sample and performs buffer access and
+// frame delivery on the capture thread; neither runs on the MF callback thread.
+// Once stopped is set, a late OnReadSample may only lock the retained state
+// and latch readerFailed for a fatal flag. It must return without publishing
+// a sample or touching CaptureDevice. OnFlush likewise touches only that
+// state, clearing the flush-in-progress flag used to guard reader reuse.
+// Reference: https://learn.microsoft.com/en-us/windows/win32/medfound/using-the-source-reader-in-asynchronous-mode
+struct CaptureReadState {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool stopped = true;
+    bool completed = false;
+    bool flushing = false;
+    bool readerFailed = false;
+    HRESULT status = S_OK;
+    DWORD flags = 0;
+    LONGLONG timestamp = 0;
+    ComPtr<IMFSample> sample;
+};
+
+class CaptureReaderCallback final : public Microsoft::WRL::RuntimeClass<
+    Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IMFSourceReaderCallback> {
+public:
+    explicit CaptureReaderCallback(std::shared_ptr<CaptureReadState> state)
+        : m_state(std::move(state)) {}
+
+    HRESULT STDMETHODCALLTYPE OnReadSample(HRESULT hr, DWORD, DWORD flags,
+                                           LONGLONG timestamp, IMFSample* sample) override {
+        {
+            std::lock_guard<std::mutex> lock(m_state->mutex);
+            if (flags & MF_SOURCE_READERF_ERROR) m_state->readerFailed = true;
+            if (m_state->stopped) return S_OK;
+            m_state->status = hr;
+            m_state->flags = flags;
+            m_state->timestamp = timestamp;
+            m_state->sample = sample;
+            m_state->completed = true;
+        }
+        m_state->ready.notify_one();
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnEvent(DWORD, IMFMediaEvent*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnFlush(DWORD) override {
+        std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->flushing = false;
+        return S_OK;
+    }
+private:
+    std::shared_ptr<CaptureReadState> m_state;
+};
 
 // Debug helper -- writes to Visual Studio Output window
 static void DebugLog(const std::wstring& msg) {
@@ -69,6 +139,7 @@ CaptureDevice::~CaptureDevice()
 bool CaptureDevice::Open(const DeviceInfo& device)
 {
     m_deviceName = device.name;
+    m_needsReopen = false;
 
     if (UseDShowBackend()) {
         DebugLog(L"USE_DSHOW.txt present: using DirectShow capture backend");
@@ -146,7 +217,7 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     //   pipeline).
     //   Reference: learn.microsoft.com/en-us/windows/win32/medfound/mf-low-latency
     ComPtr<IMFAttributes> readerAttrs;
-    hr = MFCreateAttributes(&readerAttrs, 2);
+    hr = MFCreateAttributes(&readerAttrs, 3);
     if (FAILED(hr)) {
         std::wstringstream ss;
         ss << L"MFCreateAttributes failed with HRESULT 0x" << std::hex << hr;
@@ -155,6 +226,12 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     }
     readerAttrs->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
     readerAttrs->SetUINT32(MF_LOW_LATENCY, TRUE);
+
+    m_readState = std::make_shared<CaptureReadState>();
+    auto readerCallback = Microsoft::WRL::Make<CaptureReaderCallback>(m_readState);
+    if (!readerCallback) return false;
+    hr = readerAttrs->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, readerCallback.Get());
+    if (FAILED(hr)) return false;
 
     hr = MFCreateSourceReaderFromMediaSource(m_source.Get(), readerAttrs.Get(), &m_reader);
     if (FAILED(hr)) {
@@ -826,6 +903,7 @@ bool CaptureDevice::LogAvailableFormats()
 
 void CaptureDevice::Close()
 {
+    m_availableFormats.clear();
     if (m_dshow) {
         m_dshow->Close();
         m_dshow.reset();
@@ -835,6 +913,7 @@ void CaptureDevice::Close()
 
     StopCapture();
     m_reader.Reset();
+    m_readState.reset();
     if (m_source) {
         m_source->Shutdown();
         m_source.Reset();
@@ -850,6 +929,18 @@ bool CaptureDevice::StartCapture(FrameCallback callback)
     }
 
     if (m_capturing) return false;
+    if (!m_reader || !m_readState) return false;
+    if (m_captureThread.joinable()) StopCapture();
+
+    {
+        std::lock_guard<std::mutex> lock(m_readState->mutex);
+        // Restarting this reader is safe only once its previous flush has
+        // completed. Normal format/device changes create a fresh reader.
+        if (m_readState->flushing || m_readState->readerFailed) return false;
+        m_readState->stopped = false;
+        m_readState->completed = false;
+        m_readState->sample.Reset();
+    }
 
     {
         std::lock_guard<std::mutex> lock(m_callbackMutex);
@@ -869,14 +960,61 @@ void CaptureDevice::StopCapture()
         return;
     }
 
+    // Separate the worker's lifetime from the outstanding MF request. First
+    // clear m_capturing, mark the shared state stopped and wake its condition
+    // variable. The worker can leave its wait even if the card supplies no
+    // further sample, and a late completion cannot publish another frame.
+    // Join next: no frame callback may still be using the application's
+    // FrameBuffer when StopCapture returns, and the worker must be unable to
+    // issue another ReadSample behind the cancellation performed below.
+    //
+    // Only after the join does Flush cancel the outstanding reader request.
+    // The async reader reports completion through OnFlush; shutdown does not
+    // wait for that callback, since doing so would make exit depend on another
+    // MF completion from a stalled source. The callback's shared-state
+    // ownership makes a later OnFlush safe even after Close or destruction.
+    // Set flushing before calling Flush so an immediate completion can clear
+    // it; StartCapture rejects reuse until it clears. A reader that reported
+    // MF_SOURCE_READERF_ERROR cannot receive Flush or any other reader method:
+    // its recovery goes through a fresh Open in ReconcileCaptureFormat.
+    // Reference: https://learn.microsoft.com/en-us/windows/win32/api/mfreadwrite/nf-mfreadwrite-imfsourcereader-flush
     m_capturing = false;
-    if (m_captureThread.joinable()) {
+    const bool hadWorker = m_captureThread.joinable();
+    if (m_readState) {
+        {
+            std::lock_guard<std::mutex> lock(m_readState->mutex);
+            m_readState->stopped = true;
+            m_readState->sample.Reset();
+        }
+        m_readState->ready.notify_all();
+    }
+    if (hadWorker) {
         m_captureThread.join();
+        if (m_reader && m_readState) {
+            bool canFlush;
+            {
+                std::lock_guard<std::mutex> lock(m_readState->mutex);
+                canFlush = !m_readState->readerFailed;
+                m_readState->flushing = canFlush;
+            }
+            if (canFlush && FAILED(m_reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM)))
+                m_needsReopen = true;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_callbackMutex);
+        m_callback = {};
     }
 }
 
 void CaptureDevice::CaptureLoop()
 {
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(comHr)) {
+        m_needsReopen = true;
+        m_capturing = false;
+        return;
+    }
     bool loggedFirstFrame = false;
     bool probedDeviceTimestamp = false;
 
@@ -893,14 +1031,46 @@ void CaptureDevice::CaptureLoop()
     constexpr auto kFailureSleep = std::chrono::milliseconds(75);
 
     while (m_capturing) {
-        DWORD streamIndex = 0, flags = 0;
+        DWORD flags = 0;
         LONGLONG timestamp = 0;
         ComPtr<IMFSample> sample;
 
         HRESULT hr = m_reader->ReadSample(
             MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            0, &streamIndex, &flags, &timestamp, &sample
+            0, nullptr, nullptr, nullptr, nullptr
         );
+        if (SUCCEEDED(hr)) {
+            std::unique_lock<std::mutex> lock(m_readState->mutex);
+            m_readState->ready.wait(lock, [this] {
+                return m_readState->stopped || m_readState->completed;
+            });
+            if (m_readState->stopped) break;
+            hr = m_readState->status;
+            flags = m_readState->flags;
+            timestamp = m_readState->timestamp;
+            sample = std::move(m_readState->sample);
+            m_readState->completed = false;
+        }
+        if (!m_capturing) break;
+
+        // ---- Reader fatal error ----
+        // MF_SOURCE_READERF_ERROR carries the contract "do not make any further
+        // calls to IMFSourceReader methods." It applies even when OnReadSample
+        // also reports a failing HRESULT, so this branch precedes the ordinary
+        // failure retry budget. Retrying in place is impossible: recovery
+        // requires a fresh source reader created by a fresh Open().
+        //
+        // OnReadSample also latches readerFailed, preventing StopCapture from
+        // issuing Flush and StartCapture from reusing this reader. Setting
+        // m_needsReopen hands recovery to Application::Run, which consumes it
+        // through ConsumeNeedsReopen and forces ReconcileCaptureFormat to run
+        // the StopCapture -> Close -> Open -> StartCapture sequence.
+        // Reference: https://learn.microsoft.com/en-us/windows/win32/api/mfreadwrite/ne-mfreadwrite-mf_source_reader_flag
+        if (flags & MF_SOURCE_READERF_ERROR) {
+            DebugLog(L"ReadSample flagged MF_SOURCE_READERF_ERROR, flagging force-reopen");
+            m_needsReopen = true;
+            break;
+        }
 
         // ---- Transient call-level failure ----
         // Don't kill the thread on the first failure. Sleep briefly to avoid
@@ -919,29 +1089,30 @@ void CaptureDevice::CaptureLoop()
                 m_needsReopen = true;
                 break;
             }
-            std::this_thread::sleep_for(kFailureSleep);
+            std::unique_lock<std::mutex> lock(m_readState->mutex);
+            m_readState->ready.wait_for(lock, kFailureSleep, [this] {
+                return m_readState->stopped;
+            });
             continue;
         }
         consecutiveFailures = 0;
 
         // ---- End-of-stream ----
-        // Source has closed permanently. No recovery: the thread exits and
-        // the application's next reconcile poll will see no needs-reopen
-        // flag, but the renderer will go to no-signal until something else
-        // (user replug, format poller, Alt+H) triggers a reopen.
+        // MF_SOURCE_READERF_ENDOFSTREAM means the capture card's selected stream
+        // has ended, not merely that one HDMI frame is missing. A gap
+        // can arrive as STREAMTICK or an empty sample; an ended stream needs
+        // the capture session reopened rather than another ReadSample on the
+        // same session. Signal loss or device removal can require that restart
+        // even when the desired pixel format has not changed.
+        //
+        // Set m_needsReopen and leave the loop. CaptureLoop's common exit clears
+        // m_capturing, so IsCapturing reports the stopped worker. Application::Run
+        // consumes the flag through ConsumeNeedsReopen and forces
+        // ReconcileCaptureFormat to StopCapture, Close, Open and StartCapture.
+        // If Open fails while the source is absent, that function's retry
+        // deadline continues recovery without requiring another stream event.
         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
             DebugLog(L"ReadSample: end of stream");
-            break;
-        }
-
-        // ---- Reader fatal error ----
-        // Per Microsoft docs, MF_SOURCE_READERF_ERROR means "do not call any
-        // further IMFSourceReader methods on this instance." Retry in place
-        // is not possible: the only recovery is a fresh source reader from a
-        // fresh Open(). Flag it and exit; the application's run loop will
-        // tear down and re-Open via ReconcileCaptureFormat(force=true).
-        if (flags & MF_SOURCE_READERF_ERROR) {
-            DebugLog(L"ReadSample flagged MF_SOURCE_READERF_ERROR, flagging force-reopen");
             m_needsReopen = true;
             break;
         }
@@ -1022,6 +1193,8 @@ void CaptureDevice::CaptureLoop()
             buffer->Unlock();
         }
     }
+    m_capturing = false;
+    CoUninitialize();
 }
 
 } // namespace NitLink

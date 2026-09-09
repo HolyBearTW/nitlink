@@ -19,6 +19,7 @@ using Microsoft::WRL::ComPtr;
 namespace NitLink {
 
 class DShowCapture;  // DirectShow capture backend (dshow_capture.h)
+struct CaptureReadState;
 
 struct CaptureFormat {
     uint32_t width  = 3840;
@@ -192,6 +193,9 @@ private:
 
     ComPtr<IMFMediaSource>  m_source;
     ComPtr<IMFSourceReader> m_reader;
+    // Shared only with the reader callback. Late callbacks never dereference
+    // CaptureDevice, and the worker's wait can be cancelled without a sample.
+    std::shared_ptr<CaptureReadState> m_readState;
 
     // Negotiation working state. Written field-by-field throughout
     // NegotiateFormat() and Open()'s output-format negotiation, all on the main
