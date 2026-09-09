@@ -111,6 +111,10 @@ target_include_directories(NitLink PRIVATE
 )
 
 install(TARGETS NitLink RUNTIME DESTINATION bin)
+install(FILES nitlink-menu.html DESTINATION bin)
+install(FILES third_party/nis/NIS_Scaler.h third_party/nis/LICENSE.txt
+        DESTINATION bin/third_party/nis)
+install(FILES LICENSE LICENSES.md ACKNOWLEDGMENTS.md DESTINATION bin)
 
 # nis_upscaler.cpp compiles NIS_Main.hlsl at runtime via D3DCompile, which
 # #includes "NIS_Scaler.h" from disk. Copy it next to the .exe so include

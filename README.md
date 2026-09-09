@@ -132,7 +132,7 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 
 ## Known limitations
 
-- **Elgato 4K S: 1080p HDR or 4K SDR, not both.** USB 3.2 Gen 2x1 (10 Gbps) can't fit 4K@60 P010 (HDR10, ~12 Gbps). The driver only publishes P010 at 1080p/720p. 4K@60 NV12 (SDR) works fine. Hardware ceiling, not a NitLink limitation.
+- **Elgato 4K S: 1080p HDR or 4K SDR, not both.** Its USB 3.2 Gen 1 (5 Gbps) interface can't fit 4K@60 P010 (HDR10, ~12 Gbps). The driver only publishes P010 at 1080p/720p. Elgato lists 4K60 SDR capture via MJPEG and native 4K NV12 at up to 30 fps; negotiated viewer output can be converted by Media Foundation. Hardware ceiling, not a NitLink limitation. See [Elgato's format table](https://www.elgato.com/us/en/explorer/products/capture/4k-s-supported-resolutions-and-frame-rates/).
 - **Elgato 4K S: HDR costs resolution.** Engaging HDR clamps capture to 1080p, so `hdr_enabled` acts as opt-in even with an HDR source connected. `Alt+H` flips between 1080p HDR and 4K SDR at runtime.
 - **Windows HDR can be temperamental.** Moving the window across monitors with different HDR profiles, some notification overlays, or apps with custom ICC profiles can cause flickering/desaturation. Closing and reopening NitLink resets the swap chain. A Windows-wide limitation for all HDR apps.
 - **VRR below ~40Hz falls back to fixed refresh.** Most VRR displays have a ~40Hz floor; below it VRR disengages.
