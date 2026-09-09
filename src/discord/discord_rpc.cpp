@@ -129,7 +129,11 @@ bool DiscordRPC::Connect(const std::string& applicationId)
         }
     }
     Opcode op; std::string payload;
+    // ReadFrame's cancellation guard also covers the handshake, before the
+    // worker thread exists. A failed handshake must end this session again.
+    m_running = true;
     if (!ReadFrame(op, payload)) {
+        m_running = false;
         RPCLog(L"Connect: handshake reply read failed");
         CloseHandle(m_pipe);
         m_pipe = INVALID_HANDLE_VALUE;
@@ -137,7 +141,6 @@ bool DiscordRPC::Connect(const std::string& applicationId)
     }
 
     m_connected = true;
-    m_running   = true;
     m_worker    = std::thread(&DiscordRPC::WorkerLoop, this);
     RPCLog(L"Connect: success");
     return true;
