@@ -1,16 +1,19 @@
 #include "hotkey_manager.h"
+#include <algorithm>
 
 namespace NitLink {
 
 HotkeyManager::HotkeyManager(HWND hwnd) : m_hwnd(hwnd) {}
 HotkeyManager::~HotkeyManager() = default;
 
-void HotkeyManager::Register(const std::string& name, std::vector<int> keys, Callback callback)
+void HotkeyManager::Register(const std::string& name, std::vector<int> keys, Callback callback,
+                             bool repeat)
 {
     Hotkey hk;
     hk.name     = name;
     hk.keys     = std::move(keys);
     hk.callback = std::move(callback);
+    hk.repeat   = repeat;
     m_hotkeys.push_back(std::move(hk));
 }
 
@@ -29,7 +32,11 @@ void HotkeyManager::Poll()
     // WebView2, focus on the menu still resolves to main's HWND, so a single
     // foreground check is sufficient.
     HWND fg = GetForegroundWindow();
-    if (fg != m_hwnd) return;
+    if (fg != m_hwnd) {
+        for (auto& hk : m_hotkeys) hk.wasPressed = false;
+        return;
+    }
+    const ULONGLONG now = GetTickCount64();
 
     // Don't fire hotkeys that conflict with text-input contexts inside
     // the WebView2 popup. When the popup has focus only the small set of
@@ -64,8 +71,9 @@ void HotkeyManager::Poll()
             if (pressed != required) allPressed = false;
         }
 
-        if (allPressed && !hk.wasPressed) {
-            // Key combo just pressed (edge trigger, not held)
+        if (allPressed && (!hk.wasPressed || (hk.repeat && now >= hk.nextRepeatAt))) {
+            // Scheduling from this poll avoids a burst after a stalled frame.
+            hk.nextRepeatAt = now + (hk.wasPressed ? 50 : 300);
             hk.callback();
         }
         hk.wasPressed = allPressed;

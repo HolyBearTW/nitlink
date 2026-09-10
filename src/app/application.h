@@ -64,6 +64,7 @@ private:
     // driven state changes (Alt+H for HDR), and on the once-per-second
     // stats tick while the menu is visible.
     void PushSettingsState();
+    void SetPiPOpacity(float opacity);
 
     // Game selector helpers. ApplyGameSettings loads the per-game settings
     // from Config::gameSettings[gameId] into the live Config and notifies

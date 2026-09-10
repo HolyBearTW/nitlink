@@ -1,8 +1,24 @@
 #include "window.h"
+#include <algorithm>
+#include <cmath>
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
 
 namespace NitLink {
+
+namespace {
+constexpr int kResizeLeft = 1, kResizeRight = 2, kResizeTop = 4, kResizeBottom = 8;
+
+std::pair<int, int> ScalePiPSize(double width, double aspect, int maxWidth, int maxHeight)
+{
+    const double minWidth = std::max(80.0, 45.0 * aspect);
+    const double limit = std::min(double(maxWidth), maxHeight * aspect);
+    if (minWidth > limit) return {0, 0};
+    width = std::clamp(width, minWidth, limit);
+    return {int(std::clamp(std::lround(width), 80L, long(maxWidth))),
+            int(std::clamp(std::lround(width / aspect), 45L, long(maxHeight)))};
+}
+}
 
 Window::Window() = default;
 
@@ -155,6 +171,8 @@ void Window::SetFullscreen(bool fullscreen)
 void Window::SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity)
 {
     if (enabled == m_isPiP) return; // No-op if already in target state
+    EndPiPResize();
+    m_pipScaleAspect = 0.0;
     m_isPiP = enabled;
 
     // Ensure there is a valid windowed rect to restore to
@@ -250,9 +268,17 @@ void Window::SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity
     m_wasResized = true;
 }
 
+bool Window::SetPiPOpacity(float opacity)
+{
+    if (!m_isPiP || !m_hwnd || !std::isfinite(opacity)) return false;
+    // A visible minimum keeps the window reachable with the mouse.
+    const BYTE alpha = static_cast<BYTE>(std::lround(std::clamp(opacity, 0.1f, 1.0f) * 255));
+    return SetLayeredWindowAttributes(m_hwnd, 0, alpha, LWA_ALPHA) != FALSE;
+}
+
 bool Window::NudgePiP(int dx, int dy)
 {
-    if (!m_isPiP || !m_hwnd) return false;
+    if (!m_isPiP || !m_hwnd || m_pipResizeEdges) return false;
 
     RECT rc{};
     if (!GetWindowRect(m_hwnd, &rc)) return false;
@@ -286,6 +312,137 @@ bool Window::NudgePiP(int dx, int dy)
     m_pipPreferredX = newX;
     m_pipPreferredY = newY;
     return true;
+}
+
+bool Window::GetPiPWorkArea(RECT& work) const
+{
+    HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(monitor, &mi)) return false;
+    work = mi.rcWork;
+    return work.right - work.left >= 80 && work.bottom - work.top >= 45;
+}
+
+bool Window::ResizePiP(int dw, int dh, bool keepAspect)
+{
+    if (!m_isPiP || !m_hwnd || m_pipResizeEdges) return false;
+
+    RECT rc{}, work{};
+    if (!GetWindowRect(m_hwnd, &rc) || !GetPiPWorkArea(work)) return false;
+    const int maxWidth = std::min(16384L, work.right - work.left);
+    const int maxHeight = std::min(16384L, work.bottom - work.top);
+
+    // Signed arithmetic lets shrinking reach the minimum without wrapping.
+    int width = static_cast<int>(std::clamp<int64_t>(
+        int64_t(rc.right - rc.left) + dw, 80, maxWidth));
+    int height = static_cast<int>(std::clamp<int64_t>(
+        int64_t(rc.bottom - rc.top) + dh, 45, maxHeight));
+    if (keepAspect) {
+        if (rc.right <= rc.left || rc.bottom <= rc.top) return false;
+        // Retaining the ratio across repeats prevents pixel rounding drift.
+        if (m_pipScaleAspect == 0.0)
+            m_pipScaleAspect = double(rc.right - rc.left) / (rc.bottom - rc.top);
+        const auto size = ScalePiPSize(double(rc.right - rc.left) + dw,
+                                      m_pipScaleAspect, maxWidth, maxHeight);
+        width = size.first;
+        height = size.second;
+        if (width == 0 || height == 0) return false;
+    }
+    const int x = std::clamp(rc.left, work.left, work.right - width);
+    const int y = std::clamp(rc.top, work.top, work.bottom - height);
+    if (!ApplyPiPRect({x, y, x + width, y + height})) return false;
+    if (!keepAspect) m_pipScaleAspect = 0.0;
+    return true;
+}
+
+bool Window::ApplyPiPRect(const RECT& rect)
+{
+    RECT current{};
+    if (!GetWindowRect(m_hwnd, &current) || EqualRect(&current, &rect)) return false;
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    if (!SetWindowPos(m_hwnd, HWND_TOPMOST, rect.left, rect.top, width, height,
+                      SWP_NOACTIVATE)) return false;
+
+    m_pipWidth = width;
+    m_pipHeight = height;
+    m_pipPreferredX = rect.left;
+    m_pipPreferredY = rect.top;
+    m_wasResized = true;
+    if (m_onPiPResize) m_onPiPResize();
+    return true;
+}
+
+int Window::HitTestPiPResize(POINT screenPoint) const
+{
+    if (!m_isPiP || !m_hwnd) return 0;
+    RECT rc{};
+    if (!GetWindowRect(m_hwnd, &rc) || !PtInRect(&rc, screenPoint)) return 0;
+    const int grip = std::min(MulDiv(8, GetDpiForWindow(m_hwnd), 96),
+                             int(std::min(rc.right - rc.left, rc.bottom - rc.top) / 3));
+    int edges = 0;
+    if (screenPoint.x < rc.left + grip) edges |= kResizeLeft;
+    if (screenPoint.x >= rc.right - grip) edges |= kResizeRight;
+    if (screenPoint.y < rc.top + grip) edges |= kResizeTop;
+    if (screenPoint.y >= rc.bottom - grip) edges |= kResizeBottom;
+    return edges;
+}
+
+bool Window::BeginPiPResize(POINT screenPoint)
+{
+    const int edges = HitTestPiPResize(screenPoint);
+    if (!edges || !GetWindowRect(m_hwnd, &m_pipResizeStart) ||
+        !GetPiPWorkArea(m_pipResizeWork)) return false;
+    m_pipResizeMouse = screenPoint;
+    m_pipResizeEdges = edges;
+    m_pipScaleAspect = 0.0;
+    // Mouse capture keeps playback on the normal message loop during dragging.
+    SetCapture(m_hwnd);
+    if (GetCapture() != m_hwnd) m_pipResizeEdges = 0;
+    return m_pipResizeEdges != 0;
+}
+
+void Window::UpdatePiPResize(POINT screenPoint)
+{
+    if (!m_isPiP || !m_pipResizeEdges) return;
+    const bool left = (m_pipResizeEdges & kResizeLeft) != 0;
+    const bool top = (m_pipResizeEdges & kResizeTop) != 0;
+    const bool horizontal = (m_pipResizeEdges & (kResizeLeft | kResizeRight)) != 0;
+    const bool vertical = (m_pipResizeEdges & (kResizeTop | kResizeBottom)) != 0;
+    const RECT& start = m_pipResizeStart;
+    const int startWidth = start.right - start.left;
+    const int startHeight = start.bottom - start.top;
+    const int maxWidth = std::min(16384L, left ? start.right - m_pipResizeWork.left
+                                               : m_pipResizeWork.right - start.left);
+    const int maxHeight = std::min(16384L, top ? start.bottom - m_pipResizeWork.top
+                                              : m_pipResizeWork.bottom - start.top);
+    if (startWidth <= 0 || startHeight <= 0 || maxWidth < 80 || maxHeight < 45) return;
+    const int64_t dx = int64_t(screenPoint.x) - m_pipResizeMouse.x;
+    const int64_t dy = int64_t(screenPoint.y) - m_pipResizeMouse.y;
+    const int64_t requestedWidth = startWidth + (horizontal ? (left ? -dx : dx) : 0);
+    const int64_t requestedHeight = startHeight + (vertical ? (top ? -dy : dy) : 0);
+    int width = int(std::clamp<int64_t>(requestedWidth, 80, maxWidth));
+    int height = int(std::clamp<int64_t>(requestedHeight, 45, maxHeight));
+    if (horizontal && vertical) {
+        const double aspect = double(startWidth) / startHeight;
+        const double scaledWidth = std::abs(double(dx) / startWidth) >= std::abs(double(dy) / startHeight)
+            ? double(requestedWidth) : requestedHeight * aspect;
+        const auto size = ScalePiPSize(scaledWidth, aspect, maxWidth, maxHeight);
+        width = size.first;
+        height = size.second;
+        if (width == 0 || height == 0) return;
+    }
+    const int x = left ? start.right - width : start.left;
+    const int y = top ? start.bottom - height : start.top;
+    ApplyPiPRect({x, y, x + width, y + height});
+}
+
+void Window::EndPiPResize()
+{
+    if (!m_pipResizeEdges) return;
+    m_pipResizeEdges = 0;
+    if (GetCapture() == m_hwnd) ReleaseCapture();
 }
 
 bool Window::GetPiPPosition(int32_t& outX, int32_t& outY) const
@@ -323,6 +480,35 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     switch (msg) {
+    case WM_SETCURSOR:
+        if (self && (LOWORD(lParam) == HTCLIENT || self->m_pipResizeEdges)) {
+            POINT point{};
+            if (!GetCursorPos(&point)) break;
+            const int edges = self->m_pipResizeEdges ? self->m_pipResizeEdges
+                                                   : self->HitTestPiPResize(point);
+            if (edges) {
+                LPCWSTR cursor = IDC_SIZEWE;
+                if (edges == (kResizeLeft | kResizeTop) || edges == (kResizeRight | kResizeBottom))
+                    cursor = IDC_SIZENWSE;
+                else if (edges == (kResizeRight | kResizeTop) || edges == (kResizeLeft | kResizeBottom))
+                    cursor = IDC_SIZENESW;
+                else if (edges == kResizeTop || edges == kResizeBottom)
+                    cursor = IDC_SIZENS;
+                SetCursor(LoadCursorW(nullptr, cursor));
+                return TRUE;
+            }
+        }
+        break;
+
+    case WM_CAPTURECHANGED:
+        if (self) self->m_pipResizeEdges = 0;
+        break;
+
+    case WM_CANCELMODE:
+    case WM_KILLFOCUS:
+        if (self) self->EndPiPResize();
+        break;
+
     case WM_SIZE:
         // Set the resize flag for any size change EXCEPT minimize (which
         // gives 0x0 dimensions and would crash the renderer)
@@ -411,6 +597,11 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         break;
 
     case WM_MOUSEMOVE:
+        if (self && self->m_pipResizeEdges) {
+            POINT point{(short)LOWORD(lParam), (short)HIWORD(lParam)};
+            if (ClientToScreen(hwnd, &point)) self->UpdatePiPResize(point);
+            return 0;
+        }
         if (self && self->m_inputCb.onMouseMove) {
             int x = (short)LOWORD(lParam);
             int y = (short)HIWORD(lParam);
@@ -419,6 +610,10 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
 
     case WM_LBUTTONDOWN:
+        if (self && self->m_isPiP) {
+            POINT point{(short)LOWORD(lParam), (short)HIWORD(lParam)};
+            if (ClientToScreen(hwnd, &point) && self->BeginPiPResize(point)) return 0;
+        }
         if (self && self->m_inputCb.onMouseDown) {
             int x = (short)LOWORD(lParam);
             int y = (short)HIWORD(lParam);
@@ -429,6 +624,12 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
 
     case WM_LBUTTONUP:
+        if (self && self->m_pipResizeEdges) {
+            POINT point{(short)LOWORD(lParam), (short)HIWORD(lParam)};
+            if (ClientToScreen(hwnd, &point)) self->UpdatePiPResize(point);
+            self->EndPiPResize();
+            return 0;
+        }
         if (self && self->m_inputCb.onMouseUp) {
             int x = (short)LOWORD(lParam);
             int y = (short)HIWORD(lParam);

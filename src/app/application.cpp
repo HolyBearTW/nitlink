@@ -7,6 +7,7 @@
 #include <thread>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <vector>       // FrameLevels histograms (HDR levels readout)
 #include <cstdint>      // fixed-width pixel-code types
@@ -814,7 +815,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     if (!overlayOk) {
         AppLog(L"Initialize: Overlay::Initialize FAILED (continuing without overlay)");
     }
-    m_showOverlay = overlayOk;
+    m_showOverlay = overlayOk && m_config->showOverlay;
 
     // NIS upscaler: compile compute shader, upload coefficient tables.
     // Init is best-effort: if it fails (e.g. user doesn't have compute shader
@@ -955,6 +956,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 // disk during a drag. Save happens on exit and on
                 // discrete toggles instead.
             }
+            return;
+        }
+        if (action == L"setPiPOpacity") {
+            const std::wstring raw = extractRaw(L"value");
+            wchar_t* end = nullptr;
+            const float opacity = std::wcstof(raw.c_str(), &end);
+            if (end != raw.c_str() && *end == L'\0') SetPiPOpacity(opacity);
             return;
         }
         if (action == L"cycleAspect") {
@@ -1179,7 +1187,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_hotkeyManager = std::make_unique<HotkeyManager>(m_window->GetHWND());
     m_hotkeyManager->Register("toggle_fullscreen", {VK_MENU, VK_RETURN},
         [this]() { ToggleFullscreen(); });
-    m_hotkeyManager->Register("toggle_pip", {VK_MENU, 'P'},
+    m_hotkeyManager->Register("toggle_fullscreen_f11", {VK_F11},
+        [this]() { ToggleFullscreen(); });
+    m_hotkeyManager->Register("toggle_pip", {VK_MENU, 'O'},
         [this]() { TogglePiP(); });
 
     // PiP nudge hotkeys.
@@ -1187,10 +1197,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Ctrl + arrow         : small step (20 px)
     // Ctrl + Shift + arrow : large step (80 px)
     //
-    // Each press fires the callback once (HotkeyManager uses edge-trigger
-    // semantics, not key-repeat), so the user taps to step. Nudge is a
-    // no-op when PiP isn't active. Saved position is written back into
-    // Config after each successful move so it persists across restarts.
+    // Repeating PiP controls allow held keys to cover larger distances.
+    // Config retains each applied position for the shutdown save.
     auto nudgePiP = [this](int dx, int dy) {
         if (!m_window) return;
         if (!m_window->NudgePiP(dx, dy)) return;
@@ -1204,28 +1212,102 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     constexpr int kPiPNudgeLarge = 80;
     m_hotkeyManager->Register("pip_nudge_left",
         {VK_CONTROL, VK_LEFT},
-        [nudgePiP]() { nudgePiP(-kPiPNudgeSmall, 0); });
+        [nudgePiP]() { nudgePiP(-kPiPNudgeSmall, 0); }, true);
     m_hotkeyManager->Register("pip_nudge_right",
         {VK_CONTROL, VK_RIGHT},
-        [nudgePiP]() { nudgePiP( kPiPNudgeSmall, 0); });
+        [nudgePiP]() { nudgePiP( kPiPNudgeSmall, 0); }, true);
     m_hotkeyManager->Register("pip_nudge_up",
         {VK_CONTROL, VK_UP},
-        [nudgePiP]() { nudgePiP(0, -kPiPNudgeSmall); });
+        [nudgePiP]() { nudgePiP(0, -kPiPNudgeSmall); }, true);
     m_hotkeyManager->Register("pip_nudge_down",
         {VK_CONTROL, VK_DOWN},
-        [nudgePiP]() { nudgePiP(0,  kPiPNudgeSmall); });
+        [nudgePiP]() { nudgePiP(0,  kPiPNudgeSmall); }, true);
     m_hotkeyManager->Register("pip_nudge_left_big",
         {VK_CONTROL, VK_SHIFT, VK_LEFT},
-        [nudgePiP]() { nudgePiP(-kPiPNudgeLarge, 0); });
+        [nudgePiP]() { nudgePiP(-kPiPNudgeLarge, 0); }, true);
     m_hotkeyManager->Register("pip_nudge_right_big",
         {VK_CONTROL, VK_SHIFT, VK_RIGHT},
-        [nudgePiP]() { nudgePiP( kPiPNudgeLarge, 0); });
+        [nudgePiP]() { nudgePiP( kPiPNudgeLarge, 0); }, true);
     m_hotkeyManager->Register("pip_nudge_up_big",
         {VK_CONTROL, VK_SHIFT, VK_UP},
-        [nudgePiP]() { nudgePiP(0, -kPiPNudgeLarge); });
+        [nudgePiP]() { nudgePiP(0, -kPiPNudgeLarge); }, true);
     m_hotkeyManager->Register("pip_nudge_down_big",
         {VK_CONTROL, VK_SHIFT, VK_DOWN},
-        [nudgePiP]() { nudgePiP(0,  kPiPNudgeLarge); });
+        [nudgePiP]() { nudgePiP(0,  kPiPNudgeLarge); }, true);
+
+    // Alt separates resizing from nudging under exact modifier matching.
+    // The callback also persists mouse resizing before PiP can be toggled off.
+    m_window->SetPiPResizeCallback([this]() {
+        if (!m_window || !m_config) return;
+        const auto [width, height] = m_window->GetClientSize();
+        if (width < 80 || width > 16384 || height < 45 || height > 16384) return;
+        m_config->pipWidth = width;
+        m_config->pipHeight = height;
+        int32_t x = 0, y = 0;
+        if (m_window->GetPiPPosition(x, y)) {
+            m_config->pipX = x;
+            m_config->pipY = y;
+        }
+    });
+    auto resizePiP = [this](int dw, int dh, bool keepAspect = false) {
+        if (m_window) m_window->ResizePiP(dw, dh, keepAspect);
+    };
+    constexpr int kPiPResizeSmall = 20;
+    constexpr int kPiPResizeLarge = 80;
+    m_hotkeyManager->Register("pip_resize_narrower",
+        {VK_CONTROL, VK_MENU, VK_LEFT},
+        [resizePiP]() { resizePiP(-kPiPResizeSmall, 0); }, true);
+    m_hotkeyManager->Register("pip_resize_wider",
+        {VK_CONTROL, VK_MENU, VK_RIGHT},
+        [resizePiP]() { resizePiP( kPiPResizeSmall, 0); }, true);
+    m_hotkeyManager->Register("pip_resize_shorter",
+        {VK_CONTROL, VK_MENU, VK_UP},
+        [resizePiP]() { resizePiP(0, -kPiPResizeSmall); }, true);
+    m_hotkeyManager->Register("pip_resize_taller",
+        {VK_CONTROL, VK_MENU, VK_DOWN},
+        [resizePiP]() { resizePiP(0,  kPiPResizeSmall); }, true);
+    m_hotkeyManager->Register("pip_resize_narrower_big",
+        {VK_CONTROL, VK_MENU, VK_SHIFT, VK_LEFT},
+        [resizePiP]() { resizePiP(-kPiPResizeLarge, 0); }, true);
+    m_hotkeyManager->Register("pip_resize_wider_big",
+        {VK_CONTROL, VK_MENU, VK_SHIFT, VK_RIGHT},
+        [resizePiP]() { resizePiP( kPiPResizeLarge, 0); }, true);
+    m_hotkeyManager->Register("pip_resize_shorter_big",
+        {VK_CONTROL, VK_MENU, VK_SHIFT, VK_UP},
+        [resizePiP]() { resizePiP(0, -kPiPResizeLarge); }, true);
+    m_hotkeyManager->Register("pip_resize_taller_big",
+        {VK_CONTROL, VK_MENU, VK_SHIFT, VK_DOWN},
+        [resizePiP]() { resizePiP(0,  kPiPResizeLarge); }, true);
+
+    m_hotkeyManager->Register("pip_scale_up",
+        {VK_MENU, VK_UP},
+        [resizePiP]() { resizePiP(kPiPResizeSmall, 0, true); }, true);
+    m_hotkeyManager->Register("pip_scale_down",
+        {VK_MENU, VK_DOWN},
+        [resizePiP]() { resizePiP(-kPiPResizeSmall, 0, true); }, true);
+    m_hotkeyManager->Register("pip_scale_up_big",
+        {VK_MENU, VK_SHIFT, VK_UP},
+        [resizePiP]() { resizePiP(kPiPResizeLarge, 0, true); }, true);
+    m_hotkeyManager->Register("pip_scale_down_big",
+        {VK_MENU, VK_SHIFT, VK_DOWN},
+        [resizePiP]() { resizePiP(-kPiPResizeLarge, 0, true); }, true);
+
+    auto changePiPOpacity = [this](float delta) {
+        if (m_isPiP && m_config) SetPiPOpacity(m_config->pipOpacity + delta);
+    };
+    m_hotkeyManager->Register("pip_opacity_down",
+        {VK_MENU, VK_LEFT},
+        [changePiPOpacity]() { changePiPOpacity(-0.05f); }, true);
+    m_hotkeyManager->Register("pip_opacity_up",
+        {VK_MENU, VK_RIGHT},
+        [changePiPOpacity]() { changePiPOpacity(0.05f); }, true);
+    m_hotkeyManager->Register("pip_opacity_down_big",
+        {VK_MENU, VK_SHIFT, VK_LEFT},
+        [changePiPOpacity]() { changePiPOpacity(-0.1f); }, true);
+    m_hotkeyManager->Register("pip_opacity_up_big",
+        {VK_MENU, VK_SHIFT, VK_RIGHT},
+        [changePiPOpacity]() { changePiPOpacity(0.1f); }, true);
+
     // Use Ctrl+S instead of F12 -- F12 is hooked by Xbox Game Bar / Game DVR
     // which can inject DLLs into this process and cause heap corruption.
     m_hotkeyManager->Register("screenshot", {VK_CONTROL, 'S'},
@@ -2463,7 +2545,7 @@ void Application::ToggleFullscreen()
     // layered surface; if SetFullscreen swaps styles out from under those
     // attributes, DWM ends up with a fullscreen-ish window that still
     // carries the layered alpha state, visible as a transparent /
-    // ghosted main window. The user must drop PiP (Alt+P) first, then
+    // ghosted main window. The user must drop PiP (Alt+O) first, then
     // toggle fullscreen. Logged once per attempt so a quick test in
     // DebugView shows why the hotkey did nothing.
     if (m_isPiP) {
@@ -2513,9 +2595,27 @@ void Application::TogglePiP()
     }
 }
 
+void Application::SetPiPOpacity(float opacity)
+{
+    if (!m_config || !std::isfinite(opacity)) return;
+    opacity = std::clamp(opacity, 0.1f, 1.0f);
+    if (m_isPiP && (!m_window || !m_window->SetPiPOpacity(opacity))) return;
+    m_config->pipOpacity = opacity;
+    // Only the changed value is sent during dragging or held-key repeats.
+    if (m_settingsVisible && m_webviewSettings) {
+        m_webviewSettings->PostMessage(L"{\"pipOpacity\":" + std::to_wstring(opacity) + L"}");
+    }
+}
+
 void Application::ToggleOverlay()
 {
     m_showOverlay = !m_showOverlay;
+    if (m_config) {
+        m_config->showOverlay = m_showOverlay;
+        if (!m_config->Save("nitlink.json")) {
+            AppLog(L"HUD visibility: could not save nitlink.json");
+        }
+    }
 }
 
 void Application::ShowToast(const std::wstring& text,
@@ -3420,7 +3520,7 @@ bool Application::RecoverFromDeviceLost()
     m_overlay = std::make_unique<Overlay>();
     if (m_overlay->Initialize(m_renderer->GetDevice(), m_renderer->GetContext(),
                               m_renderer->GetSwapChain(), m_window->GetHWND())) {
-        m_showOverlay = true;
+        m_showOverlay = m_config->showOverlay;
     } else {
         m_showOverlay = false;
         AppLog(L"Device lost: Overlay rebuild failed (continuing without overlay)");
@@ -3684,6 +3784,7 @@ void Application::PushSettingsState()
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
+    js << L"\"pipOpacity\":"        << m_config->pipOpacity         << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";
     js << L"\"aspectRatio\":\"" << JsonEscapeWide(ApplyAspectRatio()) << L"\",";
     js << L"\"panelSide\":\"" << ApplyPanelLayout() << L"\",";

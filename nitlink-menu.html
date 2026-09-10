@@ -152,6 +152,8 @@
       background: var(--accent); transform: translate(-50%, -50%);
     }
     .slider-val { width: 30px; text-align: right; color: var(--ink); font-size: 13px; font-weight: 500; }
+    .slider[type="range"] { min-width: 0; width: 100%; margin: 0; accent-color: var(--accent); }
+    #slider-pip-opacity-val { width: 42px; }
 
     .about-copy { padding: 16px 22px 22px; max-width: 560px; }
     .about-copy p { color: var(--ink2); font-size: 12.5px; line-height: 1.65; text-wrap: pretty; }
@@ -399,6 +401,18 @@
           </div>
 
           <div class="band">
+            <span class="band-title">Picture-in-picture</span>
+            <span class="band-hint">Alt+O</span>
+          </div>
+          <div class="row" title="Applies immediately in PiP, or the next time PiP opens. Alt+Left/Right also adjusts opacity.">
+            <label class="row-name" for="slider-pip-opacity">Opacity</label>
+            <div class="slider-wrap">
+              <input class="slider" id="slider-pip-opacity" type="range" min="10" max="100" step="1" value="90" data-action="setPiPOpacity">
+              <output class="slider-val" id="slider-pip-opacity-val" for="slider-pip-opacity">90%</output>
+            </div>
+          </div>
+
+          <div class="band">
             <span class="band-title">Panel</span>
             <span class="band-hint">This menu</span>
           </div>
@@ -445,14 +459,20 @@
             <span class="band-hint">Global while capturing</span>
           </div>
           <div class="row kv"><span class="row-name">Settings</span><span class="row-value">F1</span></div>
-          <div class="row kv"><span class="row-name">HUD overlay</span><span class="row-value">Ctrl+F3</span></div>
+          <div class="row kv"><span class="row-name">HUD overlay (remembers visibility)</span><span class="row-value">Ctrl+F3</span></div>
           <div class="row kv"><span class="row-name">Low-Latency Mode</span><span class="row-value">Alt+L</span></div>
           <div class="row kv"><span class="row-name">HDR</span><span class="row-value">Alt+H</span></div>
           <div class="row kv"><span class="row-name">Color range: Auto / Full / Limited</span><span class="row-value">Alt+R</span></div>
           <div class="row kv"><span class="row-name">Aspect ratio: Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch</span><span class="row-value">Alt+A</span></div>
-          <div class="row kv"><span class="row-name">Fullscreen</span><span class="row-value">Alt+Enter</span></div>
-          <div class="row kv"><span class="row-name">Picture-in-picture</span><span class="row-value">Alt+P</span></div>
+          <div class="row kv"><span class="row-name">Fullscreen</span><span class="row-value">F11 / Alt+Enter</span></div>
+          <div class="row kv"><span class="row-name">Picture-in-picture</span><span class="row-value">Alt+O</span></div>
+          <div class="row kv"><span class="row-name">PiP scale: grow / shrink, preserve shape (Shift: larger steps)</span><span class="row-value">Alt+Up / Down</span></div>
+          <div class="row kv"><span class="row-name">PiP opacity: less / more (5 points, Shift: 10)</span><span class="row-value">Alt+Left / Right</span></div>
           <div class="row kv"><span class="row-name">Nudge picture-in-picture (Shift for larger steps)</span><span class="row-value">Ctrl+Arrows</span></div>
+          <div class="row kv"><span class="row-name">PiP width: decrease / increase (20 px, Shift: 80 px)</span><span class="row-value">Ctrl+Alt+Left / Right</span></div>
+          <div class="row kv"><span class="row-name">PiP height: decrease / increase (20 px, Shift: 80 px)</span><span class="row-value">Ctrl+Alt+Up / Down</span></div>
+          <div class="row kv"><span class="row-name">PiP mouse resize: edges for one axis, corners for both</span><span class="row-value">Drag edge / corner</span></div>
+          <div class="row kv"><span class="row-name">PiP movement, resizing, scaling, and opacity</span><span class="row-value">Tap or hold to repeat</span></div>
           <div class="row kv"><span class="row-name">Screenshot</span><span class="row-value">Ctrl+S</span></div>
 
           <div class="band">
@@ -548,6 +568,20 @@
       slider.addEventListener('pointerup', e => { dragging = false; slider.releasePointerCapture(e.pointerId); });
       slider._setFromCpp = setVisual;
     })();
+
+    const opacitySlider = document.getElementById('slider-pip-opacity');
+    const opacityValue = document.getElementById('slider-pip-opacity-val');
+    const setPiPOpacityVisual = opacity => {
+      if (!Number.isFinite(opacity) || opacitySlider.matches(':active')) return;
+      const pct = Math.round(Math.max(10, Math.min(100, opacity * 100)));
+      opacitySlider.value = pct;
+      opacityValue.textContent = pct + '%';
+    };
+    opacitySlider.addEventListener('input', () => {
+      const pct = Number(opacitySlider.value);
+      opacityValue.textContent = pct + '%';
+      post('setPiPOpacity', pct / 100);
+    });
 
     // Capture source picker + manual format override.
     //
@@ -980,6 +1014,7 @@
         const slider = document.getElementById('slider-volume');
         if (slider && slider._setFromCpp) slider._setFromCpp(s.volume * 100);
       }
+      setPiPOpacityVisual(s.pipOpacity);
       setText('scaler-val', s.scalerName);
       if (s.aspectRatio) setText('aspect-val', s.aspectRatio);
       if (s.panelSide) {
@@ -1034,6 +1069,7 @@
         let msg = evt.data;
         if (typeof msg === 'string') try { msg = JSON.parse(msg); } catch { return; }
         if (msg && msg.state) applyState(msg.state);
+        if (msg && typeof msg.pipOpacity === 'number') setPiPOpacityVisual(msg.pipOpacity);
       });
       post('ready');
     }

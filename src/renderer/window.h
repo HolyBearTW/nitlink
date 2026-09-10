@@ -37,6 +37,7 @@ public:
     void SetIcon(const std::wstring& iconPath);
     void SetFullscreen(bool fullscreen);
     void SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity);
+    bool SetPiPOpacity(float opacity);
 
     // Sets where SetPiP will position the PiP window the next time it
     // enters PiP mode. Pass -1 / -1 to fall back to the default
@@ -52,6 +53,11 @@ public:
     // monitor's work area. No-op when not currently in PiP. Returns true
     // if the window was actually moved.
     bool NudgePiP(int dx, int dy);
+
+    // The applied size stays within config bounds and the current work area.
+    // Returns false outside PiP, at a size limit, or if placement fails.
+    bool ResizePiP(int dw, int dh, bool keepAspect = false);
+    void SetPiPResizeCallback(std::function<void()> cb) { m_onPiPResize = std::move(cb); }
 
     // Read back the PiP window's current top-left screen position so the
     // caller can persist it. Returns false (and leaves outputs untouched)
@@ -86,6 +92,13 @@ public:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
+    bool GetPiPWorkArea(RECT& work) const;
+    bool ApplyPiPRect(const RECT& rect);
+    int HitTestPiPResize(POINT screenPoint) const;
+    bool BeginPiPResize(POINT screenPoint);
+    void UpdatePiPResize(POINT screenPoint);
+    void EndPiPResize();
+
     HWND       m_hwnd = nullptr;
     HINSTANCE  m_hInstance = nullptr;
     bool       m_isFullscreen = false;
@@ -98,6 +111,11 @@ private:
     bool     m_isPiP = false;
     uint32_t m_pipWidth = 480;
     uint32_t m_pipHeight = 270;
+    double   m_pipScaleAspect = 0.0;
+    int      m_pipResizeEdges = 0;
+    RECT     m_pipResizeStart{};
+    RECT     m_pipResizeWork{};
+    POINT    m_pipResizeMouse{};
     // Preferred top-left for the next SetPiP(enabled=true) call. -1 / -1
     // = use the monitor's bottom-right default. Updated by NudgePiP and
     // SetPreferredPiPPosition.
@@ -106,6 +124,7 @@ private:
 
     InputCallbacks m_inputCb;
     std::function<void()> m_onMove;
+    std::function<void()> m_onPiPResize;
 };
 
 } // namespace NitLink

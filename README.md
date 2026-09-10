@@ -232,12 +232,21 @@ Output at `out/build/x64-Release/NitLink.exe` (VS) or `build/Release/NitLink.exe
 | `Alt + H` | Toggle HDR manually (override auto-detect) |
 | `Alt + R` | Cycle source color range: Auto → Full → Limited |
 | `Alt + A` | Cycle aspect ratio: Auto → 4:3 → 16:9 → 16:10 → 21:9 → Stretch |
-| `Alt + Enter` | Toggle fullscreen |
-| `Alt + P` | Toggle picture-in-picture |
+| `F11` or `Alt + Enter` | Toggle fullscreen |
+| `Alt + O` | Toggle picture-in-picture |
+| `Alt + Up / Down` | Scale PiP up / down, preserving its shape (20 px of width per step, `Shift` for 80 px) |
+| `Alt + Left / Right` | Decrease / increase PiP opacity by 5 percentage points (`Shift` for 10 points) |
+| `Ctrl + Arrow keys` | Nudge PiP by 20 px (hold `Shift` for 80 px) |
+| `Ctrl + Alt + Left / Right` | Decrease / increase PiP width by 20 px (hold `Shift` for 80 px) |
+| `Ctrl + Alt + Up / Down` | Decrease / increase PiP height by 20 px (hold `Shift` for 80 px) |
 | `Ctrl + S` | Save screenshot (SDR `.png` + true-HDR `.jxr`) to `Pictures/NitLink/` |
-| `Ctrl + F3` | Toggle HUD overlay |
+| `Ctrl + F3` | Toggle HUD overlay (remembered between launches) |
 
-With picture-in-picture active, `Ctrl + Arrow keys` nudge the PiP window (`Ctrl + Shift + Arrow keys` for larger steps).
+HUD visibility follows `show_overlay` in `nitlink.json` (default: `false`). Toggling it with `Ctrl + F3` saves the choice immediately.
+
+With PiP active, **drag a corner to scale both dimensions together**, preserving the window's current shape. Drag an edge to adjust just its width or height. The pointer changes to a resize cursor near the edges.
+
+PiP movement, resizing, scaling, and opacity shortcuts can be tapped for one step or held to repeat (after a short delay). Resizing keeps the window within its current monitor's work area, with width limited to 80-16384 px and height to 45-16384 px (or the work area size, if smaller). Set opacity from 10% to 100% with the shortcuts or the **F1 → Video → Picture-in-picture → Opacity** slider. The slider also sets the opacity for the next time PiP opens. Size, position, and opacity are saved to `nitlink.json` on exit.
 
 **Advanced / diagnostic:**
 

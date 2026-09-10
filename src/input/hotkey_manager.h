@@ -15,7 +15,8 @@ public:
     HotkeyManager(HWND hwnd);
     ~HotkeyManager();
 
-    void Register(const std::string& name, std::vector<int> keys, Callback callback);
+    void Register(const std::string& name, std::vector<int> keys, Callback callback,
+                  bool repeat = false);
     void Unregister(const std::string& name);
     void Poll();
 
@@ -25,6 +26,8 @@ private:
         std::vector<int> keys;
         Callback         callback;
         bool             wasPressed = false;
+        bool             repeat = false;
+        ULONGLONG        nextRepeatAt = 0;
     };
 
     HWND m_hwnd;
