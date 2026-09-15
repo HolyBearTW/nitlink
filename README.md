@@ -194,6 +194,7 @@ On an LG OLED, set the HDMI input icon to "Game Console" (not "PC") for correct 
 | Elgato 4K S (USB) | ✅ Tested and validated. 4K@60 SDR (NV12) or 1080p@60 HDR10 (P010). Source name + HDR detect via vendor HID. |
 | Elgato 4K X (USB) | ✅ Tested and validated. Source name + resolution + HDR detect via the UVC extension unit; live source-follow. |
 | Elgato Cam Link 4K (USB) | ✅ Validated (generic UVC, SDR, no vendor controls). |
+| Elgato Game Capture 4K60 Pro MK.2 (PCIe) | ✅ Verified by an owner. HDR auto-detect works and colors match Elgato Studio. |
 | Other Elgato / AverMedia / Magewell / Razer | ❓ Untested — generic Media Foundation capture should still work. |
 
 NitLink uses the Media Foundation source reader, which works with any DirectShow / WDM capture device. Elgato-specific paths (HDR auto-detect, vendor tonemap control, source detection) silently no-op on cards that don't expose them; generic SDR capture still works.

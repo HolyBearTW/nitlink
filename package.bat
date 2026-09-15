@@ -182,7 +182,7 @@ echo Alt+R  Cycle color-range override ^(Auto / Full / Limited^)
 echo Alt+A  Cycle aspect ratio ^(Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch^)
 echo Alt+L  Toggle low-latency mode
 echo Alt+Enter  Toggle fullscreen
-echo Alt+P  Toggle picture-in-picture
+echo Alt+O  Toggle picture-in-picture
 echo Ctrl+F3  Toggle HUD overlay
 echo Ctrl+S  Save screenshot to Pictures\NitLink\
 echo.
@@ -199,7 +199,7 @@ echo references that informed development but are not bundled.
 echo.
 echo SUPPORT
 echo -------
-echo This is a beta build. Bug reports welcome.
+echo Bug reports: https://github.com/nitlink-dev/nitlink/issues
 ) > "%STAGING_DIR%\README.txt"
 
 REM --- Build the zip ---------------------------------------------------------

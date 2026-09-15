@@ -6,6 +6,8 @@ This release supersedes the 1.1.1 pre-releases. Those were release candidates fo
 
 ## Fixed
 
+- Elgato Game Capture 4K60 Pro MK.2 is now recognized; HDR auto-detect works and colors match Elgato Studio (limited-range chroma decode).
+
 - **Audio stutter on USB cards.** The audio router now runs event-driven on both WASAPI endpoints and keeps a small buffer between the capture card's clock and the playback device's clock, steering it with single-frame corrections that are inaudible. The previous pump polled on a timer, discarded the tail of any capture packet that did not fit the render buffer, and had no drift handling, which surfaced as periodic stutter, most audibly on the 4K S. Routing health (buffer fill, underruns, overruns, corrections) is logged every five seconds for diagnosis.
 
 - **Audio drift correction now applies in both directions.** The below-band correction reserved no output frame, so a requested repeat consumed the entire render request and never repeated. A capture clock running slower than the playback device therefore drained the buffer toward its floor instead of recovering, leaving almost no headroom against jitter. Only the 1.1.1 pre-releases carried this. A one-hour simulation at -100 ppm now holds inside the intended band with no underruns or overruns.
@@ -13,6 +15,40 @@ This release supersedes the 1.1.1 pre-releases. Those were release candidates fo
 - **Silent NitLink when Windows blocks microphone access.** The Windows Microphone privacy switch also blocks capture-card audio for desktop apps and reports it as a plain access denial. NitLink now names the switch in an on-screen notice instead of staying quiet.
 
 - **HUD visibility is remembered.** Startup respects `show_overlay` in `nitlink.json`, and `Ctrl+F3` saves the choice immediately. Rebuilding the graphics renderer also preserves the preference.
+
+- **Discord Rich Presence never connected.** The connection was marked running only after the handshake completed, but `ReadFrame` uses that same state to decide whether to keep waiting. A valid READY reply was therefore rejected before the worker could start, so the feature failed for every user who enabled it. The state is now set before the handshake payload is read, and cleared again if the handshake fails.
+
+- **A capture card never recovered after being unplugged.** A failed reopen consumed the retry flag and nothing re-armed it, so a card removed and reconnected stayed dark until NitLink was restarted. Failed opens now retry against a one-second deadline and wait for the selected device to reappear.
+
+- **Closing NitLink could hang.** Shutdown joined the capture thread while that thread was blocked inside a synchronous read, so a card that stopped delivering samples held the process open. The reader is now asynchronous with shared callback state, so `StopCapture` wakes the worker, joins it, and flushes pending requests afterwards. Late callbacks touch only their own shared state, and a fatal reader flag suppresses further calls.
+
+- **The VRR present pacing setting never took effect.** Low-Latency Mode forced a present every loop iteration after the pacing decision had already been made, and Low-Latency Mode is on by default, so the toggle shipped in 1.1.0 did nothing for almost every user. The override is gone. Low-Latency Mode now controls only where the swap-chain wait happens, which is what it documents, and pacing is chosen explicitly on the new Present Pacing row.
+
+- **Placeholder frames flooded the ring buffer.** With the console off, a 4K Pro streams its own NO SIGNAL card as a valid frame stream at over 200 fps, and every one of those 12 MB frames was copied into the ring buffer to display a static image. The capture thread now fingerprints each raw frame against the fingerprint confirmed at detection time and drops exact matches before the write. The real placeholder is bit-identical between frames, so an exact match is the correct test: any variation at all belongs to returning source content and must reach the detector.
+
+- **Incomplete frames could reach the screen.** Uploads shorter than a complete frame are rejected, with bounded padding still allowed for contiguous buffers, and the last valid texture is retained instead of uploading stale rows from the tail of the frame buffer.
+
+- **The first frame after a stream reset could be suppressed.** Pending frame-differ readbacks are invalidated on reset, so a classification computed against the previous stream can no longer hide the first frame of the new one in Source frame rate mode.
+
+- **Switching cards left the previous card's state behind.** Card-specific format policy, source state and pollers are rebuilt on a device change, with rollback if the switch fails, and 4K S HID commands are sent only when a 4K S is selected.
+
+- **HDR detection stopped after an initial SDR result.** Source polling continues after any successful query rather than settling on the first answer, so a console that switches into HDR after NitLink is already running is picked up.
+
+- **The 4K Pro window title stayed wrong after a no-signal launch.** Source timing is refreshed when the first real frame arrives after signal loss, so a session started before the console was on now reports the correct mode once the picture appears.
+
+- **The settings panel could act on a destroyed host.** Callbacks from expired WebView initializations are rejected and late controllers are closed without touching the host. Pending Show requests are honored and focus moves when controller creation completes.
+
+- **Dependent format lists went stale.** Source selectors refresh without rebuilding the focused control, so a list no longer keeps the previous card's options while it has focus.
+
+- **Large and small hotkey steps fired together.** Modifiers are now matched exactly across all 37 registered combinations, so a Shift-modified PiP nudge no longer triggers the unmodified step as well.
+
+- **PiP position was lost on multi-monitor setups.** Saved negative desktop coordinates are preserved, with only (-1, -1) reserved to mean automatic placement, so a window parked on a monitor left of or above the primary display returns there.
+
+- **HDR diagnostic patches were written in the wrong color space.** They are converted from linear scRGB to BT.2020 and PQ before reaching the HDR10 target.
+
+- **A CMake install produced an executable that could not run.** The settings HTML, the NIS runtime shader include and the license notices are installed alongside the binary.
+
+- **The 4K S link specification was wrong in the documentation.** It is USB 3.2 Gen 1 at 5 Gbps, and native 4K60 MJPEG is now distinguished from native 4K NV12 at up to 30 fps, with the vendor format table linked as the reference.
 
 ## New
 

@@ -291,6 +291,16 @@ HDRSourceInfo ReadElgatoHDRSource(const std::wstring& deviceName, bool quiet) {
                                                    kPropertyHDRPacketLow, &supportLow);
                 HRESULT hrHigh = ps->QuerySupported(kElgatoCustomPropertySet,
                                                    kPropertyHDRPacketHigh, &supportHigh);
+                if (!quiet) {
+                    std::wstringstream ss;
+                    ss << L"ReadHDRSource: QuerySupported(720) hr=0x"
+                       << std::hex << static_cast<unsigned long>(hrLow)
+                       << L" flags=0x" << supportLow
+                       << L"; QuerySupported(721) hr=0x"
+                       << static_cast<unsigned long>(hrHigh)
+                       << L" flags=0x" << supportHigh;
+                    Log(ss.str());
+                }
                 const bool bothGet = SUCCEEDED(hrLow)  && (supportLow  & KSPROPERTY_SUPPORT_GET) &&
                                      SUCCEEDED(hrHigh) && (supportHigh & KSPROPERTY_SUPPORT_GET);
                 if (!bothGet) {
@@ -302,13 +312,28 @@ HDRSourceInfo ReadElgatoHDRSource(const std::wstring& deviceName, bool quiet) {
 
                     hr = ps->Get(kElgatoCustomPropertySet, kPropertyHDRPacketLow,
                                  nullptr, 0, &packet[0], 16, &bytesReturned);
+                    if (!quiet || FAILED(hr) || bytesReturned < 16) {
+                        std::wstringstream ss;
+                        ss << L"ReadHDRSource: Get(720) hr=0x"
+                           << std::hex << static_cast<unsigned long>(hr)
+                           << std::dec << L" bytes=" << bytesReturned;
+                        Log(ss.str());
+                    }
                     if (FAILED(hr) || bytesReturned < 16) {
                         // Always log Get failures: they're unusual even from a
                         // polling caller and worth surfacing if they happen.
                         Log(L"ReadHDRSource: low-half Get() failed");
                     } else {
+                        bytesReturned = 0;
                         hr = ps->Get(kElgatoCustomPropertySet, kPropertyHDRPacketHigh,
                                      nullptr, 0, &packet[16], 16, &bytesReturned);
+                        if (!quiet || FAILED(hr) || bytesReturned < 16) {
+                            std::wstringstream ss;
+                            ss << L"ReadHDRSource: Get(721) hr=0x"
+                               << std::hex << static_cast<unsigned long>(hr)
+                               << std::dec << L" bytes=" << bytesReturned;
+                            Log(ss.str());
+                        }
                         if (FAILED(hr) || bytesReturned < 16) {
                             Log(L"ReadHDRSource: high-half Get() failed");
                         } else {

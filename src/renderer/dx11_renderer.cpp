@@ -563,24 +563,25 @@ SamplerState captureSampler : register(s0);
 // primary, blacks lift, and the picture goes green-cast (exact symptom
 // surfaced once Alt+H reconcile started feeding real P010 frames through
 // the HDR pipeline).
+// Slot 6 is consumed only for the MK.2 limited-P010 chroma policy.
 cbuffer PixelCB : register(b0) {
     float colorExpansion;
     float hdrMode;
     float _reservedSlot2;
     float _reservedSlot3;
-    // 0 = limited-range source (10-bit Y in 64/1023..940/1023, chroma in
+    // 0 = limited-range source (10-bit Y in 64/1023..940/1023, MK.2 chroma in
     //     64/1023..960/1023). Run yuv2020ToRgb_Limited which expands those
-    //     ranges before the BT.2020 matrix.
+    //     ranges before the BT.2020 matrix; other cards expand only luma.
     // 1 = full-range source (Y in 0..1, chroma in 0..1). Use
     //     yuv2020ToRgb_Full directly.
-    // Driven from Application::SetSourceFullRange, which mirrors
+    // Driven from Application::UpdateCaptureColorInterpretation, which mirrors
     // CaptureFormat::fullRange (set from MF_MT_VIDEO_NOMINAL_RANGE).
     float sourceFullRange;
     float sdrFromHdrTonemap;  // 1.0 = P010 source but SDR backbuffer; do
                               // PQ -> linear -> BT.709 -> Reinhard -> sRGB
                               // in shader. 0.0 = normal HDR path (PQ
                               // BT.2020 passthrough) or any non-HDR source.
-    float _reservedSlot6;
+    float p010LimitedChroma;  // MK.2: standard 64..960 chroma; otherwise legacy
     float _reservedSlot7;
 };
 
@@ -606,16 +607,22 @@ float3 yuv2020ToRgb_Full(float y, float u, float v) {
     return float3(r, g, b);
 }
 
-// Limited-range LUMA, full-range CHROMA BT.2020 10-bit YUV -> RGB. P010 samples
+// Limited-range LUMA, full-range CHROMA BT.2020 10-bit YUV -> RGB by default. P010 samples
 // come from R16_UNORM / R16G16_UNORM with the 10-bit data in the high bits,
-// mapped to [0..1] by the sampler. The HDR10 sources seen here carry limited-
+// mapped to [0..1] by the sampler. The HDR10 sources seen here on the 4K Pro carry limited-
 // range luma (valid Y in [64/1023..940/1023], range 876) but full-range chroma.
 // Confirmed on the Elgato 4K Pro against the PS5 shown native on the TV
 // passthrough: full chroma matches the color exactly, while expanding the chroma
 // as if limited over-saturates it (orange skin tones). Leaving the luma
 // unexpanded separately lifts blacks to a milky grey, so expand only the luma.
+// MK.2 is the exception: limited P010 chroma uses codes 64..960, centered at 512.
+// Decode its high-bit-aligned R16_UNORM samples with 65535/64 normalization.
 float3 yuv2020ToRgb_Limited(float y, float u, float v) {
     float y_full = (y * 1023.0 - 64.0) / 876.0;
+    if (p010LimitedChroma > 0.5) {
+        u = 0.5 + (u * (65535.0 / 64.0) - 512.0) / 896.0;
+        v = 0.5 + (v * (65535.0 / 64.0) - 512.0) / 896.0;
+    }
     return yuv2020ToRgb_Full(y_full, u, v);
 }
 
@@ -738,8 +745,8 @@ float4 main(PS_INPUT input) : SV_TARGET {
 
     // ---- HDR-output: BT.2020 PQ passthrough ----
     // PS5 sends limited-range Y'CbCr by default; the limited helper expands
-    // [64/1023..940/1023] -> [0..1] for Y and [64/1023..960/1023] -> [0..1]
-    // for chroma before applying the BT.2020 matrix. saturate() handles
+    // [64/1023..940/1023] -> [0..1] for Y; MK.2 also expands limited chroma
+    // from 64..960 before applying the BT.2020 matrix. saturate() handles
     // out-of-spec overshoots from the expansion at the very brightest
     // pixels. Output is still PQ-encoded BT.2020, exactly what the
     // R10G10B10A2 + G2084 swap chain wants.
@@ -1909,7 +1916,8 @@ void DX11Renderer::DrawCaptureFrame()
         // (HDR path, plain SDR via NV12, etc).
         const bool sdrFromHdrTonemap = m_sourceIsHDR10 && !m_hdrEnabled;
         data[5] = sdrFromHdrTonemap ? 1.0f : 0.0f;
-        data[6] = 0.0f;
+        // Slot 6 is P010-only; reset explicitly when the source policy changes.
+        data[6] = m_p010LimitedChroma ? 1.0f : 0.0f;
         data[7] = 0.0f;
         m_context->Unmap(m_pixelCB.Get(), 0);
     }

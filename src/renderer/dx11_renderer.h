@@ -196,6 +196,10 @@ public:
     // expansion when not needed (preventing crushed blacks).
     void SetSourceFullRange(bool fullRange) { m_sourceFullRange = fullRange; }
 
+    // Model-specific P010 chroma interpretation. Default false preserves the
+    // existing capture-card behavior; only effective limited mode consumes it.
+    void SetP010LimitedChroma(bool enabled) { m_p010LimitedChroma = enabled; }
+
     // Tell the renderer whether the active capture source is HDR10 (PQ/BT.2020).
     // True when the Elgato InfoFrame reported EOTF=ST.2084 AND the pipeline
     // is capturing in P010 mode (raw HDR10 passthrough). False otherwise.
@@ -415,6 +419,7 @@ private:
     CaptureFormatKind m_sourceFormat    = CaptureFormatKind::BGRA;
     bool              m_sourceFormatSet = false; // becomes true on first SetSourceFormat
     bool              m_sourceTopDown = false; // set by SetSourceRowOrder()
+    bool              m_p010LimitedChroma = false;
     bool              m_sourceFullRange = false; // set by SetSourceFullRange()
     bool              m_sourceIsHDR10 = false; // set by SetSourceIsHDR10()
 

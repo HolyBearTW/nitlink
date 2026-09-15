@@ -362,6 +362,8 @@ private:
     // trust Media Foundation's nominal range, which is correct for every
     // supported card (all deliver limited-range HDR10). No per-card override
     // is needed.
+    void UpdateCaptureColorInterpretation(const std::wstring& deviceName);
+
     bool EffectiveSourceFullRange() const {
         if (m_sourceRangeOverride == 1) return true;
         if (m_sourceRangeOverride == 2) return false;

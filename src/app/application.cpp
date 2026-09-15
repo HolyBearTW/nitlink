@@ -2,6 +2,7 @@
 #include "WebViewSettings.h"
 #include "game_database.h"
 #include "capture/elgato_hdr_control.h"
+#include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
 #include <chrono>
 #include <thread>
@@ -23,11 +24,31 @@ static void AppLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/App] " + msg + L"\n").c_str());
 }
 
+void Application::UpdateCaptureColorInterpretation(const std::wstring& deviceName) {
+    if (!m_renderer) return;
+    const bool fullRange = EffectiveSourceFullRange();
+    const bool limitedChroma = UsesStandardLimitedP010Chroma(
+        deviceName, m_lastCaptureIsP010, fullRange);
+    m_renderer->SetSourceFullRange(fullRange);
+    m_renderer->SetP010LimitedChroma(limitedChroma);
+
+    std::wstringstream ss;
+    ss << L"Capture interpretation: "
+       << (m_lastCaptureIsP010 ? L"P010 PQ / BT.2020" : L"non-P010 path")
+       << L"; device='" << deviceName << L"'"
+       << L"; MF range or fallback=" << (m_lastMfFullRange ? L"FULL" : L"LIMITED")
+       << L"; effective luma range=" << (fullRange ? L"FULL" : L"LIMITED")
+       << L"; P010 chroma=" << (limitedChroma ? L"STANDARD LIMITED (MK.2 correction ON)"
+                                            : L"existing behavior (MK.2 correction OFF)")
+       << L"; override=" << m_sourceRangeOverride << L" (0 Auto, 1 Full, 2 Limited)";
+    AppLog(ss.str());
+}
+
 // ---- HDR levels readout (Ctrl+F6) -------------------------------------
 // Measures the captured frame's code range so the correct per-card color
 // range can be read off the signal instead of eyeballed. NitLink's decode
-// only varies by LUMA range (chroma is full-range in both shader paths), so
-// the luma floor is the load-bearing number: ~64 (10-bit) / ~16 (8-bit)
+// uses the luma range plus a model-specific limited-chroma policy for MK.2
+// P010 capture. The luma floor indicates the source luma range: ~64 (10-bit) / ~16 (8-bit)
 // means a limited-range source, ~0 means full range. Chroma min/max is
 // reported too (informational; needs saturated content to be meaningful).
 struct FrameLevels {
@@ -149,23 +170,6 @@ static std::wstring FormatLevelsText(const FrameLevels& lv,
     }
     if (lv.eightBit) ss << L" (8b)";
     return ss.str();
-}
-
-// Predicate used to gate Elgato-specific control calls (IKsPropertySet
-// HDR tonemap toggle, HDR InfoFrame property read, 4K S vendor HID
-// Output Report) so non-Elgato sources like laptop webcams or
-// third-party capture cards do not generate "property not supported"
-// log noise. Matches the existing substring filter used inside
-// elgato_hdr_control.cpp's FindDeviceFilter, so a device that the
-// downstream Elgato calls would have accepted is the same device this
-// predicate accepts.
-static bool IsElgatoDevice(const std::wstring& deviceName)
-{
-    std::wstring lower = deviceName;
-    if (!lower.empty()) {
-        CharLowerBuffW(lower.data(), static_cast<DWORD>(lower.size()));
-    }
-    return lower.find(L"elgato") != std::wstring::npos;
 }
 
 // Strip vendor-specific suffix from a video device name so the result
@@ -331,6 +335,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // generate "property not supported" log lines for every launch
     // against a non-Elgato source.
     const bool isElgato = IsElgatoDevice(chosen.name);
+    AppLog(isElgato
+        ? L"Initialize: device name recognized for Elgato controls; HDR query support still requires a successful probe"
+        : L"Initialize: device name does not match an Elgato control identity");
     std::wstring chosenLower = chosen.name;
     std::transform(chosenLower.begin(), chosenLower.end(), chosenLower.begin(), ::towlower);
     m_is4KS = isElgato && chosenLower.find(L"4k s") != std::wstring::npos;
@@ -741,7 +748,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     if (m_renderer) {
         m_lastMfFullRange   = format.fullRange;
         m_lastCaptureIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
-        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+        UpdateCaptureColorInterpretation(m_currentDeviceInfo.name);
     }
 
     // Tell the renderer whether the data flowing through the capture buffer
@@ -1396,7 +1403,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_hotkeyManager->Register("cycle_color_range", {VK_MENU, 'R'},
         [this]() {
             m_sourceRangeOverride = (m_sourceRangeOverride + 1) % 3;
-            if (m_renderer) m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+            UpdateCaptureColorInterpretation(m_currentDeviceInfo.name);
             const std::wstring rmsg =
                 m_sourceRangeOverride == 1 ? L"Color range: FULL forced (Alt+R)"
               : m_sourceRangeOverride == 2 ? L"Color range: LIMITED forced (Alt+R)"
@@ -3221,7 +3228,7 @@ bool Application::ReconcileCaptureFormat(bool force)
         m_renderer->SetSourceRowOrder(format.topDown);
         m_lastMfFullRange   = format.fullRange;
         m_lastCaptureIsP010 = IsEqualGUID(format.subtype, MFVideoFormat_P010);
-        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+        UpdateCaptureColorInterpretation(deviceToOpen.name);
         // Push the shader's HDR-source flag based on the ACTUAL negotiated
         // capture format, not on m_sourceIsHDR10. See the long-form comment
         // in Initialize() for why these are different questions on the 4K S.
@@ -3555,7 +3562,7 @@ bool Application::RecoverFromDeviceLost()
         m_renderer->SetSourceRowOrder(fmt.topDown);
         m_lastMfFullRange   = fmt.fullRange;
         m_lastCaptureIsP010 = IsEqualGUID(fmt.subtype, MFVideoFormat_P010);
-        m_renderer->SetSourceFullRange(EffectiveSourceFullRange());
+        UpdateCaptureColorInterpretation(m_currentDeviceInfo.name);
         const bool captureIsP010 = IsEqualGUID(fmt.subtype, MFVideoFormat_P010);
         m_renderer->SetSourceIsHDR10(captureIsP010);
         DX11Renderer::CaptureFormatKind rkind;
