@@ -49,6 +49,8 @@ set(NITLINK_SOURCES
     src/capture/placeholder_detector.h
     src/renderer/dx11_renderer.cpp
     src/renderer/dx11_renderer.h
+    src/renderer/hdr_tone_map.h
+    src/renderer/hdr_tone_map_hlsl.h
     src/renderer/window.cpp
     src/renderer/window.h
     src/input/hotkey_manager.cpp
@@ -133,3 +135,20 @@ add_custom_command(TARGET NitLink POST_BUILD
         ${CMAKE_SOURCE_DIR}/nitlink-menu.html
         $<TARGET_FILE_DIR:NitLink>/nitlink-menu.html
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(NitLinkToneMapTests
+        tests/hdr_tone_map_reference_tests.cpp
+        src/renderer/hdr_tone_map.h
+        src/renderer/hdr_tone_map_hlsl.h
+    )
+    target_include_directories(NitLinkToneMapTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    target_link_libraries(NitLinkToneMapTests PRIVATE
+        d3d11
+        d3dcompiler
+    )
+    add_test(NAME hdr_tone_map_reference COMMAND NitLinkToneMapTests)
+endif()
