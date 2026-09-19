@@ -2,6 +2,7 @@
 #include "renderer/hdr_tone_map.h"
 #include "renderer/hdr_tone_map_hlsl.h"
 #include <d3dcompiler.h>
+#include <array>
 #include <sstream>
 #include <vector>
 #include <algorithm>
