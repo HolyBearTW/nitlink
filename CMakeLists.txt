@@ -129,19 +129,21 @@ add_custom_command(TARGET NitLink POST_BUILD
         $<TARGET_FILE_DIR:NitLink>/third_party/nis/NIS_Scaler.h
 )
 
-# Copy the WebView2 settings HTML next to the executable so file:/// URI
-# resolution works regardless of working directory.
-add_custom_command(TARGET NitLink POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
+# Keep the WebView2 settings HTML and external localization resources in sync
+# even when NitLink.exe itself does not need to relink. This target intentionally
+# has no output: copy_if_different keeps unchanged files' timestamps stable,
+# while the dependency makes a direct NitLink target build refresh resources.
+add_custom_target(NitLinkRuntimeResources
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:NitLink>/locales
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/nitlink-menu.html
         $<TARGET_FILE_DIR:NitLink>/nitlink-menu.html
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/locales/en-US.js
+        $<TARGET_FILE_DIR:NitLink>/locales/en-US.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/locales/zh-TW.js
+        $<TARGET_FILE_DIR:NitLink>/locales/zh-TW.js
 )
-
-# Copy the external localization resources next to the settings HTML so the
-# file:// WebView can load them in both build and installed layouts.
-add_custom_command(TARGET NitLink POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:NitLink>/locales
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/locales
-        $<TARGET_FILE_DIR:NitLink>/locales
-)
+add_dependencies(NitLink NitLinkRuntimeResources)
