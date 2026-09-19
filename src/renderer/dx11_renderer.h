@@ -208,7 +208,8 @@ public:
     // output path:
     //   sourceIsHDR10 && hdrEnabled  -> write PQ BT.2020 to HDR backbuffer
     //   sourceIsHDR10 && !hdrEnabled -> PQ decode -> linear -> BT.2020 to
-    //                                  BT.709 -> Reinhard tonemap -> sRGB
+    //                                  BT.709 -> BT.2446A-derived luminance
+    //                                  EETF -> sRGB
     //                                  to SDR backbuffer (in-shader HDR-to-SDR
     //                                  path)
     //
@@ -216,8 +217,7 @@ public:
     // doesn't reliably re-engage mid-session via IKsPropertySet: the card
     // seems to latch its tonemap state at HDMI signal acquisition. Doing
     // the tonemap in the shader bypasses that firmware quirk entirely and
-    // gives full control over the operator (Reinhard with 1000-nit
-    // whitepoint, matching the HDR10 MaxCLL metadata).
+    // gives full control over the luminance-preserving operator.
     void SetSourceIsHDR10(bool isHDR10) { m_sourceIsHDR10 = isHDR10; }
 
     // The pixel formats this renderer's capture path knows how to handle.

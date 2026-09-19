@@ -1,4 +1,6 @@
 #include "dx11_renderer.h"
+#include "renderer/hdr_tone_map.h"
+#include "renderer/hdr_tone_map_hlsl.h"
 #include <d3dcompiler.h>
 #include <sstream>
 #include <vector>
@@ -578,7 +580,7 @@ cbuffer PixelCB : register(b0) {
     // CaptureFormat::fullRange (set from MF_MT_VIDEO_NOMINAL_RANGE).
     float sourceFullRange;
     float sdrFromHdrTonemap;  // 1.0 = P010 source but SDR backbuffer; do
-                              // PQ -> linear -> BT.709 -> Reinhard -> sRGB
+                              // PQ -> linear -> BT.709 -> luminance EETF -> sRGB
                               // in shader. 0.0 = normal HDR path (PQ
                               // BT.2020 passthrough) or any non-HDR source.
     float p010LimitedChroma;  // MK.2: standard 64..960 chroma; otherwise legacy
@@ -634,8 +636,8 @@ float3 yuv2020ToRgb_Limited(float y, float u, float v) {
 // on this firmware). Pipeline:
 //   1. yuv2020ToRgb_Limited       -> PQ-encoded BT.2020 RGB
 //   2. PqToLinear                 -> linear BT.2020 in [0..10000] nits
-//   3. Bt2020ToBt709_Linear       -> linear BT.709 (gamut compress)
-//   4. ReinhardWithWhitepoint     -> SDR-range linear [0..1]
+//   3. Bt2020ToBt709_Linear       -> linear BT.709
+//   4. BT.2446A-derived EETF      -> SDR-range linear [0..1]
 //   5. LinearToSrgb               -> gamma-encoded sRGB for BGRA8 output
 
 // SMPTE ST.2084 (PQ) inverse EOTF. Input: PQ-encoded value in [0..1].
@@ -653,13 +655,8 @@ float3 PqToLinear(float3 pq) {
     return pow(num / den, 1.0 / m1);
 }
 
-// BT.2020 to BT.709 primaries conversion in LINEAR LIGHT.
-// Matrix from ITU-R BT.2087-0 (inverse of the one used in the NV12
-// SDR-to-HDR path). Negative coefficients can produce out-of-gamut
-// (negative or >1) values for highly saturated BT.2020 colors that
-// don't exist in BT.709; the tonemap and the final saturate() clip
-// them. This is the standard approach (a true gamut compression
-// would preserve more saturation but is much more expensive).
+// BT.2020 to BT.709 primaries conversion in linear light. Out-of-gamut
+// channels remain intact here and are compressed only after tone mapping.
 float3 Bt2020ToBt709_Linear(float3 c) {
     return float3(
          1.6605 * c.r - 0.5876 * c.g - 0.0728 * c.b,
@@ -668,30 +665,29 @@ float3 Bt2020ToBt709_Linear(float3 c) {
     );
 }
 
-// Extended Reinhard tonemap with explicit whitepoint, anchored to SDR
-// paper-white at 100 nits.
-//
-// The input `linear_in_nits_div_10k` is PqToLinear's output (1.0 == 10000
-// nits). First rescale by x100 so that 100 nits becomes 1.0 in the
-// operator's domain: this is the SDR "diffuse white" reference. With the
-// whitepoint set to MaxCLL/100 (=10 for 1000-nit content), the curve
-// maps:
-//    0 nits      -> 0.00 (black preserved)
-//   25 nits      -> 0.20 (shadow detail visible)
-//  100 nits      -> 0.50 (mid-grey, what an SDR display calls "white")
-//  500 nits      -> 0.87 (bright highlight, near display max)
-// 1000 nits      -> 1.00 (whitepoint == display max)
-// 1000+ nits     -> >1.0 (clipped by downstream saturate())
-//
-// Operator: L_out = L * (1 + L/Lw^2) / (1 + L)
-// Anchored at L=Lw -> L_out=1, monotonic, preserves blacks.
-float3 ReinhardWithWhitepoint(float3 linear_in_nits_div_10k, float whitepoint_nits) {
-    float3 L  = linear_in_nits_div_10k * 100.0;  // rescale so 100 nits = 1.0
-    float  Lw = whitepoint_nits / 100.0;          // whitepoint in same domain
-    float  w2 = Lw * Lw;
-    float3 num = L * (1.0 + L / w2);
-    float3 den = 1.0 + L;
-    return num / max(den, 1e-6);
+// NITLINK_BT2446_DERIVED_LUMINANCE_FUNCTION
+
+float3 CompressToSdrGamut(float3 c, float mappedY) {
+    float chromaScale = 1.0;
+    float3 delta = c - mappedY.xxx;
+
+    if (delta.r < 0.0) chromaScale = min(chromaScale, -mappedY / delta.r);
+    else if (delta.r > 0.0) chromaScale = min(chromaScale, (1.0 - mappedY) / delta.r);
+    if (delta.g < 0.0) chromaScale = min(chromaScale, -mappedY / delta.g);
+    else if (delta.g > 0.0) chromaScale = min(chromaScale, (1.0 - mappedY) / delta.g);
+    if (delta.b < 0.0) chromaScale = min(chromaScale, -mappedY / delta.b);
+    else if (delta.b > 0.0) chromaScale = min(chromaScale, (1.0 - mappedY) / delta.b);
+
+    return saturate(mappedY.xxx + delta * saturate(chromaScale));
+}
+
+float3 ToneMapBt709Luminance(float3 linear709) {
+    const float3 bt709Luma = float3(0.2126, 0.7152, 0.0722);
+    const float originalY = dot(linear709, bt709Luma);
+    if (originalY <= 1e-6) return 0.0;
+
+    const float mappedY = ToneMapLuminanceNits(originalY * 10000.0);
+    return CompressToSdrGamut(linear709 * (mappedY / originalY), mappedY);
 }
 
 // Linear to sRGB EOTF (gamma encode). Standard piecewise function from
@@ -727,8 +723,8 @@ float4 main(PS_INPUT input) : SV_TARGET {
     // SDR mode and the capture format is renegotiated to NV12, so an
     // HDR-off + P010-source combination never reaches this shader.
     //   Pipeline: BT.2020 PQ YUV -> RGB -> PQ inverse EOTF -> linear BT.2020
-    //   -> linear BT.709 -> Reinhard tonemap (100 nit paper-white,
-    //   1000 nit whitepoint) -> sRGB EOTF -> 8-bit BGRA backbuffer.
+    //   -> linear BT.709 -> BT.2446A-derived luminance EETF
+    //   -> sRGB EOTF -> 8-bit BGRA backbuffer.
     if (sdrFromHdrTonemap > 0.5) {
         float3 rgb;
         if (sourceFullRange > 0.5) {
@@ -738,7 +734,7 @@ float4 main(PS_INPUT input) : SV_TARGET {
         }
         float3 linear2020 = PqToLinear(rgb);
         float3 linear709  = Bt2020ToBt709_Linear(linear2020);
-        float3 sdrLinear  = ReinhardWithWhitepoint(linear709, 1000.0);
+        float3 sdrLinear  = ToneMapBt709Luminance(linear709);
         float3 srgb       = LinearToSrgb(sdrLinear);
         return float4(srgb, 1.0);
     }
@@ -759,6 +755,13 @@ float4 main(PS_INPUT input) : SV_TARGET {
     return float4(saturate(rgb), 1.0);
 }
 )";
+
+static bool BuildP010ShaderSource(std::string& source)
+{
+    source = g_pixelShaderP010;
+    return HdrToneMap::InjectDerivedLuminanceFunction(
+        source, "// NITLINK_BT2446_DERIVED_LUMINANCE_FUNCTION");
+}
 
 // UI overlay shader for HDR compositing.
 // Samples BGRA8 UI texture (sRGB, premultiplied alpha), converts to linear
@@ -1254,9 +1257,15 @@ bool DX11Renderer::CreateFullscreenQuad()
 
     // P010 (HDR10) shader. Compiled even when not currently used so it's
     // ready if the user toggles HDR on while an HDR10 source is present.
+    std::string p010ShaderSource;
+    if (!BuildP010ShaderSource(p010ShaderSource)) {
+        OutputDebugStringA("[NitLink/Renderer] P010 tone-map marker missing\n");
+        return false;
+    }
+    const HdrToneMap::HlslMacroSet toneMapMacros;
     hr = D3DCompile(
-        g_pixelShaderP010, strlen(g_pixelShaderP010),
-        "PS", nullptr, nullptr, "main", "ps_5_0",
+        p010ShaderSource.data(), p010ShaderSource.size(),
+        "PS", toneMapMacros.macros.data(), nullptr, "main", "ps_5_0",
         D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
         &psP010Blob, &errorBlob
     );
@@ -2223,10 +2232,9 @@ void DX11Renderer::EndFrame()
 
 // HDR10 screenshot tonemap: convert one R10G10B10A2_UNORM backbuffer pixel
 // (PQ-encoded BT.2020 RGB, the HDR10 swap chain format) into 8-bit sRGB BGRA.
-// Mirrors the capture shader's SDR-from-HDR pipeline (PqToLinear,
-// Bt2020ToBt709_Linear, ReinhardWithWhitepoint at a 1000 nit whitepoint,
-// LinearToSrgb) so a saved frame matches the SDR tonemap the renderer would
-// display. Per-pixel on the CPU, which is fine for a one-shot screenshot.
+// Mirrors the capture shader's SDR-from-HDR pipeline so a saved frame matches
+// the BT.2446A-derived luminance EETF displayed by the renderer. Per-pixel on
+// the CPU, which is fine for a one-shot screenshot.
 static void Hdr10PixelToBgra8(uint32_t px, uint8_t* outBgra)
 {
     // SMPTE ST.2084 (PQ) inverse EOTF, one channel. Output 1.0 == 10000 nits.
@@ -2241,12 +2249,22 @@ static void Hdr10PixelToBgra8(uint32_t px, uint8_t* outBgra)
         float den = c2 - c3 * p;
         return std::pow(num / den, 1.0f / m1);
     };
-    // Extended Reinhard, 1000 nit whitepoint, anchored to 100 nit paper-white.
-    // Matches ReinhardWithWhitepoint(x, 1000.0) in the capture shader.
-    auto reinhard = [](float x) -> float {
-        float L   = x * 100.0f;            // 100 nits maps to 1.0
-        float den = 1.0f + L;
-        return (L * (1.0f + L / 100.0f)) / (den < 1e-6f ? 1e-6f : den);
+    auto compressToSdrGamut = [](float r, float g, float b, float mappedY) {
+        float scale = 1.0f;
+        const auto constrain = [&](float channel) {
+            if (channel < 0.0f) return -mappedY / (channel - mappedY);
+            if (channel > 1.0f) return (1.0f - mappedY) / (channel - mappedY);
+            return 1.0f;
+        };
+        scale = std::min(scale, constrain(r));
+        scale = std::min(scale, constrain(g));
+        scale = std::min(scale, constrain(b));
+        scale = std::max(0.0f, std::min(1.0f, scale));
+        return std::array<float, 3>{
+            std::max(0.0f, std::min(1.0f, mappedY + (r - mappedY) * scale)),
+            std::max(0.0f, std::min(1.0f, mappedY + (g - mappedY) * scale)),
+            std::max(0.0f, std::min(1.0f, mappedY + (b - mappedY) * scale)),
+        };
     };
     // Linear to sRGB gamma (IEC 61966-2-1), one channel, clamped to [0, 1].
     auto linearToSrgb = [](float lin) -> float {
@@ -2269,9 +2287,17 @@ static void Hdr10PixelToBgra8(uint32_t px, uint8_t* outBgra)
     float g709 = -0.1246f * r + 1.1329f * g - 0.0083f * b;
     float b709 = -0.0182f * r - 0.1006f * g + 1.1187f * b;
 
-    float sr = linearToSrgb(reinhard(r709));
-    float sg = linearToSrgb(reinhard(g709));
-    float sb = linearToSrgb(reinhard(b709));
+    const float originalY = std::max(0.0f,
+        0.2126f * r709 + 0.7152f * g709 + 0.0722f * b709);
+    const float mappedY = static_cast<float>(
+        HdrToneMap::Bt2446ADerivedLuminance(originalY * 10000.0f));
+    const float scale = originalY > 1e-6f ? mappedY / originalY : 0.0f;
+    const auto mapped = compressToSdrGamut(r709 * scale, g709 * scale,
+                                            b709 * scale, mappedY);
+
+    float sr = linearToSrgb(mapped[0]);
+    float sg = linearToSrgb(mapped[1]);
+    float sb = linearToSrgb(mapped[2]);
 
     int R8 = (int)(sr * 255.0f + 0.5f); if (R8 < 0) R8 = 0; if (R8 > 255) R8 = 255;
     int G8 = (int)(sg * 255.0f + 0.5f); if (G8 < 0) G8 = 0; if (G8 > 255) G8 = 255;
