@@ -166,4 +166,13 @@ if(BUILD_TESTING)
         d3dcompiler
     )
     add_test(NAME hdr_tone_map_reference COMMAND NitLinkToneMapTests)
+
+    add_executable(NitLinkWindowSizeTests
+        tests/window_size_tests.cpp
+        src/renderer/window.cpp
+        src/app/config.cpp
+    )
+    target_include_directories(NitLinkWindowSizeTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkWindowSizeTests PRIVATE user32 gdi32 dwmapi)
+    add_test(NAME window_size_persistence COMMAND NitLinkWindowSizeTests)
 endif()

@@ -2580,9 +2580,9 @@ void Application::Shutdown()
         m_captureDevice.reset();
     }
 
-    // Save config before the window handle is lost
+    // Closing the window can destroy its handle before shutdown saves the configuration.
     if (m_config && m_window) {
-        auto [w, h] = m_window->GetClientSize();
+        auto [w, h] = m_window->GetWindowedClientSize();
         if (w >= 200 && h >= 200) { // Don't save zero-sized state from a closing window
             m_config->windowWidth = w;
             m_config->windowHeight = h;

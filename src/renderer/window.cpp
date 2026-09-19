@@ -33,6 +33,7 @@ Window::~Window()
 bool Window::Create(HINSTANCE hInstance, const Desc& desc)
 {
     m_hInstance = hInstance;
+    m_windowedClientSize = {desc.width, desc.height};
 
     // Register window class
     WNDCLASSEXW wc{};
@@ -514,6 +515,11 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         // gives 0x0 dimensions and would crash the renderer)
         if (self && wParam != SIZE_MINIMIZED) {
             self->m_wasResized = true;
+            // Only the normal window size belongs to the next windowed launch.
+            if (wParam == SIZE_RESTORED && !self->m_isFullscreen && !self->m_isPiP) {
+                const uint32_t width = LOWORD(lParam), height = HIWORD(lParam);
+                if (width > 0 && height > 0) self->m_windowedClientSize = {width, height};
+            }
             // SIZE_MAXIMIZED and SIZE_RESTORED are both valid -- both come
             // through this path and trigger a clean resize on the next frame.
         }
