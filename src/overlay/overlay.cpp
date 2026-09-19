@@ -74,39 +74,10 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
         __uuidof(IDWriteFactory), (IUnknown**)m_dwriteFactory.GetAddressOf());
     if (FAILED(hr)) return false;
 
-    hr = m_dwriteFactory->CreateTextFormat(
-        Localization::Instance().UiFontFamily(GetTheme().overlayFont), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        GetTheme().overlayFontSize, Localization::Instance().LocaleName().c_str(), &m_textFormat);
-    if (FAILED(hr)) return false;
-
-    // Footer text (GPU time): the panel's body size.
-    hr = m_dwriteFactory->CreateTextFormat(
-        Localization::Instance().UiFontFamily(GetTheme().fontFamily), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        11.5f, Localization::Instance().LocaleName().c_str(), &m_smallTextFormat);
-    if (FAILED(hr)) return false;
-
-    // Big primary number (frame rate, ingest): semibold, same family.
-    hr = m_dwriteFactory->CreateTextFormat(
-        Localization::Instance().UiFontFamily(GetTheme().fontFamily), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        26.0f, Localization::Instance().LocaleName().c_str(), &m_textFormatBig);
-    if (FAILED(hr)) return false;
-
-    // Uppercase band title and pipeline badges, like the panel's band titles.
-    hr = m_dwriteFactory->CreateTextFormat(
-        Localization::Instance().UiFontFamily(GetTheme().fontFamily), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        10.0f, Localization::Instance().LocaleName().c_str(), &m_textFormatLabel);
-    if (FAILED(hr)) return false;
-
-    // Metric labels and unit suffixes, like the panel's signal labels.
-    hr = m_dwriteFactory->CreateTextFormat(
-        Localization::Instance().UiFontFamily(GetTheme().fontFamily), nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        11.0f, Localization::Instance().LocaleName().c_str(), &m_textFormatUnit);
-    if (FAILED(hr)) return false;
+    if (!RefreshTextFormats()) {
+        OvLog(L"RefreshTextFormats failed during init");
+        return false;
+    }
 
     if (!CreateD2DResources()) {
         OvLog(L"CreateD2DResources failed during init");
@@ -115,6 +86,73 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
 
     m_initialized = true;
     OvLog(L"Initialized successfully");
+    return true;
+}
+
+bool Overlay::RefreshTextFormats()
+{
+    if (!m_dwriteFactory) {
+        OvLog(L"RefreshTextFormats skipped: DirectWrite factory is unavailable");
+        return false;
+    }
+
+    const auto& localization = Localization::Instance();
+    const wchar_t* locale = localization.LocaleName().c_str();
+    const wchar_t* overlayFont = localization.UiFontFamily(GetTheme().overlayFont);
+    const wchar_t* fontFamily = localization.UiFontFamily(GetTheme().fontFamily);
+
+    ComPtr<IDWriteTextFormat> textFormat;
+    ComPtr<IDWriteTextFormat> smallTextFormat;
+    ComPtr<IDWriteTextFormat> textFormatBig;
+    ComPtr<IDWriteTextFormat> textFormatLabel;
+    ComPtr<IDWriteTextFormat> textFormatUnit;
+
+    auto createTextFormat = [&](const wchar_t* family,
+                                DWRITE_FONT_WEIGHT weight,
+                                float size,
+                                ComPtr<IDWriteTextFormat>& format,
+                                const wchar_t* name) {
+        const HRESULT hr = m_dwriteFactory->CreateTextFormat(
+            family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, size, locale, &format);
+        if (FAILED(hr)) {
+            std::wstringstream ss;
+            ss << L"RefreshTextFormats: CreateTextFormat failed for " << name
+               << L": 0x" << std::hex << hr;
+            OvLog(ss.str());
+            return false;
+        }
+        return true;
+    };
+
+    if (!createTextFormat(overlayFont, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          GetTheme().overlayFontSize, textFormat, L"overlay")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_NORMAL,
+                          11.5f, smallTextFormat, L"small")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          26.0f, textFormatBig, L"big")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          10.0f, textFormatLabel, L"label")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_NORMAL,
+                          11.0f, textFormatUnit, L"unit")) {
+        return false;
+    }
+
+    m_textFormat = textFormat;
+    m_smallTextFormat = smallTextFormat;
+    m_textFormatBig = textFormatBig;
+    m_textFormatLabel = textFormatLabel;
+    m_textFormatUnit = textFormatUnit;
+
+    OvLog(L"Text formats refreshed for locale " + localization.LocaleName());
     return true;
 }
 

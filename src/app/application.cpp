@@ -924,6 +924,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 m_config->language = requested == L"en-US" ? "en-US"
                     : requested == L"zh-TW" ? "zh-TW" : "system";
                 Localization::Instance().SetPreference(m_config->language);
+                if (m_overlay && !m_overlay->RefreshTextFormats()) {
+                    AppLog(L"setLanguage: failed to refresh overlay text formats");
+                }
                 m_config->Save("nitlink.json");
                 UpdateWindowTitle();
                 PushSettingsState();

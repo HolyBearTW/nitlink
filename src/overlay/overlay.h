@@ -45,6 +45,7 @@ public:
 
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
                     IDXGISwapChain1* swapChain, HWND hwnd);
+    bool RefreshTextFormats();
     void Shutdown();
 
     // Call BEFORE the renderer resizes the swap chain -- releases the D2D bitmap
