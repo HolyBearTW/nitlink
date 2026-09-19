@@ -1,5 +1,6 @@
 #include "overlay.h"
 #include "../ui/theme.h"
+#include "../app/localization.h"
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -13,6 +14,10 @@ namespace NitLink {
 
 static void OvLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/Overlay] " + msg + L"\n").c_str());
+}
+
+static std::wstring Tr(const wchar_t* key) {
+    return Localization::Instance().Get(key);
 }
 
 bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
@@ -69,39 +74,10 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
         __uuidof(IDWriteFactory), (IUnknown**)m_dwriteFactory.GetAddressOf());
     if (FAILED(hr)) return false;
 
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().overlayFont, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        GetTheme().overlayFontSize, L"en-us", &m_textFormat);
-    if (FAILED(hr)) return false;
-
-    // Footer text (GPU time): the panel's body size.
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        11.5f, L"en-us", &m_smallTextFormat);
-    if (FAILED(hr)) return false;
-
-    // Big primary number (frame rate, ingest): semibold, same family.
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        26.0f, L"en-us", &m_textFormatBig);
-    if (FAILED(hr)) return false;
-
-    // Uppercase band title and pipeline badges, like the panel's band titles.
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        10.0f, L"en-us", &m_textFormatLabel);
-    if (FAILED(hr)) return false;
-
-    // Metric labels and unit suffixes, like the panel's signal labels.
-    hr = m_dwriteFactory->CreateTextFormat(
-        GetTheme().fontFamily, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        11.0f, L"en-us", &m_textFormatUnit);
-    if (FAILED(hr)) return false;
+    if (!RefreshTextFormats()) {
+        OvLog(L"RefreshTextFormats failed during init");
+        return false;
+    }
 
     if (!CreateD2DResources()) {
         OvLog(L"CreateD2DResources failed during init");
@@ -110,6 +86,73 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
 
     m_initialized = true;
     OvLog(L"Initialized successfully");
+    return true;
+}
+
+bool Overlay::RefreshTextFormats()
+{
+    if (!m_dwriteFactory) {
+        OvLog(L"RefreshTextFormats skipped: DirectWrite factory is unavailable");
+        return false;
+    }
+
+    const auto& localization = Localization::Instance();
+    const wchar_t* locale = localization.LocaleName().c_str();
+    const wchar_t* overlayFont = localization.UiFontFamily(GetTheme().overlayFont);
+    const wchar_t* fontFamily = localization.UiFontFamily(GetTheme().fontFamily);
+
+    ComPtr<IDWriteTextFormat> textFormat;
+    ComPtr<IDWriteTextFormat> smallTextFormat;
+    ComPtr<IDWriteTextFormat> textFormatBig;
+    ComPtr<IDWriteTextFormat> textFormatLabel;
+    ComPtr<IDWriteTextFormat> textFormatUnit;
+
+    auto createTextFormat = [&](const wchar_t* family,
+                                DWRITE_FONT_WEIGHT weight,
+                                float size,
+                                ComPtr<IDWriteTextFormat>& format,
+                                const wchar_t* name) {
+        const HRESULT hr = m_dwriteFactory->CreateTextFormat(
+            family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, size, locale, &format);
+        if (FAILED(hr)) {
+            std::wstringstream ss;
+            ss << L"RefreshTextFormats: CreateTextFormat failed for " << name
+               << L": 0x" << std::hex << hr;
+            OvLog(ss.str());
+            return false;
+        }
+        return true;
+    };
+
+    if (!createTextFormat(overlayFont, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          GetTheme().overlayFontSize, textFormat, L"overlay")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_NORMAL,
+                          11.5f, smallTextFormat, L"small")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          26.0f, textFormatBig, L"big")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                          10.0f, textFormatLabel, L"label")) {
+        return false;
+    }
+    if (!createTextFormat(fontFamily, DWRITE_FONT_WEIGHT_NORMAL,
+                          11.0f, textFormatUnit, L"unit")) {
+        return false;
+    }
+
+    m_textFormat = textFormat;
+    m_smallTextFormat = smallTextFormat;
+    m_textFormatBig = textFormatBig;
+    m_textFormatLabel = textFormatLabel;
+    m_textFormatUnit = textFormatUnit;
+
+    OvLog(L"Text formats refreshed for locale " + localization.LocaleName());
     return true;
 }
 
@@ -376,7 +419,7 @@ void Overlay::Render(const Stats& stats)
 
         std::wstringstream ss;
         if (sig) ss << stats.captureWidth << L"\u00d7" << stats.captureHeight;
-        else     ss << L"NO SIGNAL";
+        else     ss << Tr(L"overlay.noSignal");
         drawText(ss.str(), m_textFormatUnit.Get(),
                  D2D1::RectF(panel.left + 150.0f, panel.top, panel.right - pad, panel.top + bandH),
                  sig ? m_brushDim.Get() : m_brushCrit.Get(),
@@ -422,8 +465,8 @@ void Overlay::Render(const Stats& stats)
     };
 
     // One metric column: label, big value, unit hung off the value's baseline.
-    auto drawMetric = [&](float left, float right, const wchar_t* label,
-                          const std::wstring& value, const wchar_t* unit,
+    auto drawMetric = [&](float left, float right, const std::wstring& label,
+                          const std::wstring& value, const std::wstring& unit,
                           ID2D1SolidColorBrush* valueBrush) {
         drawText(label, m_textFormatUnit.Get(),
                  D2D1::RectF(left, labelY, right, labelY + 14.0f),
@@ -437,8 +480,8 @@ void Overlay::Render(const Stats& stats)
                  m_brushDim.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_FAR);
     };
 
-    drawMetric(panel.left + pad, colMid - 4.0f, L"Frame rate",
-               sig ? std::to_wstring(stats.fps) : L"--", L"FPS", fpsBrush());
+    drawMetric(panel.left + pad, colMid - 4.0f, Tr(L"overlay.frameRate"),
+               sig ? std::to_wstring(stats.fps) : L"--", Tr(L"overlay.fps"), fpsBrush());
     {
         std::wstring v = L"--";
         if (sig) {
@@ -446,7 +489,8 @@ void Overlay::Render(const Stats& stats)
             ss << std::fixed << std::setprecision(1) << appIngest;
             v = ss.str();
         }
-        drawMetric(colMid + 4.0f, panel.right - pad, L"App ingest", v, L"MS", appIngestBrush());
+        drawMetric(colMid + 4.0f, panel.right - pad, Tr(L"overlay.appIngest"), v,
+                   Tr(L"overlay.ms"), appIngestBrush());
     }
 
     // ---- 4. Sparklines (frame rate left, ingest right) ---------------------
@@ -536,8 +580,9 @@ void Overlay::Render(const Stats& stats)
         const float gpu     = sig ? (float)stats.gpuMs : 0.0f;
         const bool  haveGpu = sig && gpu > 0.0f;
         std::wstringstream ss;
-        if (haveGpu) ss << L"GPU " << std::fixed << std::setprecision(1) << gpu << L" ms";
-        else         ss << L"GPU --";
+        if (haveGpu) ss << Tr(L"overlay.gpu") << L" " << std::fixed
+                        << std::setprecision(1) << gpu << L" " << Tr(L"overlay.ms");
+        else         ss << Tr(L"overlay.gpu") << L" --";
         ID2D1SolidColorBrush* gpuBrush = m_brushInk2.Get();
         if (haveGpu) {
             if      (gpu >  12.0f) gpuBrush = m_brushCrit.Get();
@@ -548,11 +593,13 @@ void Overlay::Render(const Stats& stats)
 
         // Badges hang off the right edge, active in accent, inactive in the
         // muted ink. Order matches pipeline execution: scale, HDR, NIS, color.
-        const wchar_t* labels[4] = { L"CR", L"HDR", L"NIS", L"COLOR" };
+        const std::wstring labels[4] = {
+            L"CR", L"HDR", L"NIS", Tr(L"overlay.badgeColor")
+        };
         const bool     active[4] = { true, stats.hdrActive, stats.nisActive, stats.colorExpansion };
         float x = footer.right;
         for (int i = 3; i >= 0; --i) {
-            const std::wstring badge = labels[i];
+            const std::wstring& badge = labels[i];
             const float w = textWidth(badge, m_textFormatLabel.Get());
             drawText(badge, m_textFormatLabel.Get(),
                      D2D1::RectF(x - w, footer.top, x, footer.bottom),
@@ -628,9 +675,9 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
     auto MakeFormat = [&](float pt, DWRITE_FONT_WEIGHT weight, const wchar_t* family) {
         ComPtr<IDWriteTextFormat> f;
         m_dwriteFactory->CreateTextFormat(
-            family, nullptr, weight,
+            Localization::Instance().UiFontFamily(family), nullptr, weight,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-            S(pt), L"en-us", &f);
+            S(pt), Localization::Instance().LocaleName().c_str(), &f);
         return f;
     };
 
@@ -697,8 +744,8 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             dotX + S(12.0f), brandY + S(4.0f),
             cardX + cardW - ipx, brandY + S(20.0f));
         fSectLabel->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* lab = L"WAITING FOR SOURCE";
-        m_d2dContext->DrawText(lab, (UINT32)wcslen(lab),
+        const std::wstring lab = Tr(L"overlay.waitingForSource");
+        m_d2dContext->DrawText(lab.c_str(), (UINT32)lab.size(),
             fSectLabel.Get(), rLab, bFgDim.Get());
     }
 
@@ -714,8 +761,8 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             cardX + ipx, cardY + S(96.0f),
             cardX + cardW - ipx, cardY + S(128.0f));
         fHeadline->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* hd = L"Input signal lost";
-        m_d2dContext->DrawText(hd, (UINT32)wcslen(hd),
+        const std::wstring hd = Tr(L"overlay.inputSignalLost");
+        m_d2dContext->DrawText(hd.c_str(), (UINT32)hd.size(),
             fHeadline.Get(), rH, bFg.Get());
     }
     {
@@ -723,8 +770,9 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             cardX + ipx, cardY + S(134.0f),
             cardX + cardW - ipx, cardY + S(176.0f));
         fSubMsg->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* sub = L"Waiting for HDMI source…";
-        m_d2dContext->DrawText(sub, (UINT32)wcslen(sub),
+        fSubMsg->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        const std::wstring sub = Tr(L"overlay.waitingForHdmi");
+        m_d2dContext->DrawText(sub.c_str(), (UINT32)sub.size(),
             fSubMsg.Get(), rS, bFgDim.Get());
     }
 
@@ -740,10 +788,9 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             cardX + ipx, cardY + S(214.0f),
             cardX + cardW - ipx, cardY + cardH - ipy);
         fHint->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* hint =
-            L"Make sure your source is powered on and the HDMI cable is "
-            L"seated at both ends.";
-        m_d2dContext->DrawText(hint, (UINT32)wcslen(hint),
+        fHint->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        const std::wstring hint = Tr(L"overlay.checkHdmi");
+        m_d2dContext->DrawText(hint.c_str(), (UINT32)hint.size(),
             fHint.Get(), rHint, bFgMuted.Get());
     }
 
@@ -784,19 +831,39 @@ void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
     const D2D1_COLOR_F COL_FG      = D2D1::ColorF(0.910f, 0.918f, 0.929f, alpha);
     const D2D1_COLOR_F COL_ACCENT  = D2D1::ColorF(0.890f, 0.604f, 0.231f, alpha);
 
-    // Card sizing: text-width approximation by character count. Good enough
-    // for short toast strings; if the text doesn't fit, DrawText clips it
-    // (acceptable for rc1 rather than spinning up a DWRITE measure).
-    const size_t   textLen   = wcslen(text);
-    const float    estCharPx = S(7.5f);                       // ~7.5 px/char at 13pt Segoe UI
-    const float    minCardW  = S(280.0f);
-    const float    maxCardW  = std::min(S(640.0f), w - S(48.0f));
-    float          cardW     = S(56.0f) + estCharPx * static_cast<float>(textLen);
-    if (cardW < minCardW) cardW = minCardW;
-    if (cardW > maxCardW) cardW = maxCardW;
-    const float    cardH     = S(48.0f);
-    const float    cardX     = (w - cardW) * 0.5f;
-    const float    cardY     = S(40.0f);
+    const size_t textLen  = wcslen(text);
+    const float usableW   = std::max(S(80.0f), w - S(48.0f));
+    const float minCardW  = std::min(S(280.0f), usableW);
+    const float maxCardW  = usableW;
+
+    ComPtr<IDWriteTextFormat> fText;
+    m_dwriteFactory->CreateTextFormat(
+        Localization::Instance().UiFontFamily(L"Segoe UI"), nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        S(13.0f), Localization::Instance().LocaleName().c_str(), &fText);
+    fText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fText->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+
+    // Measure with a wide layout first, then wrap only when the window cannot
+    // fit the complete message. This avoids clipping wider CJK glyphs and
+    // makes the native toast safe for localized diagnostic messages.
+    ComPtr<IDWriteTextLayout> measured;
+    DWRITE_TEXT_METRICS metrics{};
+    m_dwriteFactory->CreateTextLayout(text, static_cast<UINT32>(textLen), fText.Get(),
+                                      S(4096.0f), S(200.0f), &measured);
+    if (measured) measured->GetMetrics(&metrics);
+    float cardW = std::clamp(metrics.widthIncludingTrailingWhitespace + S(52.0f),
+                             minCardW, maxCardW);
+    const float textW = std::max(S(1.0f), cardW - S(52.0f));
+    ComPtr<IDWriteTextLayout> wrapped;
+    DWRITE_TEXT_METRICS wrappedMetrics{};
+    m_dwriteFactory->CreateTextLayout(text, static_cast<UINT32>(textLen), fText.Get(),
+                                      textW, S(180.0f), &wrapped);
+    if (wrapped) wrapped->GetMetrics(&wrappedMetrics);
+    const float cardH = std::max(S(48.0f), wrappedMetrics.height + S(16.0f));
+    const float cardX = (w - cardW) * 0.5f;
+    const float cardY = S(40.0f);
 
     D2D1_RECT_F card = D2D1::RectF(cardX, cardY, cardX + cardW, cardY + cardH);
     D2D1_ROUNDED_RECT cardRound = { card, S(10.0f), S(10.0f) };
@@ -816,17 +883,11 @@ void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,
         S(3.5f), S(3.5f));
     m_d2dContext->FillEllipse(dot, bAccent.Get());
 
-    // Single-line text, vertically centered.
-    ComPtr<IDWriteTextFormat> fText;
-    m_dwriteFactory->CreateTextFormat(
-        L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        S(13.0f), L"en-us", &fText);
-    fText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    fText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    // Text wraps inside the measured card when a localized message is wider
+    // than the available window.
     D2D1_RECT_F rText = D2D1::RectF(
-        cardX + S(36.0f), cardY,
-        cardX + cardW - S(16.0f), cardY + cardH);
+        cardX + S(36.0f), cardY + S(8.0f),
+        cardX + cardW - S(16.0f), cardY + cardH - S(8.0f));
     m_d2dContext->DrawText(text, static_cast<UINT32>(textLen),
         fText.Get(), rText, bFg.Get());
 

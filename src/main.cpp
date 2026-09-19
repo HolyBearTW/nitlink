@@ -8,6 +8,7 @@
  */
 
 #include "app/application.h"
+#include "app/localization.h"
 #include <windows.h>
 #include <shellscalingapi.h>
 #pragma comment(lib, "shcore.lib")
@@ -48,14 +49,16 @@ int WINAPI WinMain(
     // their own CoInitializeEx.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(hr)) {
-        MessageBoxW(nullptr, L"Failed to initialize COM runtime.", L"NitLink", MB_ICONERROR);
+        MessageBoxW(nullptr, NitLink::Localization::Instance().Get(L"error.com").c_str(),
+                    L"NitLink", MB_ICONERROR);
         return 1;
     }
 
     // Start Media Foundation
     hr = MFStartup(MF_VERSION);
     if (FAILED(hr)) {
-        MessageBoxW(nullptr, L"Failed to initialize Media Foundation.", L"NitLink", MB_ICONERROR);
+        MessageBoxW(nullptr, NitLink::Localization::Instance().Get(L"error.mediaFoundation").c_str(),
+                    L"NitLink", MB_ICONERROR);
         CoUninitialize();
         return 1;
     }
@@ -64,7 +67,7 @@ int WINAPI WinMain(
         NitLink::Application app;
         
         if (!app.Initialize(hInstance, nCmdShow)) {
-            MessageBoxW(nullptr, L"Failed to initialize NitLink.\nCheck that a capture card is connected.", 
+            MessageBoxW(nullptr, NitLink::Localization::Instance().Get(L"error.application").c_str(),
                         L"NitLink", MB_ICONERROR);
             MFShutdown();
             CoUninitialize();

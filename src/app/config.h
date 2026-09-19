@@ -47,6 +47,10 @@ enum PresentPacing {
 };
 
 struct Config {
+    // UI language preference: system, en-US, or zh-TW. The effective locale
+    // is resolved by Localization; unsupported system locales use en-US.
+    std::string  language = "system";
+
     // Window
     uint32_t windowWidth  = 1920;
     uint32_t windowHeight = 1080;
