@@ -25,6 +25,8 @@ set(NITLINK_SOURCES
     src/app/application.h
     src/app/config.cpp
     src/app/config.h
+    src/app/localization.cpp
+    src/app/localization.h
     src/app/game_database.cpp
     src/app/game_database.h
     src/app/WebViewSettings.cpp
@@ -112,6 +114,7 @@ target_include_directories(NitLink PRIVATE
 
 install(TARGETS NitLink RUNTIME DESTINATION bin)
 install(FILES nitlink-menu.html DESTINATION bin)
+install(DIRECTORY locales DESTINATION bin)
 install(FILES third_party/nis/NIS_Scaler.h third_party/nis/LICENSE.txt
         DESTINATION bin/third_party/nis)
 install(FILES LICENSE LICENSES.md ACKNOWLEDGMENTS.md DESTINATION bin)
@@ -132,4 +135,13 @@ add_custom_command(TARGET NitLink POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         ${CMAKE_SOURCE_DIR}/nitlink-menu.html
         $<TARGET_FILE_DIR:NitLink>/nitlink-menu.html
+)
+
+# Copy the external localization resources next to the settings HTML so the
+# file:// WebView can load them in both build and installed layouts.
+add_custom_command(TARGET NitLink POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:NitLink>/locales
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/locales
+        $<TARGET_FILE_DIR:NitLink>/locales
 )

@@ -60,6 +60,7 @@ echo Creating staging directory: %STAGING_DIR%
 mkdir "%STAGING_DIR%"
 mkdir "%STAGING_DIR%\third_party\nis"
 mkdir "%STAGING_DIR%\docs"
+mkdir "%STAGING_DIR%\locales"
 
 REM --- Copy required files ---------------------------------------------------
 echo Copying NitLink.exe...
@@ -80,6 +81,20 @@ if errorlevel 1 (
     pause
     exit /b 1
   )
+)
+
+echo Copying localization resources...
+copy /y "%BUILD_DIR%\locales\en-US.js" "%STAGING_DIR%\locales\" >nul
+if errorlevel 1 (
+  echo [ERROR] en-US localization resource is missing from the build output.
+  pause
+  exit /b 1
+)
+copy /y "%BUILD_DIR%\locales\zh-TW.js" "%STAGING_DIR%\locales\" >nul
+if errorlevel 1 (
+  echo [ERROR] zh-TW localization resource is missing from the build output.
+  pause
+  exit /b 1
 )
 
 echo Copying NIS shader header...

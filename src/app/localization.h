@@ -1,0 +1,48 @@
+#pragma once
+
+#include <string>
+
+namespace NitLink {
+
+// User-facing language preference. The effective locale is resolved to a
+// concrete locale by Localization::SetPreference; unsupported system locales
+// intentionally resolve to en-US.
+enum class LanguagePreference {
+    System,
+    English,
+    TraditionalChinese,
+};
+
+class Localization {
+public:
+    static Localization& Instance();
+
+    void SetPreference(const std::string& value);
+    void SetPreference(LanguagePreference preference);
+
+    LanguagePreference Preference() const { return m_preference; }
+    const std::string& PreferenceName() const { return m_preferenceName; }
+    const std::wstring& LocaleName() const { return m_localeName; }
+
+    // Lookup always falls back to the complete en-US table. Unknown keys
+    // return the key itself as a final non-empty diagnostic fallback.
+    std::wstring Get(const wchar_t* key) const;
+
+    // Font family used by native text surfaces. Microsoft JhengHei UI is
+    // available on supported Windows versions and covers Traditional Chinese;
+    // DirectWrite still applies its normal fallback chain for other glyphs.
+    const wchar_t* UiFontFamily(const wchar_t* fallback = L"Segoe UI") const;
+
+private:
+    Localization();
+
+    static LanguagePreference ParsePreference(const std::string& value);
+    static std::wstring DetectSystemLocale();
+    static bool IsTraditionalChineseLocale(const std::wstring& locale);
+
+    LanguagePreference m_preference = LanguagePreference::System;
+    std::string m_preferenceName = "system";
+    std::wstring m_localeName = L"en-US";
+};
+
+} // namespace NitLink

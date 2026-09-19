@@ -1,6 +1,7 @@
 #include "application.h"
 #include "WebViewSettings.h"
 #include "game_database.h"
+#include "localization.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
@@ -22,6 +23,10 @@ namespace NitLink {
 
 static void AppLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/App] " + msg + L"\n").c_str());
+}
+
+static std::wstring Tr(const wchar_t* key) {
+    return Localization::Instance().Get(key);
 }
 
 void Application::UpdateCaptureColorInterpretation(const std::wstring& deviceName) {
@@ -147,7 +152,7 @@ static FrameLevels ComputeFrameLevels(const uint8_t* data, uint32_t size,
 static std::wstring FormatLevelsText(const FrameLevels& lv,
                                      bool effectiveFullRange) {
     if (!lv.valid) {
-        return L"LEVELS: no YUV range on this path (test HDR / P010 capture)";
+        return Tr(L"diagnostic.levelsNoRange");
     }
     // Verdict from the luma floor. Limited-range black sits at 64 (10-bit) /
     // 16 (8-bit); full range bottoms at 0. The gap is wide, so a midpoint
@@ -156,19 +161,20 @@ static std::wstring FormatLevelsText(const FrameLevels& lv,
     const int midpoint = limBlack / 2;                 // 8 (8b) / 32 (10b)
     const int hiTol    = lv.eightBit ? 28 : 112;       // limited-black + slack
     std::wstring sig;
-    if      (lv.yFloor <= midpoint) sig = L"FULL";
-    else if (lv.yFloor <= hiTol)    sig = L"LIMITED";
-    else                            sig = L"? need-black";
+    if      (lv.yFloor <= midpoint) sig = Tr(L"value.full");
+    else if (lv.yFloor <= hiTol)    sig = Tr(L"value.limited");
+    else                            sig = Tr(L"value.needBlack");
 
     std::wstringstream ss;
-    ss << L"Y " << lv.yFloor << L"-" << lv.yCeil
-       << L"  sig:" << sig
-       << L"  dec:" << (effectiveFullRange ? L"FULL" : L"LIMITED");
+    ss << Tr(L"diagnostic.levelsY") << L" " << lv.yFloor << L"-" << lv.yCeil
+       << L"  " << Tr(L"diagnostic.levelsSignal") << L":" << sig
+       << L"  " << Tr(L"diagnostic.levelsDecode") << L":"
+       << (effectiveFullRange ? Tr(L"value.full") : Tr(L"value.limited"));
     if (lv.haveChroma) {
-        ss << L"  Cb " << lv.cbLo << L"-" << lv.cbHi
-           << L" Cr " << lv.crLo << L"-" << lv.crHi;
+        ss << L"  " << Tr(L"diagnostic.levelsCb") << L" " << lv.cbLo << L"-" << lv.cbHi
+           << L" " << Tr(L"diagnostic.levelsCr") << L" " << lv.crLo << L"-" << lv.crHi;
     }
-    if (lv.eightBit) ss << L" (8b)";
+    if (lv.eightBit) ss << L" (" << Tr(L"diagnostic.bits8") << L")";
     return ss.str();
 }
 
@@ -253,6 +259,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_firstLaunch = !std::filesystem::exists("nitlink.json");
     m_config = std::make_unique<Config>();
     m_config->Load("nitlink.json");
+    Localization::Instance().SetPreference(m_config->language);
     AppLog(m_firstLaunch ? L"Initialize: config loaded (first launch)"
                              : L"Initialize: config loaded");
 
@@ -811,7 +818,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // The Windows Microphone privacy switch blocks every capture
             // endpoint, the card's audio included, and reports it as a plain
             // access denial. Name the actual switch so the fix is one toggle.
-            ShowToast(L"No audio: Windows Microphone access is off. Settings > Privacy & security > Microphone.",
+            ShowToast(Tr(L"toast.noAudio"),
                       std::chrono::milliseconds(8000));
         }
     }
@@ -908,6 +915,18 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 m_firstLaunch = false;
                 if (!m_settingsVisible) ToggleSettings();
                 AppLog(L"first launch: opened settings menu automatically");
+            }
+            return;
+        }
+        if (action == L"setLanguage" && m_config) {
+            const std::wstring requested = extractStr(L"value");
+            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW") {
+                m_config->language = requested == L"en-US" ? "en-US"
+                    : requested == L"zh-TW" ? "zh-TW" : "system";
+                Localization::Instance().SetPreference(m_config->language);
+                m_config->Save("nitlink.json");
+                UpdateWindowTitle();
+                PushSettingsState();
             }
             return;
         }
@@ -1405,9 +1424,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             m_sourceRangeOverride = (m_sourceRangeOverride + 1) % 3;
             UpdateCaptureColorInterpretation(m_currentDeviceInfo.name);
             const std::wstring rmsg =
-                m_sourceRangeOverride == 1 ? L"Color range: FULL forced (Alt+R)"
-              : m_sourceRangeOverride == 2 ? L"Color range: LIMITED forced (Alt+R)"
-              :                              L"Color range: AUTO from Media Foundation (Alt+R)";
+                m_sourceRangeOverride == 1 ? Tr(L"toast.colorRangeFull")
+              : m_sourceRangeOverride == 2 ? Tr(L"toast.colorRangeLimited")
+              :                              Tr(L"toast.colorRangeAuto");
             AppLog(rmsg);
             ShowToast(rmsg, std::chrono::milliseconds(1800));
         });
@@ -1629,7 +1648,7 @@ void Application::Run()
                 // Windows HDR isn't engaged for the active output, so
                 // that's the overwhelmingly common reason this branch
                 // fires. Keep the text short and tell them what to do.
-                ShowToast(L"Windows HDR is not enabled. Press Win+Alt+B and try again.");
+                ShowToast(Tr(L"toast.windowsHdrDisabled"));
             } else {
                 AppLog(target ? L"HDR: enabled" : L"HDR: disabled");
             }
@@ -3426,11 +3445,11 @@ void Application::CyclePresentPacing()
     m_config->Save("nitlink.json");
 
     const std::wstring label =
-        m_config->presentPacing == kPacingUnique   ? L"Source frame rate"
-      : m_config->presentPacing == kPacingCaptured ? L"Capture rate"
-                                                   : L"Display refresh";
+        m_config->presentPacing == kPacingUnique   ? Tr(L"value.sourceFrameRate")
+      : m_config->presentPacing == kPacingCaptured ? Tr(L"value.captureRate")
+                                                   : Tr(L"value.displayRefresh");
     AppLog(L"Present pacing: " + label);
-    ShowToast(L"Present pacing: " + label);
+    ShowToast(Tr(L"toast.presentPacing") + L": " + label);
     if (m_settingsVisible) PushSettingsState();
 }
 
@@ -3444,9 +3463,11 @@ void Application::CycleAspectRatio()
     }
     m_config->aspectRatio = kAspectPresets[next];
     m_config->Save("nitlink.json");
-    const std::wstring label = ApplyAspectRatio();
+    const std::wstring rawLabel = ApplyAspectRatio();
+    const std::wstring label = rawLabel == L"Auto" ? Tr(L"value.auto")
+        : rawLabel == L"Stretch" ? Tr(L"value.stretch") : rawLabel;
     AppLog(L"Aspect ratio: " + label);
-    ShowToast(L"Aspect ratio: " + label);
+    ShowToast(Tr(L"toast.aspectRatio") + L": " + label);
     if (m_settingsVisible) PushSettingsState();
 }
 
@@ -3780,6 +3801,9 @@ void Application::PushSettingsState()
     // Keep manual (no JSON lib) since it's small and structured.
     std::wstringstream js;
     js << L"{\"state\":{";
+    const std::wstring languagePreference(m_config->language.begin(), m_config->language.end());
+    js << L"\"languagePreference\":\"" << languagePreference << L"\",";
+    js << L"\"locale\":\"" << Localization::Instance().LocaleName() << L"\",";
     js << L"\"hdrEnabled\":"        << (m_config->hdrEnabled        ? L"true" : L"false") << L",";
     js << L"\"hdrAutoDetectAvailable\":" << (m_hdrDetectionAvailable ? L"true" : L"false") << L",";
     js << L"\"colorExpansion\":"    << (m_config->colorExpansion    ? L"true" : L"false") << L",";
@@ -3855,6 +3879,7 @@ void Application::PushSettingsState()
         std::wstring notice = m_captureDevice
             ? m_captureDevice->ConsumeFallbackNotice()
             : L"";
+        if (!notice.empty()) notice = Tr(L"toast.captureFormatUnavailable");
         js << L"\"notification\":\"" << JsonEscapeWide(notice) << L"\",";
     }
 
@@ -3880,7 +3905,7 @@ void Application::PushSettingsState()
         if (w && h) {
             res << w << L"×" << h << L" · " << m_currentContentFps << L" fps";
         } else {
-            res << L"no signal";
+            res << Tr(L"overlay.noSignal");
         }
         js << L"\"resolutionText\":\"" << res.str() << L"\",";
 
@@ -3893,7 +3918,7 @@ void Application::PushSettingsState()
 
         const double e2e = m_captureLatencyMs + m_renderLatencyMs;
         std::wstringstream lat;
-        lat << static_cast<int>(e2e + 0.5) << L" ms";
+        lat << static_cast<int>(e2e + 0.5) << L" " << Tr(L"unit.ms");
         js << L"\"latencyText\":\"" << lat.str() << L"\",";
     }
 
@@ -4109,7 +4134,7 @@ void Application::TakeScreenshot()
         std::wstring filename = fullPath;
         size_t slash = filename.find_last_of(L"\\/");
         if (slash != std::wstring::npos) filename = filename.substr(slash + 1);
-        ShowToast(L"Screenshot saved: " + filename);
+        ShowToast(Tr(L"toast.screenshotSaved") + filename);
     } else {
         AppLog(L"Screenshot failed");
     }
@@ -4200,7 +4225,9 @@ void Application::UpdateWindowTitle()
     if (m_hdrDetectionAvailable) {
         const bool effectiveHDR = m_sourceIsHDR10 &&
                                   m_config && m_config->hdrEnabled;
-        title += effectiveHDR ? L" [HDR]" : L" [SDR]";
+        title += L" [";
+        title += effectiveHDR ? Tr(L"title.hdr") : Tr(L"title.sdr");
+        title += L"]";
     }
 
     m_window->SetTitle(title);

@@ -1,13 +1,15 @@
 <!DOCTYPE html>
-<html lang="en" data-side="right">
+<html lang="en-US" data-side="right">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NitLink · Settings</title>
+  <title data-i18n="page.settings">NitLink · Settings</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="locales/en-US.js"></script>
+  <script src="locales/zh-TW.js"></script>
   <style>
     :root {
       --accent: #E39A3B;
@@ -22,7 +24,7 @@
       --ink2: #B4B4B4;
       --ink3: #8A8A8A;
       --warn: #D8B858;
-      --sans: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+      --sans: 'Archivo', 'Segoe UI', 'Microsoft JhengHei UI', 'Microsoft JhengHei', 'Noto Sans TC', system-ui, sans-serif;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -112,17 +114,17 @@
     .band-hint { color: var(--ink3); font-size: 11.5px; }
 
     .row {
-      display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-items: center; gap: 16px;
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 240px); align-items: center; gap: 16px;
       min-height: 46px; padding: 8px 22px; border-bottom: 1px solid var(--hair);
       transition: background .1s ease;
     }
     .row[data-action] { cursor: pointer; }
     .row[data-action]:hover { background: rgba(255, 255, 255, 0.035); }
-    .row-name { min-width: 0; color: var(--ink2); font-size: 13px; }
-    .row-right { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .row-name { min-width: 0; color: var(--ink2); font-size: 13px; overflow-wrap: anywhere; }
+    .row-right { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .row-right.end { justify-content: flex-end; }
     .row-chip { color: var(--ink3); font-size: 12px; }
-    .row-value { color: var(--ink); font-size: 13px; font-weight: 500; }
+    .row-value { min-width: 0; color: var(--ink); font-size: 13px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
     .row.kv { min-height: 42px; }
 
     .notice {
@@ -159,6 +161,10 @@
     .about-copy p { color: var(--ink2); font-size: 12.5px; line-height: 1.65; text-wrap: pretty; }
     .about-links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; }
     .about-links a { font-size: 12.5px; font-weight: 500; }
+    .about-credits { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12.5px; line-height: 1.5; }
+    .about-credit-title { color: var(--ink3); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; }
+    .about-credit-entry { margin-top: 4px; }
+    .about-credit-entry a { color: var(--accent-text); font-weight: 500; }
 
     /* Source picker popover: device list plus the manual capture-format cascade. */
     .source-popover {
@@ -195,6 +201,11 @@
     }
     .source-popover-select:hover { border-color: #6E6E6E; }
     .source-popover-select:focus { border-color: var(--accent); }
+    .language-select {
+      min-width: 0; max-width: 180px; color: var(--ink); background: #202020;
+      border: 1px solid var(--hair2); border-radius: 0; padding: 6px 8px;
+      font-family: var(--sans); font-size: 12px; outline: none; cursor: pointer;
+    }
 
     .toast {
       position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-10px);
@@ -249,68 +260,68 @@
 <body>
   <div class="app">
 
-    <nav class="rail" aria-label="Settings sections">
+    <nav class="rail" aria-label="" data-i18n-aria-label="top.settings">
       <div class="rail-brand">
         <span class="rail-brand-mark"></span>
         <span class="rail-brand-text">Nit</span>
       </div>
       <button class="rail-item" data-tab="pane-video" data-active="true">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="4.5" width="15" height="11" stroke="currentColor" stroke-width="1.4"></rect><rect x="6" y="8" width="8" height="4" fill="currentColor"></rect></svg>
-        Video
+        <span data-i18n="nav.video"></span>
       </button>
       <button class="rail-item" data-tab="pane-audio">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="8" width="2.2" height="4" fill="currentColor"></rect><rect x="7.4" y="5" width="2.2" height="10" fill="currentColor"></rect><rect x="11.8" y="7" width="2.2" height="6" fill="currentColor"></rect><rect x="16.2" y="9" width="2.2" height="2" fill="currentColor"></rect></svg>
-        Audio
+        <span data-i18n="nav.audio"></span>
       </button>
       <button class="rail-item" data-tab="pane-shortcuts">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="15" height="9" rx="1" stroke="currentColor" stroke-width="1.4"></rect><rect x="6" y="11" width="8" height="1.6" fill="currentColor"></rect></svg>
-        Keys
+        <span data-i18n="nav.keys"></span>
       </button>
       <button class="rail-item" data-tab="pane-about">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7.3" stroke="currentColor" stroke-width="1.4"></circle><rect x="9.1" y="8.6" width="1.8" height="5.2" fill="currentColor"></rect><rect x="9.1" y="5.6" width="1.8" height="1.8" fill="currentColor"></rect></svg>
-        About
+        <span data-i18n="nav.about"></span>
       </button>
       <div class="rail-status">
         <span class="rail-status-dot"></span>
-        Ready
+        <span data-i18n="nav.ready"></span>
       </div>
     </nav>
 
     <div class="content">
 
       <header class="topbar">
-        <h1>Settings</h1>
+        <h1 data-i18n="top.settings"></h1>
         <div class="topbar-actions">
-          <a href="https://tally.so/r/EkZjNr" target="_blank" class="icon-btn">Send feedback</a>
+          <a href="https://tally.so/r/EkZjNr" target="_blank" class="icon-btn" data-i18n="top.feedback"></a>
           <a href="https://ko-fi.com/klosed89" target="_blank" class="icon-btn">
             <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="">
-            Support
+            <span data-i18n="top.support"></span>
           </a>
         </div>
       </header>
 
       <div class="metabar">
-        <div class="meta" id="source-trigger" data-multi="false" title="Capture device and manual capture format">
-          <span class="meta-label">Source</span>
-          <span class="meta-value" id="meta-source">(none)</span>
+        <div class="meta" id="source-trigger" data-multi="false" data-i18n-title="meta.captureInfo">
+          <span class="meta-label" data-i18n="meta.source"></span>
+          <span class="meta-value" id="meta-source" data-i18n="meta.none"></span>
           <svg class="chevron" width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
           <div class="source-popover" id="source-popover"></div>
         </div>
         <div class="meta">
-          <span class="meta-label">Signal</span>
-          <span class="meta-value" id="meta-resolution">0000x0000 / 00 FPS</span>
+          <span class="meta-label" data-i18n="meta.signal"></span>
+          <span class="meta-value" id="meta-resolution"></span>
         </div>
         <div class="meta">
-          <span class="meta-label">Format</span>
+          <span class="meta-label" data-i18n="meta.format"></span>
           <span class="meta-value" id="meta-format">--</span>
         </div>
         <div class="meta">
-          <span class="meta-label">Protocol</span>
-          <span class="meta-value" id="meta-link">HDMI 2.1</span>
+          <span class="meta-label" data-i18n="meta.protocol"></span>
+          <span class="meta-value" id="meta-link">HDMI</span>
         </div>
         <div class="meta">
-          <span class="meta-label">Latency</span>
-          <span class="meta-value" id="meta-latency">0 MS</span>
+          <span class="meta-label" data-i18n="meta.latency"></span>
+          <span class="meta-value" id="meta-latency"></span>
         </div>
       </div>
 
@@ -318,94 +329,94 @@
 
         <section class="pane" id="pane-video" data-active="true">
           <div class="band">
-            <span class="band-title">Presentation</span>
-            <span class="band-hint">Frame delivery</span>
+            <span class="band-title" data-i18n="section.presentation"></span>
+            <span class="band-hint" data-i18n="section.frameDelivery"></span>
           </div>
 
           <div class="row" data-action="toggleLowLatency"
-            title="Grabs the freshest capture frame and presents it the instant it arrives, which is what makes NitLink fast. Turning it off holds each frame after capture and waits before presenting, so the picture is up to one refresh older. Leave it on; off only adds input lag.">
-            <span class="row-name">Low-Latency Mode</span>
+            data-i18n-title="tooltip.lowLatency">
+            <span class="row-name" data-i18n="row.lowLatency"></span>
             <div class="row-right">
-              <span class="row-chip">Recommended</span>
+              <span class="row-chip" data-i18n="chip.recommended"></span>
               <div class="toggle" id="toggle-low-latency"></div>
             </div>
           </div>
 
           <div class="row" data-action="cyclePresentPacing"
-            title="How often the picture is presented. Display refresh presents every frame the monitor draws and has the lowest latency. Capture rate presents once per frame the card delivers, usually 60. Source frame rate presents only when the picture actually changes, so a variable refresh monitor follows the game, frame-generation tools such as Lossless Scaling read the real frame rate, and 30 fps content stops juddering. Both paced modes add up to one capture interval of latency.">
-            <span class="row-name">Present Pacing</span>
+            data-i18n-title="tooltip.presentPacing">
+            <span class="row-name" data-i18n="row.presentPacing"></span>
             <div class="row-right">
-              <span class="row-value" id="pacing-val">Display refresh</span>
+              <span class="row-value" id="pacing-val"></span>
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
 
           <div class="band">
-            <span class="band-title">Color</span>
-            <span class="band-hint">Auto-negotiated</span>
+            <span class="band-title" data-i18n="section.color"></span>
+            <span class="band-hint" data-i18n="section.autoNegotiated"></span>
           </div>
 
           <div class="row" data-action="toggleHDR"
-            title="Negotiates native 10-bit P010 capture (BT.2020 PQ) and presents through an HDR10 swap chain. Zero color conversion. Auto-detected when the card exposes HDR source state.">
-            <span class="row-name">HDR10 Output</span>
+            data-i18n-title="tooltip.hdr10Output">
+            <span class="row-name" data-i18n="row.hdr10Output"></span>
             <div class="row-right">
-              <span class="row-chip">10-bit</span>
+              <span class="row-chip" data-i18n="chip.tenBit"></span>
               <div class="toggle" id="toggle-hdr"></div>
             </div>
           </div>
 
           <div class="notice" id="hdr-autodetect-notice" hidden>
-            <span class="notice-tag">Note</span>
-            HDR auto-detect unavailable on this card. Toggle manually with Alt+H.
+            <span class="notice-tag" data-i18n="notice.note"></span>
+            <span data-i18n="notice.hdrAutoDetect"></span>
           </div>
 
           <div class="row" data-action="toggleColorExpansion"
-            title="Forces expansion of limited-range RGB (16-235) to full range (0-255). Skipped when the driver already reports full range, so this rarely needs touching.">
-            <span class="row-name">Color Range Expansion</span>
+            data-i18n-title="tooltip.colorRangeExpansion">
+            <span class="row-name" data-i18n="row.colorRangeExpansion"></span>
             <div class="row-right">
-              <span class="row-chip">Auto-safe</span>
+              <span class="row-chip" data-i18n="chip.autoSafe"></span>
               <div class="toggle" id="toggle-color"></div>
             </div>
           </div>
 
           <div class="band">
-            <span class="band-title">Scaling</span>
-            <span class="band-hint">Non-native window sizes</span>
+            <span class="band-title" data-i18n="section.scaling"></span>
+            <span class="band-hint" data-i18n="section.nonNativeWindow"></span>
           </div>
 
           <div class="row" data-action="cycleAspect"
-            title="Shape of the picture. Auto shows the source at the ratio the card reports. A fixed ratio squeezes or letterboxes it, for sources the card delivers stretched such as 4:3 consoles inside a 16:9 frame. Stretch fills the window. Alt+A cycles the same list.">
-            <span class="row-name">Aspect Ratio</span>
+            data-i18n-title="tooltip.aspectRatio">
+            <span class="row-name" data-i18n="row.aspectRatio"></span>
             <div class="row-right">
-              <span class="row-value" id="aspect-val">Auto</span>
+              <span class="row-value" id="aspect-val"></span>
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
 
           <div class="row" data-action="cycleScaler"
-            title="Resampling method for non-native window sizes. Catmull-Rom is sharp bicubic without ringing, the same algorithm used by mpv and madVR.">
-            <span class="row-name">Hardware Scaler</span>
+            data-i18n-title="tooltip.hardwareScaler">
+            <span class="row-name" data-i18n="row.hardwareScaler"></span>
             <div class="row-right">
-              <span class="row-value" id="scaler-val">AUTO</span>
+              <span class="row-value" id="scaler-val"></span>
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
 
           <div class="row" data-action="toggleNIS"
-            title="Compute-shader upscale and sharpening at non-native window sizes. Tune nis_sharpness in nitlink.json.">
-            <span class="row-name">NVIDIA Image Scaling</span>
+            data-i18n-title="tooltip.nvidiaImageScaling">
+            <span class="row-name" data-i18n="row.nvidiaImageScaling"></span>
             <div class="row-right">
-              <span class="row-chip">NIS</span>
+              <span class="row-chip" data-i18n="chip.nis"></span>
               <div class="toggle" id="toggle-nis"></div>
             </div>
           </div>
 
           <div class="band">
-            <span class="band-title">Picture-in-picture</span>
-            <span class="band-hint">Alt+O</span>
+            <span class="band-title" data-i18n="section.pictureInPicture"></span>
+            <span class="band-hint" data-i18n="section.altO"></span>
           </div>
-          <div class="row" title="Applies immediately in PiP, or the next time PiP opens. Alt+Left/Right also adjusts opacity.">
-            <label class="row-name" for="slider-pip-opacity">Opacity</label>
+          <div class="row" data-i18n-title="tooltip.opacity">
+            <label class="row-name" for="slider-pip-opacity" data-i18n="row.opacity"></label>
             <div class="slider-wrap">
               <input class="slider" id="slider-pip-opacity" type="range" min="10" max="100" step="1" value="90" data-action="setPiPOpacity">
               <output class="slider-val" id="slider-pip-opacity-val" for="slider-pip-opacity">90%</output>
@@ -413,35 +424,46 @@
           </div>
 
           <div class="band">
-            <span class="band-title">Panel</span>
-            <span class="band-hint">This menu</span>
+            <span class="band-title" data-i18n="section.panel"></span>
+            <span class="band-hint" data-i18n="section.thisMenu"></span>
           </div>
 
           <div class="row" data-action="cyclePanelSide"
-            title="Where this menu opens. Right and Left dock it beside the picture, which keeps playing underneath. Full covers the window with the wide layout and pauses the picture while open.">
-            <span class="row-name">Position</span>
+            data-i18n-title="tooltip.position">
+            <span class="row-name" data-i18n="row.position"></span>
             <div class="row-right">
-              <span class="row-value" id="panel-side-val">Right</span>
+              <span class="row-value" id="panel-side-val"></span>
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="row-name" data-i18n="language.label"></span>
+            <div class="row-right">
+              <select class="language-select" id="language-select">
+                <option value="system" data-i18n="language.system"></option>
+                <option value="en-US" data-i18n="language.english"></option>
+                <option value="zh-TW" data-i18n="language.traditionalChinese"></option>
+              </select>
             </div>
           </div>
         </section>
 
         <section class="pane" id="pane-audio">
           <div class="band">
-            <span class="band-title">Playback</span>
-            <span class="band-hint">WASAPI bus</span>
+            <span class="band-title" data-i18n="section.playback"></span>
+            <span class="band-hint" data-i18n="section.wasapiBus"></span>
           </div>
 
-          <div class="row" data-action="toggleMute" title="Silences the capture playback bus.">
-            <span class="row-name">Mute</span>
+          <div class="row" data-action="toggleMute" data-i18n-title="tooltip.mute">
+            <span class="row-name" data-i18n="row.mute"></span>
             <div class="row-right end">
               <div class="toggle" id="toggle-mute"></div>
             </div>
           </div>
 
-          <div class="row" title="WASAPI playback volume. Keep at 100 for bit-perfect digital capture.">
-            <span class="row-name">Capture Gain</span>
+          <div class="row" data-i18n-title="tooltip.captureGain">
+            <span class="row-name" data-i18n="row.captureGain"></span>
             <div class="slider-wrap">
               <div class="slider" id="slider-volume" data-action="setVolume">
                 <div class="slider-track"></div>
@@ -455,46 +477,54 @@
 
         <section class="pane" id="pane-shortcuts">
           <div class="band">
-            <span class="band-title">Shortcuts</span>
-            <span class="band-hint">Global while capturing</span>
+            <span class="band-title" data-i18n="section.shortcuts"></span>
+            <span class="band-hint" data-i18n="section.globalCapturing"></span>
           </div>
-          <div class="row kv"><span class="row-name">Settings</span><span class="row-value">F1</span></div>
-          <div class="row kv"><span class="row-name">HUD overlay (remembers visibility)</span><span class="row-value">Ctrl+F3</span></div>
-          <div class="row kv"><span class="row-name">Low-Latency Mode</span><span class="row-value">Alt+L</span></div>
-          <div class="row kv"><span class="row-name">HDR</span><span class="row-value">Alt+H</span></div>
-          <div class="row kv"><span class="row-name">Color range: Auto / Full / Limited</span><span class="row-value">Alt+R</span></div>
-          <div class="row kv"><span class="row-name">Aspect ratio: Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch</span><span class="row-value">Alt+A</span></div>
-          <div class="row kv"><span class="row-name">Fullscreen</span><span class="row-value">F11 / Alt+Enter</span></div>
-          <div class="row kv"><span class="row-name">Picture-in-picture</span><span class="row-value">Alt+O</span></div>
-          <div class="row kv"><span class="row-name">PiP scale: grow / shrink, preserve shape (Shift: larger steps)</span><span class="row-value">Alt+Up / Down</span></div>
-          <div class="row kv"><span class="row-name">PiP opacity: less / more (5 points, Shift: 10)</span><span class="row-value">Alt+Left / Right</span></div>
-          <div class="row kv"><span class="row-name">Nudge picture-in-picture (Shift for larger steps)</span><span class="row-value">Ctrl+Arrows</span></div>
-          <div class="row kv"><span class="row-name">PiP width: decrease / increase (20 px, Shift: 80 px)</span><span class="row-value">Ctrl+Alt+Left / Right</span></div>
-          <div class="row kv"><span class="row-name">PiP height: decrease / increase (20 px, Shift: 80 px)</span><span class="row-value">Ctrl+Alt+Up / Down</span></div>
-          <div class="row kv"><span class="row-name">PiP mouse resize: edges for one axis, corners for both</span><span class="row-value">Drag edge / corner</span></div>
-          <div class="row kv"><span class="row-name">PiP movement, resizing, scaling, and opacity</span><span class="row-value">Tap or hold to repeat</span></div>
-          <div class="row kv"><span class="row-name">Screenshot</span><span class="row-value">Ctrl+S</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.settings"></span><span class="row-value">F1</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.hudOverlay"></span><span class="row-value">Ctrl+F3</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.lowLatency"></span><span class="row-value">Alt+L</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.hdr"></span><span class="row-value">Alt+H</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.colorRange"></span><span class="row-value">Alt+R</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.aspectRatio"></span><span class="row-value">Alt+A</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.fullscreen"></span><span class="row-value">F11 / Alt+Enter</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pictureInPicture"></span><span class="row-value">Alt+O</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipScale"></span><span class="row-value">Alt+Up / Down</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipOpacity"></span><span class="row-value">Alt+Left / Right</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipNudge"></span><span class="row-value">Ctrl+Arrows</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipWidth"></span><span class="row-value">Ctrl+Alt+Left / Right</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipHeight"></span><span class="row-value">Ctrl+Alt+Up / Down</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.pipMouseResize"></span><span class="row-value" data-i18n="shortcut.dragEdge"></span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.repeat"></span><span class="row-value" data-i18n="shortcut.tapHold"></span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.screenshot"></span><span class="row-value">Ctrl+S</span></div>
 
           <div class="band">
-            <span class="band-title">Diagnostics</span>
-            <span class="band-hint">For verifying a card</span>
+            <span class="band-title" data-i18n="section.diagnostics"></span>
+            <span class="band-hint" data-i18n="section.verifyingCard"></span>
           </div>
-          <div class="row kv"><span class="row-name">HDR color-fidelity test patches</span><span class="row-value">Ctrl+F4</span></div>
-          <div class="row kv"><span class="row-name">HDR levels readout</span><span class="row-value">Ctrl+F6</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.hdrPatches"></span><span class="row-value">Ctrl+F4</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="shortcut.hdrLevels"></span><span class="row-value">Ctrl+F6</span></div>
         </section>
 
         <section class="pane" id="pane-about">
           <div class="band">
-            <span class="band-title">About</span>
+            <span class="band-title" data-i18n="section.about"></span>
             <span class="band-hint">v1.2.0</span>
           </div>
-          <div class="row kv"><span class="row-name">Build</span><span class="row-value">1.2.0</span></div>
-          <div class="row kv"><span class="row-name">Renderer</span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="about.build"></span><span class="row-value">1.2.0</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="about.renderer"></span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
           <div class="about-copy">
-            <p>Low-latency capture viewer for HDR10, VRR, and clean device control.</p>
+            <p data-i18n="about.description"></p>
             <div class="about-links">
-              <a href="https://tally.so/r/EkZjNr" target="_blank">Send feedback</a>
-              <a href="https://ko-fi.com/klosed89" target="_blank">Support on Ko-fi</a>
+              <a href="https://tally.so/r/EkZjNr" target="_blank" data-i18n="about.feedback"></a>
+              <a href="https://ko-fi.com/klosed89" target="_blank" data-i18n="about.support"></a>
+            </div>
+            <div class="about-credits">
+              <div class="about-credit-title" data-i18n="about.localizationContributors"></div>
+              <div class="about-credit-entry">
+                <span data-i18n="about.localizationTraditionalChinese"></span>
+                <a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.localizationName"></a>
+                <span data-i18n="about.localizationHandle"></span>
+              </div>
             </div>
           </div>
         </section>
@@ -504,32 +534,116 @@
   </div>
 
   <script>
+    // Localization resources are external so a new language can be added
+    // without rewriting the UI. Missing keys always resolve through en-US.
+    const localeResources = window.NitLinkLocales || {};
+    const englishLocale = localeResources['en-US'] || {};
+    const hasWebViewHost = () => !!(window.chrome && window.chrome.webview &&
+      window.chrome.webview.postMessage);
+    const detectStandaloneLocale = () => {
+      const locales = (window.navigator && window.navigator.languages && window.navigator.languages.length)
+        ? window.navigator.languages
+        : [window.navigator && window.navigator.language];
+      return locales.some(locale => typeof locale === 'string' &&
+        ['zh-tw', 'zh-hant-tw'].includes(locale.toLowerCase()))
+        ? 'zh-TW' : 'en-US';
+    };
+    const standaloneLanguageKey = 'nitlink.languagePreference';
+    const standalonePreference = (() => {
+      if (hasWebViewHost()) return 'system';
+      try {
+        const saved = window.localStorage.getItem(standaloneLanguageKey);
+        return ['system', 'en-US', 'zh-TW'].includes(saved) ? saved : 'system';
+      } catch (_) {
+        return 'system';
+      }
+    })();
+    let currentLocale = 'en-US';
+    const t = key => {
+      const selected = localeResources[currentLocale] || {};
+      const value = selected[key] || englishLocale[key];
+      return (typeof value === 'string' && value.length > 0) ? value : key;
+    };
+    const applyTranslations = locale => {
+      currentLocale = localeResources[locale] ? locale : 'en-US';
+      document.documentElement.lang = currentLocale;
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        el.textContent = t(el.dataset.i18n);
+      });
+      document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        el.title = t(el.dataset.i18nTitle);
+      });
+      document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+        el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
+      });
+      const active = document.querySelector('.rail-item[data-active="true"]');
+      const titleKey = active && ({
+        'pane-video': 'top.settings',
+        'pane-audio': 'top.settings',
+        'pane-shortcuts': 'section.shortcuts',
+        'pane-about': 'section.about'
+      })[active.dataset.tab];
+      const h1 = document.querySelector('.topbar h1');
+      if (h1 && titleKey) h1.textContent = t(titleKey);
+      const language = document.getElementById('language-select');
+      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW') {
+        language.value = 'system';
+      }
+    };
+    const localizeValue = value => ({
+      Auto: 'value.auto', Stretch: 'value.stretch',
+      Right: 'value.right', Left: 'value.left', Full: 'value.full'
+    }[value] ? t({
+      Auto: 'value.auto', Stretch: 'value.stretch',
+      Right: 'value.right', Left: 'value.left', Full: 'value.full'
+    }[value]) : value);
+    // A real NitLink host will immediately push its effective locale. When
+    // this file is opened directly for static testing, use the browser-local
+    // preference instead so the language selector still has visible effect.
+    const standaloneLocale = standalonePreference === 'zh-TW' ? 'zh-TW'
+      : standalonePreference === 'en-US' ? 'en-US' : detectStandaloneLocale();
+    applyTranslations(standaloneLocale);
+
     // Rail navigation. Every pane stays in the DOM so applyState can keep
     // writing into hidden ones; only the active flag flips.
     (() => {
       const tabs = [...document.querySelectorAll('.rail-item[data-tab]')];
       const titles = {
-        'pane-video': 'Settings', 'pane-audio': 'Settings',
-        'pane-shortcuts': 'Shortcuts', 'pane-about': 'About'
+        'pane-video': 'top.settings', 'pane-audio': 'top.settings',
+        'pane-shortcuts': 'section.shortcuts', 'pane-about': 'section.about'
       };
       const h1 = document.querySelector('.topbar h1');
-      tabs.forEach(t => t.addEventListener('click', () => {
-        tabs.forEach(o => {
-          const pane = document.getElementById(o.dataset.tab);
-          const active = (o === t);
-          if (active) o.dataset.active = 'true'; else o.removeAttribute('data-active');
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        tabs.forEach(other => {
+          const pane = document.getElementById(other.dataset.tab);
+          const active = (other === tab);
+          if (active) other.dataset.active = 'true'; else other.removeAttribute('data-active');
           if (pane) { if (active) pane.dataset.active = 'true'; else pane.removeAttribute('data-active'); }
         });
-        if (h1 && titles[t.dataset.tab]) h1.textContent = titles[t.dataset.tab];
+        if (h1 && titles[tab.dataset.tab]) h1.textContent = t(titles[tab.dataset.tab]);
       }));
     })();
 
     const post = (action, value) => {
       const payload = (value === undefined) ? { action } : { action, value };
-      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+      if (hasWebViewHost()) {
         window.chrome.webview.postMessage(payload);
       }
     };
+
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+      if (!hasWebViewHost()) languageSelect.value = standalonePreference;
+      languageSelect.addEventListener('change', () => {
+        const preference = languageSelect.value;
+        applyTranslations(preference === 'zh-TW' ? 'zh-TW'
+          : preference === 'en-US' ? 'en-US' : detectStandaloneLocale());
+        if (!hasWebViewHost()) {
+          try { window.localStorage.setItem(standaloneLanguageKey, preference); } catch (_) {}
+        }
+        post('setLanguage', preference);
+      });
+    }
 
     document.addEventListener('click', e => {
       let actionEl = e.target.closest('[data-action]');
@@ -623,7 +737,7 @@
       let sourceSelects = {};
       const updateSelect = (sel, options, currentValue) => {
         sel.innerHTML = '';
-        [{ value: '', label: 'Auto' }, ...options].forEach(o => {
+        [{ value: '', label: t('value.auto') }, ...options].forEach(o => {
           const opt = document.createElement('option');
           opt.value = String(o.value);
           opt.textContent = o.label;
@@ -631,15 +745,15 @@
         });
         sel.value = currentValue;
       };
-      const makeSelectRow = (labelText, options, currentValue, onChange) => {
+      const makeSelectRow = (labelKey, options, currentValue, onChange) => {
         const row = document.createElement('div');
         row.className = 'source-popover-select-row';
         const lbl = document.createElement('label');
-        lbl.textContent = labelText;
+        lbl.textContent = t(labelKey);
         const sel = document.createElement('select');
         sel.className = 'source-popover-select';
 
-        sourceSelects[labelText] = sel;
+        sourceSelects[labelKey] = sel;
         updateSelect(sel, options, currentValue);
 
         // Setting .value to a string not present in options falls back to
@@ -728,11 +842,11 @@
       // surfaces a toast via showToast() in applyState.
       const refreshSourceSelects = () => {
         const choices = {
-          Resolution: [uniqueResolutions().map(([key]) => ({ value: key, label: key })),
+            'source.resolution': [uniqueResolutions().map(([key]) => ({ value: key, label: key })),
             lastOverride.width ? `${lastOverride.width}x${lastOverride.height}` : ''],
-          Framerate: [uniqueFps().map(f => ({ value: f, label: `${f} fps` })),
+          'source.framerate': [uniqueFps().map(f => ({ value: f, label: `${f} ${t('units.fps')}` })),
             lastOverride.fps ? String(lastOverride.fps) : ''],
-          Format: [uniqueFormats().map(f => ({ value: f, label: f })), lastOverride.format],
+          'source.format': [uniqueFormats().map(f => ({ value: f, label: f })), lastOverride.format],
         };
         Object.entries(choices).forEach(([label, [options, value]]) => {
           const sel = sourceSelects[label];
@@ -755,7 +869,7 @@
         if (lastDevices.length > 1) {
           const sectLabel = document.createElement('div');
           sectLabel.className = 'source-popover-section-label';
-          sectLabel.textContent = 'Capture Device';
+          sectLabel.textContent = t('source.captureDevice');
           pop.appendChild(sectLabel);
 
           lastDevices.forEach(name => {
@@ -787,13 +901,13 @@
         // from auto-negotiation.
         const fmtSectLabel = document.createElement('div');
         fmtSectLabel.className = 'source-popover-section-label';
-        fmtSectLabel.textContent = 'Manual Capture Format';
+        fmtSectLabel.textContent = t('source.manualFormat');
         pop.appendChild(fmtSectLabel);
 
         const resolutions = uniqueResolutions();
         const currentResValue = lastOverride.width
           ? `${lastOverride.width}x${lastOverride.height}` : '';
-        makeSelectRow('Resolution',
+        makeSelectRow('source.resolution',
           resolutions.map(([key]) => ({ value: key, label: key })),
           currentResValue,
           (newVal) => {
@@ -827,8 +941,8 @@
         );
 
         const fpsValues = uniqueFps();
-        makeSelectRow('Framerate',
-          fpsValues.map(f => ({ value: f, label: `${f} fps` })),
+        makeSelectRow('source.framerate',
+          fpsValues.map(f => ({ value: f, label: `${f} ${t('units.fps')}` })),
           lastOverride.fps ? String(lastOverride.fps) : '',
           (newVal) => {
             const newFps = newVal ? Number(newVal) : 0;
@@ -855,7 +969,7 @@
         );
 
         const formatValues = uniqueFormats();
-        makeSelectRow('Format',
+        makeSelectRow('source.format',
           formatValues.map(f => ({ value: f, label: f })),
           lastOverride.format,
           (newVal) => {
@@ -874,7 +988,7 @@
 
         const refresh = document.createElement('div');
         refresh.className = 'source-popover-action';
-        refresh.textContent = 'Refresh devices';
+        refresh.textContent = t('source.refresh');
         refresh.addEventListener('click', ev => {
           ev.stopPropagation();
           post('refreshDevices');
@@ -927,7 +1041,7 @@
         lastAvailableFormats = Array.isArray(availableFormats)
           ? availableFormats : [];
         lastOverride = override || { width: 0, height: 0, fps: 0, format: '' };
-        nameEl.textContent = lastActive || '(none)';
+        nameEl.textContent = lastActive || t('meta.none');
         trigger.dataset.multi = (lastDevices.length > 1) ? 'true' : 'false';
         if (pop.dataset.open === 'true') {
           const interacting = document.activeElement
@@ -976,13 +1090,13 @@
         : filepath;
       toast.textContent = '';
       const prefix = document.createElement('span');
-      prefix.textContent = 'Screenshot saved: ';
+      prefix.textContent = t('toast.screenshotSaved');
       const link = document.createElement('span');
       link.textContent = filename;
       link.style.textDecoration = 'underline';
       link.style.cursor = 'pointer';
       link.style.color = 'var(--accent)';
-      link.title = 'Click to open folder';
+      link.title = t('toast.openFolder');
       link.addEventListener('click', () => {
         post('openScreenshotFolder', filepath);
       });
@@ -997,6 +1111,8 @@
 
     const applyState = s => {
       if (!s) return;
+      if (s.locale) applyTranslations(s.locale);
+      if (languageSelect && s.languagePreference) languageSelect.value = s.languagePreference;
       const setToggle = (id, on) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
       const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
       setToggle('toggle-hdr', s.hdrEnabled);
@@ -1005,8 +1121,8 @@
       setToggle('toggle-low-latency', s.lowLatency);
       if (s.presentPacing) {
         setText('pacing-val',
-          s.presentPacing === 'unique'   ? 'Source frame rate' :
-          s.presentPacing === 'captured' ? 'Capture rate'      : 'Display refresh');
+          s.presentPacing === 'unique'   ? t('value.sourceFrameRate') :
+          s.presentPacing === 'captured' ? t('value.captureRate')      : t('value.displayRefresh'));
       }
       setToggle('toggle-mute', s.audioMuted);
 
@@ -1015,14 +1131,17 @@
         if (slider && slider._setFromCpp) slider._setFromCpp(s.volume * 100);
       }
       setPiPOpacityVisual(s.pipOpacity);
-      setText('scaler-val', s.scalerName);
-      if (s.aspectRatio) setText('aspect-val', s.aspectRatio);
+      setText('scaler-val', s.scalerName === 'AUTO' ? t('value.scalerAuto') : s.scalerName);
+      if (s.aspectRatio) setText('aspect-val', localizeValue(s.aspectRatio));
       if (s.panelSide) {
-        setText('panel-side-val', s.panelSide);
+        setText('panel-side-val', localizeValue(s.panelSide));
         document.documentElement.dataset.side = String(s.panelSide).toLowerCase();
       }
-      setText('meta-resolution', `${s.negotiatedWidth}x${s.negotiatedHeight} / ${s.negotiatedFps} FPS`);
-      setText('meta-format', s.negotiatedFormat);
+      const hasSignal = s.negotiatedWidth > 0 && s.negotiatedHeight > 0 && s.negotiatedFps > 0;
+      setText('meta-resolution', hasSignal
+        ? `${s.negotiatedWidth}x${s.negotiatedHeight} / ${s.negotiatedFps} ${t('units.fps')}`
+        : t('meta.none'));
+      setText('meta-format', s.negotiatedFormat === 'Unknown' ? t('value.auto') : s.negotiatedFormat);
       setText('meta-link', s.linkText);
       setText('meta-latency', s.latencyText);
 

@@ -38,3 +38,14 @@ Code contributions merged into NitLink:
   survives default playback device changes, rebuilds a lost endpoint
   on its worker thread, and plays through playback devices whose sample
   rate or channel layout differs from the capture card's.
+
+---
+
+## Localization contributors
+
+Localization contributions are credited by language and do not imply
+project authorship or maintainership.
+
+- **Traditional Chinese (zh-TW):** [HolyBear（聖小熊）](https://github.com/HolyBearTW)
+  (`@HolyBearTW`) — translation and localization review with real-device
+  validation.

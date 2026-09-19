@@ -349,6 +349,7 @@ MIT. See `LICENSE`. Third-party licenses (NIS, WebView2, WIL, MJP's Catmull-Rom)
 - **Brandon (13bm), [elgato4k-linux](https://github.com/13bm/elgato4k-linux)**: Elgato HID/protocol reference. See [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md).
 - **Testing & feedback**: u/Lordmau5, u/XSilverlink, and u/TooxChilly for hardware testing, bug reports, and cross-card latency measurements.
 - **Hardware**: u/elgato_phil (Elgato) provided the 4K X and the Cam Link 4K used for validation.
+- **Traditional Chinese (zh-TW) localization**: [HolyBear（聖小熊）](https://github.com/HolyBearTW) (`@HolyBearTW`) for translation review and real-device validation.
 
 ---
 
