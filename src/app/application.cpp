@@ -1507,6 +1507,7 @@ void Application::Run()
     auto lastFpsUpdate = Clock::now();
     uint64_t lastFramesWritten    = 0;
     uint64_t lastUniqueFrameCount = 0;
+    uint64_t lastPresentCount     = 0;
 
     MSG msg{};
     while (m_running) {
@@ -1985,6 +1986,7 @@ void Application::Run()
                                      m_renderer->GetRawCaptureSRV());
             m_loopDifferSumMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - differStart).count();
             isNewFrame = m_frameDiffer->WasPreviousFrameNew();
+            m_sourceCadence.OnClassifiedFrame(isNewFrame);
             if (isNewFrame) {
                 m_uniqueFrameCount++;
                 // Motion-recency gate: the differ saw a non-duplicate frame,
@@ -1996,6 +1998,8 @@ void Application::Run()
                 // m_lastMotionTime stale; the content timer carries them.
                 m_lastMotionTime = std::chrono::steady_clock::now();
             }
+        } else if (haveFreshFrame) {
+            m_sourceCadence.OnUnclassifiedFrame();
         }
 
         // FPS sampling and differ diagnostic: fire every iteration (NOT
@@ -2027,6 +2031,10 @@ void Application::Run()
                 m_currentContentFps    = static_cast<uint32_t>(deltaUnique / elapsed);
                 lastUniqueFrameCount   = m_uniqueFrameCount;
 
+                uint64_t deltaPresents = m_presentCount - lastPresentCount;
+                m_currentPresentFps    = static_cast<uint32_t>(deltaPresents / elapsed);
+                lastPresentCount       = m_presentCount;
+
                 lastFpsUpdate          = now;
 
                 if (m_settingsVisible) PushSettingsState();
@@ -2057,6 +2065,10 @@ void Application::Run()
                        << L" dropped=" << dropped
                        << L" totalSkipped=" << m_skippedFrameCount
                        << L" consecutive=" << m_consecutiveSkips
+                       << L" cadence=" << m_sourceCadence.CadenceFrames()
+                       << L" dupRun=" << m_sourceCadence.DuplicateRun()
+                       << L" holdPresents=" << m_cadenceHoldPresents
+                       << L" presentFps=" << m_currentPresentFps
                        << L" thisFrameNew=" << (isNewFrame ? L"Y" : L"N")
                        << L" haveFresh=" << (haveFreshFrame ? L"Y" : L"N")
                        << L" frameAge=" << m_frameAgeMs
@@ -2111,11 +2123,16 @@ void Application::Run()
         //   of the card's constant delivery rate, an external frame-generation
         //   tool reads the real frame rate off the present rate, and a 30 fps
         //   source stops juddering against a present rate that is not a
-        //   multiple of the content rate.
+        //   multiple of the content rate. While the picture is still, the
+        //   source cadence hold repeats the latest frame at the measured
+        //   source rate, so a paused game or an idle menu keeps presenting at
+        //   the source rate and a one-frame menu change reaches the screen on
+        //   the next present.
         //
         // Use elapsed time for the safety floor: duplicate-frame cadence can
         // vary, and a stalled capture stream produces no frame-ready events.
         bool shouldRender;
+        bool cadenceHold = false;
         if (pacing == kPacingRefresh) {
             shouldRender = true;
         } else if (!haveFreshFrame) {
@@ -2123,6 +2140,9 @@ void Application::Run()
             shouldRender = false;
         } else if (pacing == kPacingCaptured || isNewFrame) {
             shouldRender = true;
+        } else if (pacing == kPacingUnique && m_sourceCadence.ShouldHold()) {
+            shouldRender = true;
+            cadenceHold  = true;
         } else {
             shouldRender = false;
         }
@@ -2148,6 +2168,10 @@ void Application::Run()
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
+
+        m_sourceCadence.OnPresent();
+        m_presentCount++;
+        if (cadenceHold) m_cadenceHoldPresents++;
 
         // Small sleep to avoid 100% CPU spin when running uncapped.
         // 1ms is short enough to be imperceptible but stops the render loop
@@ -2270,9 +2294,13 @@ void Application::Run()
                 // reports 0, but a "0 fps" reading is misleading because
                 // the game IS still running. Fall back to the HDMI signal
                 // rate in that case so the overlay never lies about it.
-                stats.fps = (m_frameDiffer && m_currentContentFps > 0)
-                              ? m_currentContentFps
-                              : m_currentFps;
+                // Source frame rate pacing reports presents per second
+                // instead, the rate an external frame-generation tool sees.
+                stats.fps = (pacing == kPacingUnique && m_currentPresentFps > 0)
+                              ? m_currentPresentFps
+                              : (m_frameDiffer && m_currentContentFps > 0)
+                                  ? m_currentContentFps
+                                  : m_currentFps;
                 stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
                 stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
                 stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -2429,10 +2457,14 @@ void Application::Run()
             // looking at a wall), the differ correctly reports 0 unique
             // frames, and displaying "0 fps" to the user is misleading
             // because the game IS still running. Fall back to the HDMI
-            // signal rate in that case.
-            stats.fps = (m_frameDiffer && m_currentContentFps > 0)
-                          ? m_currentContentFps
-                          : m_currentFps;
+            // signal rate in that case. Source frame rate pacing reports
+            // presents per second instead, the rate an external
+            // frame-generation tool sees.
+            stats.fps = (pacing == kPacingUnique && m_currentPresentFps > 0)
+                          ? m_currentPresentFps
+                          : (m_frameDiffer && m_currentContentFps > 0)
+                              ? m_currentContentFps
+                              : m_currentFps;
             stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
             stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
             stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -3215,6 +3247,9 @@ bool Application::ReconcileCaptureFormat(bool force)
     // classification can persist across the swap, leaving contentFps wedged
     // at 0 even when fresh content is arriving from the new capture session.
     if (m_frameDiffer) m_frameDiffer->Reset();
+    // The new stream may run at another source rate, so its cadence is
+    // measured again from the first new frames.
+    m_sourceCadence.Reset();
 
     // Reset the placeholder detector for the same reason: a streak of
     // matching frames in the prior format would otherwise carry over, and

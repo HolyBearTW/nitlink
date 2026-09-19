@@ -15,6 +15,7 @@
 #include "upscale/nis_upscaler.h"
 #include "WebViewSettings.h"
 #include "config.h"
+#include "source_cadence.h"
 #include "discord/discord_rpc.h"
 
 #include <memory>
@@ -425,6 +426,13 @@ private:
     // Keep skip counts for pacing diagnostics. Capture stalls make iteration
     // counts unsuitable for measuring the time between presents.
     uint32_t m_consecutiveSkips  = 0;
+
+    // Source frame rate pacing: keeps presents at the measured source rate
+    // while the picture is still (see source_cadence.h).
+    SourceCadence m_sourceCadence;
+    uint64_t m_presentCount        = 0;   // presents issued by the run loop (total)
+    uint32_t m_currentPresentFps   = 0;   // presents per second, sampled with the fps counters
+    uint64_t m_cadenceHoldPresents = 0;   // presents issued by the still-picture cadence hold (total)
 
     // Session timing: when the app started, used for screenshot
     // filenames and any future "session uptime" telemetry.

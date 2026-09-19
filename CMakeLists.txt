@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NitLink VERSION 1.2.0 LANGUAGES CXX)
+project(NitLink VERSION 1.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,6 +27,7 @@ set(NITLINK_SOURCES
     src/app/config.h
     src/app/game_database.cpp
     src/app/game_database.h
+    src/app/source_cadence.h
     src/app/WebViewSettings.cpp
     src/app/WebViewSettings.h
     src/capture/capture_device.cpp

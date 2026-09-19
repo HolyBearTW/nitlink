@@ -13,7 +13,7 @@ REM ============================================================================
 setlocal EnableDelayedExpansion
 
 REM --- Configuration ---------------------------------------------------------
-set VERSION=1.2.0
+set VERSION=1.2.1
 set BUILD_DIR=out\build\x64-Release
 set BUILD_DIR_ALT=build\Release
 set STAGING_DIR=NitLink-%VERSION%-win64
