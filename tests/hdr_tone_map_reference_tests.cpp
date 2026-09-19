@@ -118,7 +118,10 @@ float LinearToSrgbReference(float value) {
 
 [numthreads(32, 1, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
-    if (id.x >= 21) return;
+    uint elementCount;
+    uint elementStride;
+    inputNits.GetDimensions(elementCount, elementStride);
+    if (id.x >= elementCount) return;
     float nits = inputNits[id.x];
     float yPrime = Bt2446ADerivedYPrimeSdr(nits);
     float mappedLinear = ToneMapLuminanceNits(nits);
