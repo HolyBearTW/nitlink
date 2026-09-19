@@ -35,6 +35,8 @@ const Table& EnglishTable()
         {L"toast.colorRangeLimited", L"Color range: LIMITED forced (Alt+R)"},
         {L"toast.screenshotSaved", L"Screenshot saved: "},
         {L"toast.captureFormatUnavailable", L"Capture format unavailable, reverted to automatic."},
+        {L"toast.p010SelectionFallback", L"HDR requested, but matching P010 mode is unavailable; using native P010 {width}x{height} @ {fps} FPS."},
+        {L"toast.p010Unavailable", L"HDR requested, but no compatible P010 mode was negotiated; HDR was disabled and {format} capture is active."},
         {L"diagnostic.levelsNoRange", L"LEVELS: no YUV range on this path (test HDR / P010 capture)"},
         {L"diagnostic.levelsY", L"Y"},
         {L"diagnostic.levelsSignal", L"sig"},
@@ -79,6 +81,8 @@ const Table& TraditionalChineseTable()
         {L"toast.colorRangeLimited", L"色彩範圍：強制有限範圍（Alt+R）"},
         {L"toast.screenshotSaved", L"螢幕擷取畫面已儲存："},
         {L"toast.captureFormatUnavailable", L"無法使用指定的擷取格式，已恢復為自動。"},
+        {L"toast.p010SelectionFallback", L"已要求 HDR，但沒有相符的 P010 模式；改用原生 P010 {width}×{height} @ {fps} FPS。"},
+        {L"toast.p010Unavailable", L"已要求 HDR，但未協商到相容的 P010 模式；已停用 HDR，目前使用 {format} 擷取。"},
         {L"diagnostic.levelsNoRange", L"訊號層級：此路徑沒有 YUV 範圍（請使用 HDR / P010 擷取測試）"},
         {L"diagnostic.levelsY", L"Y"},
         {L"diagnostic.levelsSignal", L"訊號"},
@@ -173,6 +177,22 @@ std::wstring Localization::Get(const wchar_t* key) const
     it = fallback.find(key);
     if (it != fallback.end() && !it->second.empty()) return it->second;
     return key;
+}
+
+std::wstring Localization::Format(
+    const wchar_t* key,
+    std::initializer_list<std::pair<std::wstring, std::wstring>> values) const
+{
+    std::wstring text = Get(key);
+    for (const auto& [name, value] : values) {
+        const std::wstring placeholder = L"{" + name + L"}";
+        size_t position = 0;
+        while ((position = text.find(placeholder, position)) != std::wstring::npos) {
+            text.replace(position, placeholder.size(), value);
+            position += value.size();
+        }
+    }
+    return text;
 }
 
 const wchar_t* Localization::UiFontFamily(const wchar_t* fallback) const

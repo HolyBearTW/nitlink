@@ -1,6 +1,8 @@
 #pragma once
 
+#include <initializer_list>
 #include <string>
+#include <utility>
 
 namespace NitLink {
 
@@ -27,6 +29,12 @@ public:
     // Lookup always falls back to the complete en-US table. Unknown keys
     // return the key itself as a final non-empty diagnostic fallback.
     std::wstring Get(const wchar_t* key) const;
+
+    // Replaces named placeholders such as {width}. The translated template
+    // still follows the same per-key en-US fallback rules as Get().
+    std::wstring Format(
+        const wchar_t* key,
+        std::initializer_list<std::pair<std::wstring, std::wstring>> values) const;
 
     // Font family used by native text surfaces. Microsoft JhengHei UI is
     // available on supported Windows versions and covers Traditional Chinese;
