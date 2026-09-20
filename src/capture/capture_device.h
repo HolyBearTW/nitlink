@@ -53,6 +53,25 @@ struct DeviceInfo {
     uint32_t     index = 0;
 };
 
+enum class CaptureDeviceFamily {
+    Generic,
+    AverMediaGC553Pro,
+};
+
+struct CaptureDevicePolicy {
+    CaptureDeviceFamily family = CaptureDeviceFamily::Generic;
+    bool preferHighFpsP010 = false;
+};
+
+CaptureDevicePolicy GetCaptureDevicePolicy(const std::wstring& deviceName);
+
+struct P010SelectionNotice {
+    bool available = false;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t fps = 0;
+};
+
 // One native media type as exposed by the capture source. Populated during
 // LogAvailableFormats(), consumed by the F1 Source picker's manual override
 // dropdowns. Interlaced entries are kept in the list (the user-facing UI
@@ -85,11 +104,9 @@ public:
 
     // Request the P010 (10-bit BT.2020 PQ) output format on next Open().
     // Must be called BEFORE Open(): changing it later has no effect on the
-    // already-opened reader. Pass true only when:
-    //   1. The source is detected as HDR10 (see elgato_hdr_control.h)
-    //   2. The user has the HDR toggle enabled
-    //   3. The device exposes P010 (confirmed on 4K Pro; older Elgato
-    //      firmware may not)
+    // already-opened reader. The caller can request it from trusted Elgato
+    // source detection or an explicit GC553Pro manual HDR preference; MF
+    // remains the authority on whether native P010 is exposed and accepted.
     // If P010 negotiation fails inside Open(), Open() returns false; the
     // caller should retry with this flag false to get the SDR pipeline.
     void RequestP010(bool want) { m_requestP010 = want; }
@@ -181,9 +198,18 @@ public:
         return out;
     }
 
+    P010SelectionNotice ConsumeP010SelectionNotice() {
+        const P010SelectionNotice out = m_p010SelectionNotice;
+        m_p010SelectionNotice = {};
+        return out;
+    }
+
 private:
+    friend struct CaptureDeviceFormatTests;
+
     void CaptureLoop();
     bool NegotiateFormat(IMFMediaSource* source);
+    HRESULT SetOutputFrameRate(IMFMediaType* outputType);
 
     // Commit the finalized m_format into the mutex-guarded m_publishedFormat.
     // Called once at the end of a successful Open(), after every format field
@@ -202,6 +228,10 @@ private:
     // thread while no capture worker is running. Other threads do NOT read this
     // directly; they read m_publishedFormat via GetOutputFormat().
     CaptureFormat   m_format;
+
+    // Native GC553Pro auto selection retains the exact rate for the reader
+    // request; the integer FPS used by the UI cannot represent 59.94 Hz.
+    ComPtr<IMFMediaType> m_nativeP010Type;
 
     // Thread-safe published copy of m_format, committed by PublishFormat() and
     // read under m_formatMutex by GetOutputFormat(). Decouples the multi-field
@@ -257,6 +287,11 @@ private:
     // (Open / ReconcileCaptureFormat), consumed and cleared by the JSON
     // push via ConsumeFallbackNotice(). See that accessor's doc comment.
     std::wstring m_fallbackNotice;
+
+    // Published only after Open confirms that the negotiated output remains
+    // P010, preventing a failed attempt followed by SDR fallback from showing
+    // a stale native-mode notice.
+    P010SelectionNotice m_p010SelectionNotice;
 
     // Optional DirectShow capture backend, created only when USE_DSHOW.txt is
     // present next to the exe. When non-null, every public method delegates to
