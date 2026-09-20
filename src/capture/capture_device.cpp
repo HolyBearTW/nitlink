@@ -129,22 +129,40 @@ static bool UseDShowBackend() {
     return std::filesystem::exists(marker, ec);
 }
 
-// Integer fps from a media type's MF_MT_FRAME_RATE attribute.
-// Returns 0 if the attribute is missing or has a zero denominator.
-// Used by LogAvailableFormats to populate m_availableFormats AND by
-// NegotiateFormat's post-acceptance guard to compare negotiated fps
-// against the requested override. Both paths must produce identical
-// values, or the cascade (driven by m_availableFormats) and the
-// backstop (driven by readback) will disagree about which framerates
-// are valid.
-static UINT32 GetFpsFromMediaType(IMFMediaType* type) {
-    UINT32 fpsNum = 0, fpsDen = 1;
+struct MediaFrameRate {
+    UINT32 numerator = 0;
+    UINT32 denominator = 1;
+};
+
+// Keep the integer presentation for existing UI/config fields, but preserve
+// the MF rational for selector ordering, requests and diagnostics. A 59.94
+// mode must not be confused with 30 because of an early integer conversion.
+static MediaFrameRate GetFrameRateFromMediaType(IMFMediaType* type) {
+    MediaFrameRate rate;
     if (SUCCEEDED(MFGetAttributeRatio(type, MF_MT_FRAME_RATE,
-                                      &fpsNum, &fpsDen))
-        && fpsDen > 0) {
-        return fpsNum / fpsDen;
+                                      &rate.numerator, &rate.denominator))
+        && rate.denominator > 0) {
+        return rate;
     }
-    return 0;
+    return {};
+}
+
+static void SetFormatFrameRate(CaptureFormat& format,
+                               UINT32 numerator, UINT32 denominator)
+{
+    if (denominator == 0) denominator = 1;
+    format.fpsNumerator = numerator;
+    format.fpsDenominator = denominator;
+    format.fps = numerator / denominator;
+}
+
+static std::wstring FrameRateText(UINT32 numerator, UINT32 denominator)
+{
+    if (denominator == 0) denominator = 1;
+    std::wstringstream ss;
+    ss << numerator << L"/" << denominator
+       << L" (" << (numerator / denominator) << L" FPS)";
+    return ss.str();
 }
 
 CaptureDevice::CaptureDevice() = default;
@@ -306,6 +324,8 @@ bool CaptureDevice::Open(const DeviceInfo& device)
     const uint32_t nativeBestW   = m_format.width;
     const uint32_t nativeBestH   = m_format.height;
     const uint32_t nativeBestFps = m_format.fps;
+    const uint32_t nativeBestFpsNumerator = m_format.fpsNumerator;
+    const uint32_t nativeBestFpsDenominator = m_format.fpsDenominator;
 
     // Build the attempts list and apply override dimensions. Captured by
     // a lambda so the fallback path can reset and rebuild the list before
@@ -327,7 +347,9 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         // just resolution without specifying every axis.
         if (m_overrideSpec.width  > 0) m_format.width  = m_overrideSpec.width;
         if (m_overrideSpec.height > 0) m_format.height = m_overrideSpec.height;
-        if (m_overrideSpec.fps    > 0) m_format.fps    = m_overrideSpec.fps;
+        if (m_overrideSpec.fps > 0) {
+            SetFormatFrameRate(m_format, m_overrideSpec.fps, 1);
+        }
 
         // If override.format is specified, the attempts list contains
         // only that GUID. Exact match or fall through to fallback. If not,
@@ -343,8 +365,10 @@ bool CaptureDevice::Open(const DeviceInfo& device)
             attempts.push_back({ overrideGuid, L"manual override format" });
             std::wstringstream ss;
             ss << L"Manual override: " << m_format.width << L"x"
-               << m_format.height << L" @ " << m_format.fps
-               << L"fps, format " << m_overrideSpec.format;
+               << m_format.height << L" @ "
+               << FrameRateText(m_format.fpsNumerator,
+                                m_format.fpsDenominator)
+               << L", format " << m_overrideSpec.format;
             DebugLog(ss.str());
         } else {
             // Override dimensions only, format=Auto. The user's intent here
@@ -371,7 +395,9 @@ bool CaptureDevice::Open(const DeviceInfo& device)
             attempts.push_back({ MFVideoFormat_ARGB32, L"ARGB32 (auto)" });
             std::wstringstream ss;
             ss << L"Manual override (dimensions only): " << m_format.width
-               << L"x" << m_format.height << L" @ " << m_format.fps << L"fps";
+               << L"x" << m_format.height << L" @ "
+               << FrameRateText(m_format.fpsNumerator,
+                                m_format.fpsDenominator);
             DebugLog(ss.str());
         }
     } else {
@@ -403,7 +429,27 @@ bool CaptureDevice::Open(const DeviceInfo& device)
             // a request for "4K NV12" without specifying "at 60" yields 4K@30
             // silently. m_format.fps was populated by NegotiateFormat (or
             // overridden above) and reflects what the caller wants.
-            if (FAILED(SetOutputFrameRate(outputType.Get()))) continue;
+            if (m_format.fpsNumerator > 0 && m_format.fpsDenominator > 0) {
+                MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
+                                    m_format.fpsNumerator,
+                                    m_format.fpsDenominator);
+            } else if (m_format.fps > 0) {
+                MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
+                                    m_format.fps, 1);
+            }
+
+            if (m_requestP010) {
+                std::wstringstream requestLog;
+                requestLog << L"MF request: " << m_format.width << L"x"
+                           << m_format.height << L" @ "
+                           << (m_format.fpsNumerator > 0
+                               ? m_format.fpsNumerator : m_format.fps)
+                           << L"/"
+                           << (m_format.fpsNumerator > 0
+                               ? m_format.fpsDenominator : 1)
+                           << L", subtype=" << attempt.name;
+                DebugLog(requestLog.str());
+            }
 
             HRESULT hrAttempt = m_reader->SetCurrentMediaType(
                 MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.Get());
@@ -425,18 +471,28 @@ bool CaptureDevice::Open(const DeviceInfo& device)
                             MF_SOURCE_READER_FIRST_VIDEO_STREAM, &negotiatedType)) &&
                         SUCCEEDED(MFGetAttributeSize(negotiatedType.Get(),
                             MF_MT_FRAME_SIZE, &negW, &negH))) {
-                        const UINT32 negFps = GetFpsFromMediaType(negotiatedType.Get());
+                        const MediaFrameRate negRate =
+                            GetFrameRateFromMediaType(negotiatedType.Get());
                         const bool dimMismatch = (negW != m_format.width ||
                                                   negH != m_format.height);
-                        const bool fpsMismatch = (m_format.fps > 0 && negFps > 0 &&
-                                                  negFps != m_format.fps);
+                        const bool fpsMismatch =
+                            m_format.fpsNumerator > 0 &&
+                            negRate.numerator > 0 &&
+                            static_cast<uint64_t>(negRate.numerator) *
+                                    m_format.fpsDenominator !=
+                                static_cast<uint64_t>(m_format.fpsNumerator) *
+                                    negRate.denominator;
                         if (dimMismatch || fpsMismatch) {
                             std::wstringstream ss;
                             ss << L"Output format " << attempt.name
                                << L" returned S_OK but driver substituted "
-                               << negW << L"x" << negH << L"@" << negFps << L"fps"
+                               << negW << L"x" << negH << L"@"
+                               << FrameRateText(negRate.numerator,
+                                                negRate.denominator)
                                << L" (override requested " << m_format.width << L"x"
-                               << m_format.height << L"@" << m_format.fps << L"fps);"
+                               << m_format.height << L"@"
+                               << FrameRateText(m_format.fpsNumerator,
+                                                m_format.fpsDenominator) << L");"
                                << L" rejecting attempt";
                             DebugLog(ss.str());
                             continue;
@@ -479,7 +535,12 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         m_fallbackNotice = L"Capture format unavailable, reverted to automatic.";
         m_format.width  = nativeBestW;
         m_format.height = nativeBestH;
-        m_format.fps    = nativeBestFps;
+        if (nativeBestFpsNumerator > 0) {
+            SetFormatFrameRate(m_format, nativeBestFpsNumerator,
+                               nativeBestFpsDenominator);
+        } else {
+            SetFormatFrameRate(m_format, nativeBestFps, 1);
+        }
         rebuildStandardAttempts();
         gotFormat = tryAttempts(/*enforceOverrideDims=*/ false);
     }
@@ -512,8 +573,12 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         // Also read back the actual frame rate. If MF silently downgraded
         // (e.g. driver can't sustain 4K@60 even though it advertised the
         // format), m_format.fps now reflects what's actually being delivered.
-        const UINT32 negFps = GetFpsFromMediaType(actualType.Get());
-        if (negFps > 0) m_format.fps = negFps;
+        const MediaFrameRate negotiatedRate =
+            GetFrameRateFromMediaType(actualType.Get());
+        if (negotiatedRate.numerator > 0) {
+            SetFormatFrameRate(m_format, negotiatedRate.numerator,
+                               negotiatedRate.denominator);
+        }
 
         // Detect row order empirically. MF_MT_DEFAULT_STRIDE is a signed int32
         // where negative = bottom-up (legacy GDI convention, older drivers),
@@ -536,7 +601,10 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         }
 
         std::wstringstream ss;
-        ss << L"Negotiated output: " << w << L"x" << h << L" @ " << m_format.fps << L"fps, format ";
+        ss << L"Negotiated output: " << w << L"x" << h << L" @ "
+           << FrameRateText(m_format.fpsNumerator,
+                            m_format.fpsDenominator)
+           << L", format ";
         if (subtype == MFVideoFormat_RGB32)      ss << L"RGB32/BGRA";
         else if (subtype == MFVideoFormat_NV12)  ss << L"NV12";
         else if (subtype == MFVideoFormat_YUY2)  ss << L"YUY2";
@@ -546,10 +614,6 @@ bool CaptureDevice::Open(const DeviceInfo& device)
 
         if (!(m_requestP010 && IsEqualGUID(subtype, MFVideoFormat_P010))) {
             m_p010SelectionNotice = {};
-        } else if (m_p010SelectionNotice.available) {
-            m_p010SelectionNotice = {
-                true, m_format.width, m_format.height, m_format.fps
-            };
         }
 
         // === HDR DIAGNOSTIC ===
@@ -669,22 +733,21 @@ void CaptureDevice::PublishFormat()
 
 HRESULT CaptureDevice::SetOutputFrameRate(IMFMediaType* outputType)
 {
-    UINT32 numerator = m_format.fps;
-    UINT32 denominator = 1;
-    if (m_nativeP010Type) {
-        const HRESULT hr = MFGetAttributeRatio(m_nativeP010Type.Get(),
-            MF_MT_FRAME_RATE, &numerator, &denominator);
-        if (FAILED(hr)) return hr;
-        if (numerator == 0 || denominator == 0) return MF_E_INVALIDMEDIATYPE;
+    if (!outputType) return E_POINTER;
+    if (m_format.fpsNumerator > 0 && m_format.fpsDenominator > 0) {
+        return MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE,
+                                   m_format.fpsNumerator,
+                                   m_format.fpsDenominator);
     }
-    if (numerator == 0) return S_OK;
-    return MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE,
-                               numerator, denominator);
+    if (m_format.fps > 0) {
+        return MFSetAttributeRatio(outputType, MF_MT_FRAME_RATE,
+                                   m_format.fps, 1);
+    }
+    return S_OK;
 }
 
 bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
 {
-    m_nativeP010Type.Reset();
     ComPtr<IMFPresentationDescriptor> pd;
     HRESULT hr = source->CreatePresentationDescriptor(&pd);
     if (FAILED(hr)) return false;
@@ -717,12 +780,15 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
             ? m_overrideSpec.width : m_format.width;
         const uint32_t targetHeight = m_overrideSpec.height > 0
             ? m_overrideSpec.height : m_format.height;
+        // In GC553Pro full Auto, FPS is intentionally unspecified. Do not
+        // reuse m_format.fps after a previous stream negotiated 30 FPS.
         const uint32_t targetFps = m_overrideSpec.fps > 0
-            ? m_overrideSpec.fps : m_format.fps;
+            ? m_overrideSpec.fps
+            : (gamingP010Auto ? 0 : m_format.fps);
 
         uint32_t bestWidth = 0, bestHeight = 0, bestFps = 0;
+        uint32_t bestFpsNumerator = 0, bestFpsDenominator = 1;
         std::vector<P010Candidate> p010Candidates;
-        std::vector<ComPtr<IMFMediaType>> p010Types;
 
         // When the caller requested P010 (HDR10 capture), restrict the
         // best-format search to entries whose subtype is actually P010.
@@ -749,17 +815,16 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
             if (FAILED(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE,
                                           &w, &h))) continue;
 
-            UINT32 fps = GetFpsFromMediaType(type.Get());
+            const MediaFrameRate rate = GetFrameRateFromMediaType(type.Get());
+            if (w == 0 || h == 0 || rate.numerator == 0 ||
+                rate.denominator == 0) {
+                continue;
+            }
+            UINT32 fps = rate.numerator / rate.denominator;
 
             if (gamingP010Auto) {
-                UINT32 numerator = 0, denominator = 0;
-                if (FAILED(MFGetAttributeRatio(type.Get(), MF_MT_FRAME_RATE,
-                                               &numerator, &denominator)) ||
-                    numerator == 0 || denominator == 0 || w == 0 || h == 0) {
-                    continue;
-                }
-                p010Candidates.push_back({w, h, fps});
-                p010Types.push_back(type);
+                p010Candidates.push_back({w, h, rate.numerator,
+                                          rate.denominator});
                 continue;
             }
 
@@ -767,31 +832,63 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
                 bestWidth = w;
                 bestHeight = h;
                 bestFps = fps;
+                bestFpsNumerator = rate.numerator;
+                bestFpsDenominator = rate.denominator;
             }
         }
 
         if (gamingP010Auto) {
+            std::wstringstream targetLog;
+            targetLog << L"P010 Auto target: " << targetWidth << L"x"
+                      << targetHeight << L" @ ";
+            if (targetFps > 0) {
+                targetLog << targetFps << L"/1 FPS";
+            } else {
+                targetLog << L"unspecified (prefer >=60 FPS)";
+            }
+            DebugLog(targetLog.str());
+
+            std::wstringstream candidatesLog;
+            candidatesLog << L"P010 Auto candidates:";
+            for (const auto& candidate : p010Candidates) {
+                candidatesLog << L" " << candidate.width << L"x"
+                              << candidate.height << L"@"
+                              << FrameRateText(candidate.fpsNumerator,
+                                               candidate.fpsDenominator);
+            }
+#ifdef _DEBUG
+            DebugLog(candidatesLog.str());
+#endif
+
             const P010SelectionResult selection = SelectGamingP010Candidate(
                 p010Candidates, targetWidth, targetHeight, targetFps);
             if (selection.index != static_cast<size_t>(-1)) {
                 const auto& best = p010Candidates[selection.index];
                 m_format.width = best.width;
                 m_format.height = best.height;
-                m_format.fps = best.fps;
-                m_nativeP010Type = p010Types[selection.index];
+                SetFormatFrameRate(m_format, best.fpsNumerator,
+                                   best.fpsDenominator);
 
                 std::wstringstream selectionLog;
                 selectionLog << L"P010 Auto selected: "
                              << best.width << L"x" << best.height << L" @ "
-                             << best.fps << L" FPS; reason="
+                             << FrameRateText(best.fpsNumerator,
+                                              best.fpsDenominator)
+                             << L"; reason="
                              << P010SelectionReasonText(selection.reason);
                 DebugLog(selectionLog.str());
 
                 if (targetWidth > 0 && targetHeight > 0 &&
                     (best.width != targetWidth || best.height != targetHeight ||
-                     (targetFps > 0 && best.fps != targetFps))) {
+                     (targetFps > 0 &&
+                      static_cast<uint64_t>(best.fpsNumerator) !=
+                      static_cast<uint64_t>(targetFps) *
+                          best.fpsDenominator))) {
                     m_p010SelectionNotice = {
-                        true, best.width, best.height, best.fps
+                        true, best.width, best.height,
+                        best.fpsDenominator > 0
+                            ? best.fpsNumerator / best.fpsDenominator : 0,
+                        best.fpsNumerator, best.fpsDenominator
                     };
                 }
                 return true;
@@ -802,10 +899,18 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
         if (bestWidth > 0) {
             m_format.width = bestWidth;
             m_format.height = bestHeight;
-            m_format.fps = bestFps;
+                if (bestFpsNumerator > 0) {
+                    SetFormatFrameRate(m_format, bestFpsNumerator,
+                                       bestFpsDenominator);
+                } else {
+                    SetFormatFrameRate(m_format, bestFps, 1);
+                }
 
-            std::wstringstream ss;
-            ss << L"Native best format: " << bestWidth << L"x" << bestHeight << L" @ " << bestFps << L"fps";
+                std::wstringstream ss;
+                ss << L"Native best format: " << bestWidth << L"x"
+                   << bestHeight << L" @ "
+                   << FrameRateText(m_format.fpsNumerator,
+                                    m_format.fpsDenominator);
             DebugLog(ss.str());
             return true;
         }
@@ -817,7 +922,7 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
 
     m_format.width = 1920;
     m_format.height = 1080;
-    m_format.fps = 60;
+    SetFormatFrameRate(m_format, 60, 1);
     return true;
 }
 
@@ -950,7 +1055,8 @@ bool CaptureDevice::LogAvailableFormats()
             UINT32 w = 0, h = 0;
             MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &w, &h);
 
-            UINT32 fps = GetFpsFromMediaType(type.Get());
+            const MediaFrameRate rate = GetFrameRateFromMediaType(type.Get());
+            const UINT32 fps = rate.numerator / rate.denominator;
 
             UINT32 interlace = 0;
             type->GetUINT32(MF_MT_INTERLACE_MODE, &interlace);
@@ -966,8 +1072,9 @@ bool CaptureDevice::LogAvailableFormats()
             }
 
             std::wstringstream ss;
-            ss << L"  [" << t << L"] " << w << L"x" << h << L" @ " << fps
-               << L"fps  " << SubtypeToName(subtype);
+            ss << L"  [" << t << L"] " << w << L"x" << h << L" @ "
+               << FrameRateText(rate.numerator, rate.denominator)
+               << L"  " << SubtypeToName(subtype);
             if (interlace != MFVideoInterlace_Progressive) ss << L"  (interlaced)";
             Log(ss.str());
             totalLogged++;

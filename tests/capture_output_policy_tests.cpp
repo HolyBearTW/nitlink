@@ -1,0 +1,80 @@
+#include "app/capture_output_policy.h"
+
+#include <iostream>
+
+using NitLink::CaptureFormatPreference;
+using NitLink::DecideGc553ProOutputPolicy;
+using NitLink::NegotiatedCaptureFormatKind;
+
+int main()
+{
+    const auto nv12HdrOff = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, false);
+    if (nv12HdrOff.desiredCaptureIsP010 || nv12HdrOff.reopenCapture ||
+        nv12HdrOff.sourceIsHDR10 || nv12HdrOff.sdrFromHdrTonemap) return 1;
+
+    const auto nv12HdrOn = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, true);
+    if (!nv12HdrOn.desiredCaptureIsP010 || !nv12HdrOn.reopenCapture ||
+        nv12HdrOn.sourceIsHDR10 || nv12HdrOn.sdrFromHdrTonemap) return 2;
+
+    const auto p010HdrOff = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::P010, false);
+    if (!p010HdrOff.desiredCaptureIsP010 || p010HdrOff.reopenCapture ||
+        !p010HdrOff.sourceIsHDR10 || !p010HdrOff.sdrFromHdrTonemap) return 3;
+
+    const auto p010HdrOn = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::P010, true);
+    if (!p010HdrOn.desiredCaptureIsP010 || p010HdrOn.reopenCapture ||
+        !p010HdrOn.sourceIsHDR10 || p010HdrOn.sdrFromHdrTonemap) return 4;
+
+    // Actual negotiated NV12 wins over a stale/requested P010 preference.
+    const auto requestedP010ButNegotiatedNV12 = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, true);
+    if (!requestedP010ButNegotiatedNV12.reopenCapture ||
+        requestedP010ButNegotiatedNV12.sourceIsHDR10) return 5;
+
+    const auto manualNv12HdrOn = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, true,
+        CaptureFormatPreference::ManualNV12);
+    if (manualNv12HdrOn.desiredCaptureIsP010 ||
+        manualNv12HdrOn.reopenCapture || !manualNv12HdrOn.hdrRejected) return 6;
+
+    const auto manualNv12HdrOff = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, false,
+        CaptureFormatPreference::ManualNV12);
+    if (manualNv12HdrOff.desiredCaptureIsP010 ||
+        manualNv12HdrOff.reopenCapture || manualNv12HdrOff.hdrRejected) return 7;
+
+    const auto manualP010HdrOff = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::P010, false,
+        CaptureFormatPreference::ManualP010);
+    if (!manualP010HdrOff.desiredCaptureIsP010 ||
+        manualP010HdrOff.reopenCapture || !manualP010HdrOff.sourceIsHDR10 ||
+        !manualP010HdrOff.sdrFromHdrTonemap) return 8;
+
+    const auto manualP010HdrOn = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::P010, true,
+        CaptureFormatPreference::ManualP010);
+    if (!manualP010HdrOn.desiredCaptureIsP010 ||
+        manualP010HdrOn.reopenCapture || !manualP010HdrOn.sourceIsHDR10 ||
+        manualP010HdrOn.sdrFromHdrTonemap) return 9;
+
+    const auto autoP010HdrOff = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::P010, false,
+        CaptureFormatPreference::Auto);
+    if (!autoP010HdrOff.desiredCaptureIsP010 ||
+        autoP010HdrOff.reopenCapture || !autoP010HdrOff.sourceIsHDR10 ||
+        !autoP010HdrOff.sdrFromHdrTonemap) return 10;
+
+    // Auto P010 negotiation failing to NV12 remains a genuine P010 retry
+    // decision, not the manual-NV12 policy rejection.
+    const auto autoP010NegotiatedAsNv12 = DecideGc553ProOutputPolicy(
+        NegotiatedCaptureFormatKind::NV12, true,
+        CaptureFormatPreference::Auto);
+    if (!autoP010NegotiatedAsNv12.reopenCapture ||
+        autoP010NegotiatedAsNv12.hdrRejected) return 11;
+
+    std::cout << "capture output policy tests passed\n";
+    return 0;
+}

@@ -2,6 +2,7 @@
 #include "WebViewSettings.h"
 #include "game_database.h"
 #include "localization.h"
+#include "capture_output_policy.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
@@ -42,8 +43,32 @@ static std::wstring P010SelectionWarning(const P010SelectionNotice& notice)
     std::wstringstream text;
     text << L"HDR requested, but matching P010 mode is unavailable; using native P010 "
          << notice.width << L"x" << notice.height << L" @ "
-         << notice.fps << L" FPS.";
+         << (notice.fpsNumerator > 0 ? notice.fpsNumerator : notice.fps)
+         << L"/" << (notice.fpsNumerator > 0 ? notice.fpsDenominator : 1)
+         << L" FPS.";
     return text.str();
+}
+
+static CaptureFormatPreference FormatPreferenceForOverride(
+    const CaptureFormatOverride& formatOverride)
+{
+    if (formatOverride.format.empty()) {
+        return CaptureFormatPreference::Auto;
+    }
+    if (formatOverride.format == L"NV12") {
+        return CaptureFormatPreference::ManualNV12;
+    }
+    if (formatOverride.format == L"P010") {
+        return CaptureFormatPreference::ManualP010;
+    }
+    return CaptureFormatPreference::ManualOther;
+}
+
+static std::wstring ManualFormatHDRWarning(const std::wstring& format)
+{
+    return Localization::Instance().Format(
+        L"toast.manualFormatHdrRequiresP010",
+        {{L"format", format}});
 }
 
 void Application::UpdateCaptureColorInterpretation(const std::wstring& deviceName) {
@@ -523,6 +548,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Existing Elgato auto-detection remains unchanged. GC553Pro is the one
     // explicit non-Elgato exception and uses only the manual HDR preference.
     const bool userWantsHDR = m_config && m_config->hdrEnabled;
+    const CaptureFormatOverride configuredOverride =
+        m_config ? m_config->GetOverride(chosen.name) : CaptureFormatOverride{};
+    const CaptureFormatPreference formatPreference =
+        FormatPreferenceForOverride(configuredOverride);
 
     // Source-ID auto-tonemap heuristic: when direct HDR signal detection
     // isn't available AND the connected source is identified as a known
@@ -562,7 +591,18 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     //   hdr_enabled config.
     bool useP010;
     if (m_isGC553Pro) {
-        useP010 = userWantsHDR;
+        const auto startupPolicy = DecideGc553ProOutputPolicy(
+            NegotiatedCaptureFormatKind::Other,
+            userWantsHDR,
+            formatPreference);
+        useP010 = startupPolicy.desiredCaptureIsP010;
+        if (startupPolicy.hdrRejected) {
+            m_config->hdrEnabled = false;
+            const std::wstring warning = ManualFormatHDRWarning(
+                configuredOverride.format);
+            AppLog(L"Initialize: " + warning);
+            ShowToast(warning, std::chrono::milliseconds(8000));
+        }
     } else if (m_is4KS) {
         useP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
     } else {
@@ -630,11 +670,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     {
         CaptureDevice::OverrideSpec ov;
         if (m_config) {
-            const CaptureFormatOverride cv = m_config->GetOverride(chosen.name);
-            ov.width  = cv.width;
-            ov.height = cv.height;
-            ov.fps    = cv.fps;
-            ov.format = cv.format;
+            ov.width  = configuredOverride.width;
+            ov.height = configuredOverride.height;
+            ov.fps    = configuredOverride.fps;
+            ov.format = configuredOverride.format;
         }
 
         // 4K S HDR resolution clamp: when the HDR pipeline is selected
@@ -3025,47 +3064,53 @@ bool Application::ReconcileCaptureFormat(bool force)
         (void)titleDirty;
     }
 
-    // Capture format selection: P010 whenever the source is HDR10, regardless
-    // of the user's HDR-rendering preference. When the user has HDR rendering
-    // off but the source is HDR10, the P010 shader path does an in-shader
-    // PQ -> linear -> BT.709 -> Reinhard -> sRGB tonemap to the SDR backbuffer.
+    // Keep the capture-format policy separate from the output-mode policy.
+    // For GC553Pro, GetOutputFormat().subtype is the source of truth for the
+    // stream that is actually running; RequestP010()/IsP010Requested() only
+    // describe a future Open attempt and must not drive this decision.
     //
-    // Why not switch to NV12 when the user wants SDR output? Two reasons:
-    //   1) The Elgato hardware tonemap toggle (IKsPropertySet "TonemapEnable")
-    //      reliably turns OFF at init time but does NOT reliably turn back ON
-    //      mid-session on this firmware: Set() returns S_OK but the card
-    //      keeps passing raw HDR10. So NV12 + raw HDR10 codes interpreted as
-    //      sRGB BT.709 gives a green cast (the v1.0.0 bug that drove this design).
-    //   2) Tonemapping in shader gives 10-bit precision through the
-    //      conversion (P010 source) and full control over the operator,
-    //      which is better than the Elgato's baked-in tonemap anyway.
-    //
-    // For non-HDR sources the NV12 path still applies because P010 would
-    // waste bandwidth (24MB/frame vs 12MB/frame at 4K).
-    //
-    // When HDR detection is unavailable (4K S), fall back to trusting the
-    // user's hdrEnabled flag, same as Initialize.
-    //
-    // Existing Elgato detection policy remains unchanged. GC553Pro is the one
-    // manual-only exception and still relies on native MF capability.
+    // An already negotiated P010 stream is retained when HDR output is turned
+    // off. The renderer's existing P010 HDR-to-SDR path handles that output
+    // mode, so no Media Foundation reader restart is needed.
     const bool userWantsHDR = m_config->hdrEnabled;
-    // Same 4K S vs 4K Pro split as Initialize:
-    //   4K S: wantP010 only when source HDR AND user opts in (resolution
-    //         clamp to 1080p is the trade-off; opting out keeps 4K NV12
-    //         with card-side tonemap).
-    //   4K Pro / non-Elgato detection: existing logic (P010 whenever
-    //         source HDR, shader handles SDR tonemap when user wants SDR).
+    const CaptureFormat negotiatedFormat = m_captureDevice->GetOutputFormat();
+    const NegotiatedCaptureFormatKind actualCaptureFormat =
+        IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_P010)
+            ? NegotiatedCaptureFormatKind::P010
+            : (IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_NV12)
+                   ? NegotiatedCaptureFormatKind::NV12
+                   : NegotiatedCaptureFormatKind::Other);
+    const CaptureFormatOverride configuredOverride =
+        m_config->GetOverride(m_currentDeviceInfo.name);
+    const CaptureFormatPreference formatPreference =
+        FormatPreferenceForOverride(configuredOverride);
+
     bool wantP010;
+    Gc553ProOutputPolicy gc553ProPolicy{};
     if (m_isGC553Pro) {
-        wantP010 = userWantsHDR;
+        gc553ProPolicy = DecideGc553ProOutputPolicy(
+            actualCaptureFormat, userWantsHDR, formatPreference);
+        wantP010 = gc553ProPolicy.desiredCaptureIsP010;
+        if (gc553ProPolicy.hdrRejected) {
+            m_config->hdrEnabled = false;
+            const std::wstring warning = ManualFormatHDRWarning(
+                configuredOverride.format);
+            AppLog(L"Reconcile: " + warning);
+            ShowToast(warning, std::chrono::milliseconds(8000));
+        }
     } else if (m_is4KS) {
+        // Existing Elgato 4K S policy is intentionally unchanged.
         wantP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
     } else {
+        // Existing Elgato HDR source policy is intentionally unchanged.
         wantP010 = isElgato &&
                    (m_sourceIsHDR10 ||
                     (userWantsHDR && !m_hdrDetectionAvailable));
     }
-    const bool isP010       = m_captureDevice->IsP010Requested();
+    const bool actualIsP010 = actualCaptureFormat == NegotiatedCaptureFormatKind::P010;
+    const bool formatReopenNeeded = m_isGC553Pro
+        ? gc553ProPolicy.reopenCapture
+        : (wantP010 != actualIsP010);
 
     // Run reaches this decision every render iteration. A failed Open can
     // leave the requested format equal to wantP010 while capture is stopped;
@@ -3088,21 +3133,24 @@ bool Application::ReconcileCaptureFormat(bool force)
     const auto retryNow = std::chrono::steady_clock::now();
     if (captureStopped && !force && retryNow < m_nextCaptureRetry) return false;
 
-    if (wantP010 == isP010 && !force && !captureStopped) {
-        // Device is already in the format the current state dictates.
-        // The renderer-side flag updates (m_hdrEnabled, sourceIsHDR10) flow
-        // through the cbuffer every frame, so the shader picks up the
-        // SDR-from-HDR branch without needing a capture-format swap.
-        // Cheap no-op: this method runs every reconcile trigger.
+    if (!formatReopenNeeded && !force && !captureStopped) {
+        // The capture stream already has the required format. In particular,
+        // P010 + HDR OFF remains P010 and is rendered through the existing
+        // HDR-to-SDR tone-map path; the renderer-side HDR output switch below
+        // is independent of this capture-side no-op.
         return false;
     }
 
     m_nextCaptureRetry = retryNow + std::chrono::milliseconds(1000);
 
-    if (force && wantP010 == isP010) {
+    if (force && !formatReopenNeeded) {
         AppLog(wantP010
             ? L"Reconcile: forced reopen, staying on P010 HDR10"
             : L"Reconcile: forced reopen, staying on SDR");
+    } else if (!formatReopenNeeded && captureStopped) {
+        AppLog(actualIsP010
+            ? L"Reconcile: capture stopped, reopening the negotiated P010 stream"
+            : L"Reconcile: capture stopped, reopening the negotiated SDR stream");
     } else {
         AppLog(wantP010
             ? L"Reconcile: capture format change, SDR -> P010 HDR10"

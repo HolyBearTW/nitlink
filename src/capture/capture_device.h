@@ -25,6 +25,8 @@ struct CaptureFormat {
     uint32_t width  = 3840;
     uint32_t height = 2160;
     uint32_t fps    = 60;
+    uint32_t fpsNumerator = 60;
+    uint32_t fpsDenominator = 1;
     uint32_t stride = 0; // bytes per row
     GUID     subtype{};  // MF media subtype (NV12, YUY2, RGB32, etc.)
     // Row order of the captured frames. Media Foundation defaults to
@@ -70,6 +72,8 @@ struct P010SelectionNotice {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t fps = 0;
+    uint32_t fpsNumerator = 0;
+    uint32_t fpsDenominator = 1;
 };
 
 // One native media type as exposed by the capture source. Populated during
@@ -228,10 +232,6 @@ private:
     // thread while no capture worker is running. Other threads do NOT read this
     // directly; they read m_publishedFormat via GetOutputFormat().
     CaptureFormat   m_format;
-
-    // Native GC553Pro auto selection retains the exact rate for the reader
-    // request; the integer FPS used by the UI cannot represent 59.94 Hz.
-    ComPtr<IMFMediaType> m_nativeP010Type;
 
     // Thread-safe published copy of m_format, committed by PublishFormat() and
     // read under m_formatMutex by GetOutputFormat(). Decouples the multi-field
