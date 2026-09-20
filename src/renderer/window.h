@@ -77,6 +77,7 @@ public:
 
     HWND GetHWND() const { return m_hwnd; }
     std::pair<uint32_t, uint32_t> GetClientSize() const;
+    std::pair<uint32_t, uint32_t> GetWindowedClientSize() const { return m_windowedClientSize; }
     bool WasResized() const { return m_wasResized; }
     void AcknowledgeResize() { m_wasResized = false; }
     // WM_MOVE flag, set by WndProc on every move tick while the user
@@ -106,6 +107,7 @@ private:
     bool       m_wasMoved = false;
     RECT       m_windowedRect{}; // Stored position for fullscreen restore
     DWORD      m_windowedStyle = 0;
+    std::pair<uint32_t, uint32_t> m_windowedClientSize{};
 
     // PiP state
     bool     m_isPiP = false;

@@ -178,4 +178,12 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/src
     )
     add_test(NAME p010_format_selector COMMAND NitLinkP010SelectorTests)
+    add_executable(NitLinkWindowSizeTests
+        tests/window_size_tests.cpp
+        src/renderer/window.cpp
+        src/app/config.cpp
+    )
+    target_include_directories(NitLinkWindowSizeTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkWindowSizeTests PRIVATE user32 gdi32 dwmapi)
+    add_test(NAME window_size_persistence COMMAND NitLinkWindowSizeTests)
 endif()
