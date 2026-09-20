@@ -21,6 +21,8 @@ window.NitLinkLocales['en-US'] = {
   'section.presentation': 'Presentation',
   'section.frameDelivery': 'Frame delivery',
   'row.lowLatency': 'Low-Latency Mode',
+  'row.preventSleep': 'Prevent sleep',
+  'tooltip.preventSleep': 'Keeps the display and PC awake while video is visible, including paused games. Stops when NitLink is minimized, hidden, showing No signal or closed. Turn off to use normal Windows idle sleep settings.',
   'chip.recommended': 'Recommended',
   'row.presentPacing': 'Present Pacing',
   'value.displayRefresh': 'Display refresh',

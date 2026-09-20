@@ -342,6 +342,14 @@
             </div>
           </div>
 
+          <div class="row" data-action="togglePreventSleep"
+            data-i18n-title="tooltip.preventSleep">
+            <span class="row-name" data-i18n="row.preventSleep"></span>
+            <div class="row-right">
+              <div class="toggle" id="toggle-prevent-sleep"></div>
+            </div>
+          </div>
+
           <div class="row" data-action="cyclePresentPacing"
             data-i18n-title="tooltip.presentPacing">
             <span class="row-name" data-i18n="row.presentPacing"></span>
@@ -1119,6 +1127,7 @@
       setToggle('toggle-color', s.colorExpansion);
       setToggle('toggle-nis', s.nisEnabled);
       setToggle('toggle-low-latency', s.lowLatency);
+      setToggle('toggle-prevent-sleep', s.preventSleep);
       if (s.presentPacing) {
         setText('pacing-val',
           s.presentPacing === 'unique'   ? t('value.sourceFrameRate') :

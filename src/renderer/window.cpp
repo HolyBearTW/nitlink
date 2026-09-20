@@ -20,10 +20,12 @@ std::pair<int, int> ScalePiPSize(double width, double aspect, int maxWidth, int 
 }
 }
 
-Window::Window() = default;
+Window::Window(PlaybackPowerRequest::SetStateFn setPowerState)
+    : m_playbackPower(setPowerState) {}
 
 Window::~Window()
 {
+    SetVideoAvailable(false);
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
@@ -100,6 +102,25 @@ void Window::Show(int nCmdShow)
 {
     ShowWindow(m_hwnd, nCmdShow);
     UpdateWindow(m_hwnd);
+    UpdatePlaybackPower();
+}
+
+void Window::SetPreventSleep(bool enabled)
+{
+    m_preventSleep = enabled;
+    UpdatePlaybackPower();
+}
+
+void Window::SetVideoAvailable(bool available)
+{
+    m_videoAvailable = available;
+    UpdatePlaybackPower();
+}
+
+void Window::UpdatePlaybackPower()
+{
+    m_playbackPower.SetActive(m_preventSleep && m_videoAvailable && m_hwnd &&
+                             IsWindowVisible(m_hwnd) && !IsIconic(m_hwnd));
 }
 
 void Window::SetTitle(const std::wstring& title)
@@ -511,6 +532,10 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         break;
 
     case WM_SIZE:
+        if (self) {
+            if (wParam == SIZE_MINIMIZED) self->m_playbackPower.SetActive(false);
+            else self->UpdatePlaybackPower();
+        }
         // Set the resize flag for any size change EXCEPT minimize (which
         // gives 0x0 dimensions and would crash the renderer)
         if (self && wParam != SIZE_MINIMIZED) {
@@ -524,6 +549,17 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             // through this path and trigger a clean resize on the next frame.
         }
         return 0;
+
+    case WM_SHOWWINDOW:
+        if (self) {
+            if (!wParam) self->m_playbackPower.SetActive(false);
+            else self->UpdatePlaybackPower();
+        }
+        break;
+
+    case WM_SYSCOMMAND:
+        if (self && self->m_playbackPower.SuppressesScreenSaver(wParam)) return 0;
+        break;
 
     case WM_MOVE:
         // The main window moved on screen. The renderer doesn't care about
@@ -660,6 +696,7 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         break;
 
     case WM_DESTROY:
+        if (self) self->SetVideoAvailable(false);
         PostQuitMessage(0);
         return 0;
 

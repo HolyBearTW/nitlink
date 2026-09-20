@@ -20,6 +20,8 @@ window.NitLinkLocales['zh-TW'] = {
   'section.presentation': '畫面呈現',
   'section.frameDelivery': '畫面傳送',
   'row.lowLatency': '低延遲模式',
+  'row.preventSleep': '防止睡眠',
+  'tooltip.preventSleep': '顯示影像時防止螢幕關閉及電腦進入睡眠，遊戲暫停時也適用。NitLink 最小化、隱藏、顯示「無訊號」或關閉時會停止。關閉此選項即可使用 Windows 原有的閒置睡眠設定。',
   'chip.recommended': '建議',
   'row.presentPacing': '畫面呈現節奏',
   'value.displayRefresh': '顯示器更新率',

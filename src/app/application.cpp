@@ -291,6 +291,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(L"Initialize: Window::Create FAILED");
         return false;
     }
+    m_window->SetPreventSleep(m_config->preventSleep);
     m_window->Show(nCmdShow);
     AppLog(L"Initialize: window created and shown");
 
@@ -1008,6 +1009,12 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             m_config->Save("nitlink.json");
             AppLog(m_lowLatency ? L"Low-Latency ON (F1): present-on-arrival"
                                 : L"Low-Latency OFF (F1): VRR/Smooth pacing");
+            return;
+        }
+        if (action == L"togglePreventSleep" && m_config && m_window) {
+            m_config->preventSleep = !m_config->preventSleep;
+            m_window->SetPreventSleep(m_config->preventSleep);
+            m_config->Save("nitlink.json");
             return;
         }
         if (action == L"setVolume" && m_config && m_audioRouter) {
@@ -1728,6 +1735,7 @@ void Application::Run()
         }
         const bool deviceLost = !m_renderer || m_renderer->ConsumeDeviceLost();
         if (deviceLost) {
+            m_window->SetVideoAvailable(false);
             if (!RecoverFromDeviceLost()) {
                 Sleep(250);
                 continue;
@@ -1957,6 +1965,9 @@ void Application::Run()
         // state changes. The render block below reads showNoSignalNow at
         // both the HDR and SDR no-signal trigger sites.
         const bool showNoSignalNow = ShouldShowNoSignal();
+        const bool videoCovered = m_webviewSettings && m_webviewSettings->IsVisible() &&
+                                  m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
+        m_window->SetVideoAvailable(m_hasEverReceivedFrame && !showNoSignalNow && !videoCovered);
 
         // 4K Pro source timing (props 210 and 208) needs a live HDMI signal.
         // UpdateWindowTitle only composes cached state, so a startup read with
@@ -2570,6 +2581,7 @@ void Application::Run()
 void Application::Shutdown()
 {
     m_running = false;
+    if (m_window) m_window->SetVideoAvailable(false);
     m_4kxPoller.Stop();
 
     // Stop the HDR source poller FIRST. Its worker thread can be mid-call
@@ -3913,6 +3925,7 @@ void Application::PushSettingsState()
          : m_config->presentPacing == kPacingCaptured ? L"captured"
                                                       : L"refresh") << L"\",";
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
+    js << L"\"preventSleep\":"      << (m_config->preventSleep      ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"pipOpacity\":"        << m_config->pipOpacity         << L",";

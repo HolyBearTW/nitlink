@@ -74,6 +74,7 @@ NitLink is NOT for you if:
 - **HDR-aware HUD overlay**: fps, latency, pipeline status. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
 - **WASAPI audio routing** with volume + mute.
 - **Borderless fullscreen** and **picture-in-picture**.
+- **Prevent sleep while playing.** Enabled by default while captured video is visible, including paused games. Releases when minimized, hidden, showing No signal or closed. Turn off **Prevent sleep** in F1 to keep normal Windows idle sleep behavior. Windows power settings are not changed; manual sleep and policy-enforced screen locking remain available.
 - **Discord Rich Presence** showing playing NitLink. Uses Discord's local IPC pipe only; NitLink itself makes no network connections.
 - **Multi-device source picker.** Live capture-device list in the F1 settings sidebar. Click a connected device to switch without restarting; the selection persists. Generic devices remain SDR-only unless they have an explicit capture policy, such as the GC553Pro manual HDR/P010 path.
 - **Smart signal handling.** Brief HDMI handshake windows (PS5 boot logo, source switch, SDR ↔ HDR transitions) keep showing the last good frame instead of the card's NO SIGNAL placeholder. Real signal loss is detected by format-tagged content fingerprints with a temporal-stability gate.

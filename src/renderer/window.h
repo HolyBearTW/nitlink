@@ -5,6 +5,7 @@
 #include <utility>
 #include <cstdint>
 #include <functional>
+#include "playback_power.h"
 
 namespace NitLink {
 
@@ -28,7 +29,7 @@ public:
         std::function<void(int vk)>                 onKeyDown;
     };
 
-    Window();
+    explicit Window(PlaybackPowerRequest::SetStateFn setPowerState = ::SetThreadExecutionState);
     ~Window();
 
     bool Create(HINSTANCE hInstance, const Desc& desc);
@@ -38,6 +39,9 @@ public:
     void SetFullscreen(bool fullscreen);
     void SetPiP(bool enabled, uint32_t width, uint32_t height, float opacity);
     bool SetPiPOpacity(float opacity);
+    void SetPreventSleep(bool enabled);
+    void SetVideoAvailable(bool available);
+    bool IsPreventingSleep() const { return m_playbackPower.IsActive(); }
 
     // Sets where SetPiP will position the PiP window the next time it
     // enters PiP mode. Pass -1 / -1 to fall back to the default
@@ -93,6 +97,7 @@ public:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
+    void UpdatePlaybackPower();
     bool GetPiPWorkArea(RECT& work) const;
     bool ApplyPiPRect(const RECT& rect);
     int HitTestPiPResize(POINT screenPoint) const;
@@ -101,6 +106,9 @@ private:
     void EndPiPResize();
 
     HWND       m_hwnd = nullptr;
+    PlaybackPowerRequest m_playbackPower;
+    bool m_preventSleep = true;
+    bool m_videoAvailable = false;
     HINSTANCE  m_hInstance = nullptr;
     bool       m_isFullscreen = false;
     bool       m_wasResized = false;

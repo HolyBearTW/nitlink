@@ -58,6 +58,7 @@ set(NITLINK_SOURCES
     src/renderer/hdr_tone_map_hlsl.h
     src/renderer/window.cpp
     src/renderer/window.h
+    src/renderer/playback_power.h
     src/input/hotkey_manager.cpp
     src/input/hotkey_manager.h
     src/audio/audio_router.cpp
@@ -199,4 +200,13 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkWindowSizeTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(NitLinkWindowSizeTests PRIVATE user32 gdi32 dwmapi)
     add_test(NAME window_size_persistence COMMAND NitLinkWindowSizeTests)
+
+    add_executable(NitLinkPlaybackPowerTests
+        tests/playback_power_tests.cpp
+        src/renderer/window.cpp
+        src/app/config.cpp
+    )
+    target_include_directories(NitLinkPlaybackPowerTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkPlaybackPowerTests PRIVATE user32 gdi32 dwmapi)
+    add_test(NAME playback_power COMMAND NitLinkPlaybackPowerTests)
 endif()

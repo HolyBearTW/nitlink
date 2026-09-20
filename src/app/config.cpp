@@ -152,6 +152,7 @@ bool Config::Load(const std::string& path)
             sawLegacyVrrPacing = true;
         }
         if (key == "low_latency")     lowLatency = ParseBool(val);
+        if (key == "prevent_sleep")  preventSleep = ParseBool(val);
         if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
         if (key == "aspect_ratio")   aspectRatio  = val.substr(0, 16);
         if (key == "panel_side")     panelSide    = val.substr(0, 8);
@@ -365,6 +366,10 @@ bool Config::Save(const std::string& path)
     file << "# one refresh older. The present is tearing-allowed either way;\n";
     file << "# false only adds input lag. Toggle from the F1 panel or with Alt+L.\n";
     file << "low_latency = " << (lowLatency ? "true" : "false") << "\n\n";
+
+    file << "# Keep the display and PC awake while video is visible.\n";
+    file << "# Disabled while minimized, hidden or showing No signal.\n";
+    file << "prevent_sleep = " << (preventSleep ? "true" : "false") << "\n\n";
 
     file << "# Present-rate cap in Hz for the low-latency present (default 0)\n";
     file << "# 0 = automatic: monitor refresh minus 3, when that is at least the\n";
