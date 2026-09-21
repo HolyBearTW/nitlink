@@ -4,6 +4,8 @@
 
 using NitLink::CaptureFormatPreference;
 using NitLink::DecideGc553ProOutputPolicy;
+using NitLink::ApplyManualFormatPreferenceToNonGcPolicy;
+using NitLink::ScopedNegotiatedCaptureFormat;
 using NitLink::NegotiatedCaptureFormatKind;
 
 int main()
@@ -74,6 +76,24 @@ int main()
         CaptureFormatPreference::Auto);
     if (!autoP010NegotiatedAsNv12.reopenCapture ||
         autoP010NegotiatedAsNv12.hdrRejected) return 11;
+
+    // Non-GC553Pro source detection must not override an accepted manual SDR
+    // format and create an HDR/P010 reopen loop.
+    if (ApplyManualFormatPreferenceToNonGcPolicy(
+            true, CaptureFormatPreference::ManualNV12)) return 12;
+    if (!ApplyManualFormatPreferenceToNonGcPolicy(
+            false, CaptureFormatPreference::ManualP010)) return 13;
+    if (!ApplyManualFormatPreferenceToNonGcPolicy(
+            true, CaptureFormatPreference::Auto)) return 14;
+
+    // A negotiated subtype from a previous device is not eligible for the
+    // current policy; a same-device session may retain it.
+    if (ScopedNegotiatedCaptureFormat(false,
+                                      NegotiatedCaptureFormatKind::P010) !=
+        NegotiatedCaptureFormatKind::Other) return 15;
+    if (ScopedNegotiatedCaptureFormat(true,
+                                      NegotiatedCaptureFormatKind::P010) !=
+        NegotiatedCaptureFormatKind::P010) return 16;
 
     std::cout << "capture output policy tests passed\n";
     return 0;

@@ -175,7 +175,12 @@ CaptureDevice::~CaptureDevice()
 
 bool CaptureDevice::Open(const DeviceInfo& device)
 {
+    // Open starts a new reader/session. Do not let a same-device reopen reuse
+    // the previous session's negotiated subtype before this Open() publishes
+    // its own readback result.
+    ClearPublishedFormat();
     m_deviceName = device.name;
+    m_deviceIdentity = device.symbolicLink;
     m_needsReopen = false;
     m_p010SelectionNotice = {};
 
@@ -185,6 +190,9 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         if (m_dshow->Open(device)) {
             std::lock_guard<std::mutex> lock(m_formatMutex);
             m_publishedFormat = m_dshow->GetOutputFormat();
+            m_hasPublishedFormat = true;
+            m_publishedDeviceName = device.name;
+            m_publishedDeviceIdentity = device.symbolicLink;
             return true;
         }
         // DirectShow could not open this device. Release the failed backend
@@ -347,7 +355,11 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         // just resolution without specifying every axis.
         if (m_overrideSpec.width  > 0) m_format.width  = m_overrideSpec.width;
         if (m_overrideSpec.height > 0) m_format.height = m_overrideSpec.height;
-        if (m_overrideSpec.fps > 0) {
+        if (m_overrideSpec.fpsNumerator > 0 &&
+            m_overrideSpec.fpsDenominator > 0) {
+            SetFormatFrameRate(m_format, m_overrideSpec.fpsNumerator,
+                               m_overrideSpec.fpsDenominator);
+        } else if (m_overrideSpec.fps > 0) {
             SetFormatFrameRate(m_format, m_overrideSpec.fps, 1);
         }
 
@@ -429,13 +441,13 @@ bool CaptureDevice::Open(const DeviceInfo& device)
             // a request for "4K NV12" without specifying "at 60" yields 4K@30
             // silently. m_format.fps was populated by NegotiateFormat (or
             // overridden above) and reflects what the caller wants.
-            if (m_format.fpsNumerator > 0 && m_format.fpsDenominator > 0) {
-                MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
-                                    m_format.fpsNumerator,
-                                    m_format.fpsDenominator);
-            } else if (m_format.fps > 0) {
-                MFSetAttributeRatio(outputType.Get(), MF_MT_FRAME_RATE,
-                                    m_format.fps, 1);
+            const HRESULT rateHr = SetOutputFrameRate(outputType.Get());
+            if (FAILED(rateHr)) {
+                std::wstringstream ss;
+                ss << L"Failed to set requested output frame rate (HRESULT 0x"
+                   << std::hex << rateHr << L")";
+                DebugLog(ss.str());
+                continue;
             }
 
             if (m_requestP010) {
@@ -579,6 +591,7 @@ bool CaptureDevice::Open(const DeviceInfo& device)
             SetFormatFrameRate(m_format, negotiatedRate.numerator,
                                negotiatedRate.denominator);
         }
+        m_format.subtype = subtype;
 
         // Detect row order empirically. MF_MT_DEFAULT_STRIDE is a signed int32
         // where negative = bottom-up (legacy GDI convention, older drivers),
@@ -612,9 +625,7 @@ bool CaptureDevice::Open(const DeviceInfo& device)
         else                                     ss << L"unknown";
         DebugLog(ss.str());
 
-        if (!(m_requestP010 && IsEqualGUID(subtype, MFVideoFormat_P010))) {
-            m_p010SelectionNotice = {};
-        }
+        UpdateP010SelectionNoticeFromActual(m_format);
 
         // === HDR DIAGNOSTIC ===
         // Query every color-related attribute MF exposes for full visibility
@@ -729,6 +740,18 @@ void CaptureDevice::PublishFormat()
 {
     std::lock_guard<std::mutex> lock(m_formatMutex);
     m_publishedFormat = m_format;
+    m_hasPublishedFormat = true;
+    m_publishedDeviceName = m_deviceName;
+    m_publishedDeviceIdentity = m_deviceIdentity;
+}
+
+void CaptureDevice::ClearPublishedFormat()
+{
+    std::lock_guard<std::mutex> lock(m_formatMutex);
+    m_publishedFormat = {};
+    m_hasPublishedFormat = false;
+    m_publishedDeviceName.clear();
+    m_publishedDeviceIdentity.clear();
 }
 
 HRESULT CaptureDevice::SetOutputFrameRate(IMFMediaType* outputType)
@@ -744,6 +767,22 @@ HRESULT CaptureDevice::SetOutputFrameRate(IMFMediaType* outputType)
                                    m_format.fps, 1);
     }
     return S_OK;
+}
+
+void CaptureDevice::UpdateP010SelectionNoticeFromActual(
+    const CaptureFormat& actualFormat)
+{
+    if (!m_requestP010 || !IsEqualGUID(actualFormat.subtype, MFVideoFormat_P010)) {
+        m_p010SelectionNotice = {};
+        return;
+    }
+    if (m_p010SelectionNotice.available) {
+        m_p010SelectionNotice.width = actualFormat.width;
+        m_p010SelectionNotice.height = actualFormat.height;
+        m_p010SelectionNotice.fps = actualFormat.fps;
+        m_p010SelectionNotice.fpsNumerator = actualFormat.fpsNumerator;
+        m_p010SelectionNotice.fpsDenominator = actualFormat.fpsDenominator;
+    }
 }
 
 bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
@@ -1088,6 +1127,8 @@ bool CaptureDevice::LogAvailableFormats()
             af.width      = w;
             af.height     = h;
             af.fps        = fps;
+            af.fpsNumerator = rate.numerator;
+            af.fpsDenominator = rate.denominator;
             af.subtype    = subtype;
             af.interlaced = (interlace != MFVideoInterlace_Progressive);
             m_availableFormats.push_back(af);
@@ -1112,6 +1153,10 @@ bool CaptureDevice::LogAvailableFormats()
 
 void CaptureDevice::Close()
 {
+    // The symbolic link identifies the physical device, but not the lifetime
+    // of the active Media Foundation session. Clear the published snapshot so
+    // a later same-device Open() starts with an unknown negotiated subtype.
+    ClearPublishedFormat();
     m_availableFormats.clear();
     if (m_dshow) {
         m_dshow->Close();

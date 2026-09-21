@@ -20,6 +20,37 @@ enum class CaptureFormatPreference {
     ManualOther,
 };
 
+// Keep the existing non-GC553Pro source-detection policy intact, except when
+// the user has explicitly pinned a manual pixel format. A manual SDR format
+// is an accepted constraint and must not be turned into a repeated P010
+// request merely because the HDMI source reports HDR10.
+constexpr bool ApplyManualFormatPreferenceToNonGcPolicy(
+    bool sourcePolicyWantsP010,
+    CaptureFormatPreference preference) noexcept
+{
+    if (preference == CaptureFormatPreference::ManualNV12 ||
+        preference == CaptureFormatPreference::ManualOther) {
+        return false;
+    }
+    if (preference == CaptureFormatPreference::ManualP010) {
+        return true;
+    }
+    return sourcePolicyWantsP010;
+}
+
+// A published negotiated format can only be reused by the policy when it
+// belongs to the currently selected capture device/session. A device switch
+// must begin with an unknown negotiated subtype until the new Open() publishes
+// its own format.
+constexpr NegotiatedCaptureFormatKind ScopedNegotiatedCaptureFormat(
+    bool belongsToCurrentDeviceSession,
+    NegotiatedCaptureFormatKind actualFormat) noexcept
+{
+    return belongsToCurrentDeviceSession
+        ? actualFormat
+        : NegotiatedCaptureFormatKind::Other;
+}
+
 struct Gc553ProOutputPolicy {
     bool desiredCaptureIsP010 = false;
     bool reopenCapture = false;

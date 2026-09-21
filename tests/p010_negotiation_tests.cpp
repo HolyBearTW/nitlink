@@ -27,6 +27,40 @@ struct CaptureDeviceFormatTests {
     {
         return device.SetOutputFrameRate(output);
     }
+
+    static void SeedP010Notice(CaptureDevice& device,
+                               const P010SelectionNotice& notice)
+    {
+        device.m_p010SelectionNotice = notice;
+    }
+
+    static void UpdateNoticeFromActual(CaptureDevice& device,
+                                       const CaptureFormat& actual)
+    {
+        device.RequestP010(true);
+        device.UpdateP010SelectionNoticeFromActual(actual);
+    }
+
+    static P010SelectionNotice Notice(const CaptureDevice& device)
+    {
+        return device.m_p010SelectionNotice;
+    }
+
+    static void SeedPublishedP010(CaptureDevice& device,
+                                  const DeviceInfo& info)
+    {
+        device.m_deviceName = info.name;
+        device.m_deviceIdentity = info.symbolicLink;
+        device.m_format = {};
+        device.m_format.subtype = MFVideoFormat_P010;
+        device.PublishFormat();
+    }
+
+    static bool HasPublishedFormatForDevice(const CaptureDevice& device,
+                                            const DeviceInfo& info)
+    {
+        return device.HasPublishedFormatForDevice(info);
+    }
 };
 
 } // namespace NitLink
@@ -204,6 +238,64 @@ bool RunChecks()
         pass &= Expect(Access::Negotiate(device, source.Get(), gc553, false),
                        "switch to SDR negotiates");
         pass &= ExpectRate(device, 120, 1, "previous HDR rate cannot leak into SDR");
+    }
+
+    {
+        CaptureDevice device;
+        CaptureDevice::OverrideSpec overrideSpec;
+        overrideSpec.width = 1920;
+        overrideSpec.height = 1080;
+        overrideSpec.fps = 59;
+        overrideSpec.fpsNumerator = 60000;
+        overrideSpec.fpsDenominator = 1001;
+        overrideSpec.format = L"P010";
+        auto source = MakeSource({{{{MFVideoFormat_P010, 1920, 1080,
+                                     60000, 1001}}}});
+        pass &= Expect(Access::Negotiate(device, source.Get(), gc553, true,
+                                         overrideSpec),
+                       "manual fractional override negotiates");
+        pass &= ExpectRate(device, 60000, 1001,
+                           "manual override keeps native 60000/1001");
+    }
+
+    {
+        CaptureDevice device;
+        Access::SeedP010Notice(device, {true, 2560, 1440, 30, 30, 1});
+        CaptureFormat actual;
+        actual.width = 1920;
+        actual.height = 1080;
+        actual.fps = 59;
+        actual.fpsNumerator = 60000;
+        actual.fpsDenominator = 1001;
+        actual.subtype = MFVideoFormat_P010;
+        Access::UpdateNoticeFromActual(device, actual);
+        const auto notice = Access::Notice(device);
+        pass &= Expect(notice.available && notice.width == 1920 &&
+                       notice.height == 1080 && notice.fpsNumerator == 60000 &&
+                       notice.fpsDenominator == 1001,
+                       "P010 selection notice uses actual readback");
+    }
+
+    {
+        const DeviceInfo gc553SessionA{
+            L"AVerMedia GC553Pro", L"\\\\?\\usb#vid_07ca&pid_313a#session", 0};
+        CaptureDevice device;
+        Access::SeedPublishedP010(device, gc553SessionA);
+        pass &= Expect(Access::HasPublishedFormatForDevice(device,
+                                                            gc553SessionA),
+                       "session A publishes P010 for GC553Pro");
+
+        // Close ends session A. A same-device session B must start unknown
+        // until its own Open/readback publishes a format.
+        device.Close();
+        pass &= Expect(!Access::HasPublishedFormatForDevice(device,
+                                                             gc553SessionA),
+                       "same-device session B cannot retain session A format before readback");
+
+        Access::SeedPublishedP010(device, gc553SessionA);
+        pass &= Expect(Access::HasPublishedFormatForDevice(device,
+                                                            gc553SessionA),
+                       "session B may publish its own P010 after readback");
     }
 
     for (const auto name : {L"Elgato Game Capture 4K Pro", L"Generic capture card"}) {

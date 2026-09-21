@@ -33,9 +33,15 @@ struct CaptureFormatOverride {
     uint32_t     height = 0;
     uint32_t     fps    = 0;
     std::wstring format;  // "NV12" / "P010" / "BGRA" / "" for Auto
+    // Preserve the native Media Foundation rational rate. `fps` remains the
+    // integer display/backward-compatibility value; a non-zero numerator is
+    // the wire/config identity used for exact manual selection.
+    uint32_t     fpsNumerator = 0;
+    uint32_t     fpsDenominator = 1;
 
     bool isFullAuto() const {
-        return width == 0 && height == 0 && fps == 0 && format.empty();
+        return width == 0 && height == 0 && fps == 0 &&
+               fpsNumerator == 0 && format.empty();
     }
 };
 

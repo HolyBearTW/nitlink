@@ -673,6 +673,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             ov.width  = configuredOverride.width;
             ov.height = configuredOverride.height;
             ov.fps    = configuredOverride.fps;
+            ov.fpsNumerator = configuredOverride.fpsNumerator;
+            ov.fpsDenominator = configuredOverride.fpsDenominator;
             ov.format = configuredOverride.format;
         }
 
@@ -1196,6 +1198,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             const std::wstring rawW   = extractRaw(L"width");
             const std::wstring rawH   = extractRaw(L"height");
             const std::wstring rawFps = extractRaw(L"fps");
+            const std::wstring rawFpsNumerator = extractRaw(L"fpsNumerator");
+            const std::wstring rawFpsDenominator = extractRaw(L"fpsDenominator");
             const std::wstring fmtStr = extractStr(L"format");
 
             // Clamp each axis to a sane ceiling. These are untrusted bridge
@@ -1215,6 +1219,15 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             cv.width  = parseUint(rawW, 16384);
             cv.height = parseUint(rawH, 16384);
             cv.fps    = parseUint(rawFps, 1000);
+            cv.fpsNumerator = parseUint(rawFpsNumerator, 1000000000);
+            cv.fpsDenominator = parseUint(rawFpsDenominator, 1000000000);
+            if (cv.fpsNumerator > 0) {
+                if (cv.fpsDenominator == 0) cv.fpsDenominator = 1;
+                cv.fps = cv.fpsNumerator / cv.fpsDenominator;
+            } else {
+                cv.fpsDenominator = 1;
+                if (cv.fps > 0) cv.fpsNumerator = cv.fps;
+            }
             cv.format = fmtStr;
             m_config->Save("nitlink.json");
 
@@ -3073,13 +3086,18 @@ bool Application::ReconcileCaptureFormat(bool force)
     // off. The renderer's existing P010 HDR-to-SDR path handles that output
     // mode, so no Media Foundation reader restart is needed.
     const bool userWantsHDR = m_config->hdrEnabled;
+    const bool retainedFormatBelongsToCurrentDevice =
+        m_captureDevice->HasPublishedFormatForDevice(m_currentDeviceInfo);
     const CaptureFormat negotiatedFormat = m_captureDevice->GetOutputFormat();
-    const NegotiatedCaptureFormatKind actualCaptureFormat =
+    const NegotiatedCaptureFormatKind scopedActualCaptureFormat =
         IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_P010)
             ? NegotiatedCaptureFormatKind::P010
             : (IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_NV12)
                    ? NegotiatedCaptureFormatKind::NV12
                    : NegotiatedCaptureFormatKind::Other);
+    const NegotiatedCaptureFormatKind actualCaptureFormat =
+        ScopedNegotiatedCaptureFormat(retainedFormatBelongsToCurrentDevice,
+                                      scopedActualCaptureFormat);
     const CaptureFormatOverride configuredOverride =
         m_config->GetOverride(m_currentDeviceInfo.name);
     const CaptureFormatPreference formatPreference =
@@ -3106,6 +3124,10 @@ bool Application::ReconcileCaptureFormat(bool force)
         wantP010 = isElgato &&
                    (m_sourceIsHDR10 ||
                     (userWantsHDR && !m_hdrDetectionAvailable));
+    }
+    if (!m_isGC553Pro) {
+        wantP010 = ApplyManualFormatPreferenceToNonGcPolicy(
+            wantP010, formatPreference);
     }
     const bool actualIsP010 = actualCaptureFormat == NegotiatedCaptureFormatKind::P010;
     const bool formatReopenNeeded = m_isGC553Pro
@@ -3249,6 +3271,8 @@ bool Application::ReconcileCaptureFormat(bool force)
             ov.width  = cv.width;
             ov.height = cv.height;
             ov.fps    = cv.fps;
+            ov.fpsNumerator = cv.fpsNumerator;
+            ov.fpsDenominator = cv.fpsDenominator;
             ov.format = cv.format;
         }
 
@@ -4004,6 +4028,8 @@ void Application::PushSettingsState()
             js << L"{\"width\":"   << af.width
                << L",\"height\":" << af.height
                << L",\"fps\":"    << af.fps
+               << L",\"fpsNumerator\":" << af.fpsNumerator
+               << L",\"fpsDenominator\":" << af.fpsDenominator
                << L",\"format\":\"" << FormatGuidToString(af.subtype) << L"\"}";
         }
         js << L"],";
@@ -4027,6 +4053,8 @@ void Application::PushSettingsState()
            << L"\"width\":"  << ov.width  << L","
            << L"\"height\":" << ov.height << L","
            << L"\"fps\":"    << ov.fps    << L","
+           << L"\"fpsNumerator\":" << ov.fpsNumerator << L","
+           << L"\"fpsDenominator\":" << ov.fpsDenominator << L","
            << L"\"format\":\"" << ov.format << L"\""
            << L"},";
     }
