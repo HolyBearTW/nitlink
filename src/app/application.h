@@ -164,6 +164,15 @@ private:
     std::wstring ApplyAspectRatio();
     void CycleAspectRatio();
 
+    // Custom No Signal image configuration. This changes only the visual
+    // content drawn after PresentationState::NoSignal is selected; signal
+    // detection and presentation-state policy remain untouched.
+    bool ApplyNoSignalSettings(bool forceReload = false);
+    bool ChooseNoSignalImage();
+    void CycleNoSignalMode();
+    void CycleNoSignalFit();
+    void CycleNoSignalDimImage();
+
     // Pushes the configured panel placement (right, left, or full) to the
     // WebView2 host and returns the label shown in the panel.
     std::wstring ApplyPanelLayout();

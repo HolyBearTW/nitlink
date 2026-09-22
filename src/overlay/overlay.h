@@ -4,10 +4,12 @@
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <dxgi1_2.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 #include <string>
 #include <cstdint>
 #include <deque>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -46,6 +48,14 @@ public:
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
                     IDXGISwapChain1* swapChain, HWND hwnd);
     bool RefreshTextFormats();
+    // Updates only the custom No Signal presentation. The application converts
+    // its UTF-8 config path to UTF-16 before crossing this boundary. Decoding
+    // happens only on settings/reload events, never from DrawNoSignal().
+    bool SetNoSignalSettings(const std::string& mode,
+                             const std::wstring& imagePath,
+                             const std::string& fit,
+                             bool dimImage,
+                             bool forceReload = false);
     void Shutdown();
 
     // Call BEFORE the renderer resizes the swap chain -- releases the D2D bitmap
@@ -111,6 +121,9 @@ private:
     // backbuffer, wrap it with D2D, and stash an SRV for compositing.
     // Used in HDR mode in place of the direct-to-backbuffer path.
     bool CreateOffscreenTarget(uint32_t width, uint32_t height);
+    bool LoadNoSignalImage(const std::wstring& imagePath);
+    bool CreateNoSignalBitmap();
+    bool DrawCustomNoSignalImage(uint32_t windowW, uint32_t windowH);
 
     ID3D11Device*        m_device    = nullptr;
     ID3D11DeviceContext* m_context   = nullptr;
@@ -157,6 +170,24 @@ private:
     ComPtr<IDWriteTextFormat>    m_textFormatBig;
     ComPtr<IDWriteTextFormat>    m_textFormatLabel;
     ComPtr<IDWriteTextFormat>    m_textFormatUnit;
+
+    // WIC decodes once into device-independent premultiplied BGRA pixels. The
+    // D2D bitmap is recreated from this CPU cache after resize, HDR swap-chain
+    // recreation, or device recovery without reopening the image file.
+    ComPtr<IWICImagingFactory>   m_wicFactory;
+    ComPtr<ID2D1Bitmap1>         m_noSignalBitmap;
+    std::vector<uint8_t>         m_noSignalPixels;
+    uint32_t                     m_noSignalImageWidth = 0;
+    uint32_t                     m_noSignalImageHeight = 0;
+    uint32_t                     m_noSignalImageStride = 0;
+    std::wstring                 m_noSignalImagePath;
+    std::wstring                 m_noSignalLastAttemptPath;
+    bool                         m_noSignalLastAttemptFailed = false;
+    std::string                  m_noSignalMode = "default";
+    std::string                  m_noSignalFit = "contain";
+    bool                         m_noSignalDimImage = true;
+    bool                         m_noSignalRouteKnown = false;
+    bool                         m_noSignalUsingCustom = false;
 
     bool m_initialized = false;
 
