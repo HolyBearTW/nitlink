@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace NitLink {
 
 // RequestP010() describes a future Open() attempt. The negotiated subtype
@@ -19,6 +21,20 @@ enum class CaptureFormatPreference {
     ManualP010,
     ManualOther,
 };
+
+// Frame rate is one logical value. Any application-side integer-rate
+// override (including 4K X HDR clamps and follow-source updates) must update
+// the display FPS and the exact rational fields together.
+constexpr void SetIntegerFrameRateFields(
+    uint32_t& fps,
+    uint32_t& fpsNumerator,
+    uint32_t& fpsDenominator,
+    uint32_t value) noexcept
+{
+    fps = value;
+    fpsNumerator = value;
+    fpsDenominator = 1;
+}
 
 // Keep the existing non-GC553Pro source-detection policy intact, except when
 // the user has explicitly pinned a manual pixel format. A manual SDR format
@@ -49,6 +65,30 @@ constexpr NegotiatedCaptureFormatKind ScopedNegotiatedCaptureFormat(
     return belongsToCurrentDeviceSession
         ? actualFormat
         : NegotiatedCaptureFormatKind::Other;
+}
+
+// A non-GC capture stream that honored a non-format override (for example,
+// resolution-only with Format=Auto) may legitimately negotiate NV12 even when
+// source policy prefers P010. Once that concrete fallback is running, the
+// render-loop reconcile must not reopen it every iteration merely because the
+// requested and negotiated subtypes differ. Explicit/forced reconciles still
+// retry the preference, and a fully automatic capture remains policy-driven.
+constexpr bool ShouldReopenNonGcCapture(
+    bool desiredP010,
+    NegotiatedCaptureFormatKind actualFormat,
+    bool actualFormatKnown,
+    CaptureFormatPreference preference,
+    bool hasNonFormatOverride) noexcept
+{
+    const bool actualP010 = actualFormat == NegotiatedCaptureFormatKind::P010;
+    const bool acceptedAutoFallback =
+        preference == CaptureFormatPreference::Auto &&
+        hasNonFormatOverride &&
+        actualFormatKnown &&
+        desiredP010 &&
+        !actualP010;
+
+    return acceptedAutoFallback ? false : desiredP010 != actualP010;
 }
 
 struct Gc553ProOutputPolicy {

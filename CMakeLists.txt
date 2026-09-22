@@ -193,6 +193,13 @@ if(BUILD_TESTING)
     )
     add_test(NAME p010_native_negotiation COMMAND NitLinkP010NegotiationTests)
 
+    add_executable(NitLinkConfigRateTests
+        tests/config_rate_tests.cpp
+        src/app/config.cpp
+    )
+    target_include_directories(NitLinkConfigRateTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME config_rate_migration COMMAND NitLinkConfigRateTests)
+
     add_executable(NitLinkWindowSizeTests
         tests/window_size_tests.cpp
         src/renderer/window.cpp

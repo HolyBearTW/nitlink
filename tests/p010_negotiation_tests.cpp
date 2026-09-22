@@ -260,6 +260,24 @@ bool RunChecks()
 
     {
         CaptureDevice device;
+        CaptureDevice::OverrideSpec legacyOverride;
+        legacyOverride.width = 1920;
+        legacyOverride.height = 1080;
+        legacyOverride.fps = 59;
+        legacyOverride.fpsNumerator = 0;
+        legacyOverride.fpsDenominator = 1;
+        legacyOverride.format = L"P010";
+        auto source = MakeSource({{{{MFVideoFormat_P010, 1920, 1080,
+                                     60000, 1001}}}});
+        pass &= Expect(Access::Negotiate(device, source.Get(), gc553, true,
+                                         legacyOverride),
+                       "legacy integer-only 59 FPS override negotiates");
+        pass &= ExpectRate(device, 60000, 1001,
+                           "legacy 59 FPS resolves to native 60000/1001");
+    }
+
+    {
+        CaptureDevice device;
         Access::SeedP010Notice(device, {true, 2560, 1440, 30, 30, 1});
         CaptureFormat actual;
         actual.width = 1920;

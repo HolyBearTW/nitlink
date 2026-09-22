@@ -165,6 +165,19 @@ static std::wstring FrameRateText(UINT32 numerator, UINT32 denominator)
     return ss.str();
 }
 
+static bool OverrideFormatAcceptsSubtype(const std::wstring& format,
+                                         const GUID& subtype)
+{
+    if (format.empty()) return true;
+    if (format == L"P010") return IsEqualGUID(subtype, MFVideoFormat_P010);
+    if (format == L"NV12") return IsEqualGUID(subtype, MFVideoFormat_NV12);
+    if (format == L"BGRA" || format == L"RGB32") {
+        return IsEqualGUID(subtype, MFVideoFormat_RGB32) ||
+               IsEqualGUID(subtype, MFVideoFormat_ARGB32);
+    }
+    return false;
+}
+
 CaptureDevice::CaptureDevice() = default;
 
 CaptureDevice::~CaptureDevice()
@@ -799,6 +812,8 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
     const bool gamingP010Auto = m_requestP010 &&
                                 m_overrideSpec.isFullAuto() &&
                                 policy.preferHighFpsP010;
+    const bool legacyIntegerRate =
+        m_overrideSpec.fps > 0 && m_overrideSpec.fpsNumerator == 0;
 
     for (DWORD i = 0; i < streamCount; i++) {
         BOOL selected = FALSE;
@@ -827,6 +842,8 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
 
         uint32_t bestWidth = 0, bestHeight = 0, bestFps = 0;
         uint32_t bestFpsNumerator = 0, bestFpsDenominator = 1;
+        uint32_t resolvedLegacyNumerator = 0;
+        uint32_t resolvedLegacyDenominator = 1;
         std::vector<P010Candidate> p010Candidates;
 
         // When the caller requested P010 (HDR10 capture), restrict the
@@ -848,7 +865,6 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
 
             GUID subtype = {};
             if (FAILED(type->GetGUID(MF_MT_SUBTYPE, &subtype))) continue;
-            if (m_requestP010 && !IsEqualGUID(subtype, MFVideoFormat_P010)) continue;
 
             UINT32 w = 0, h = 0;
             if (FAILED(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE,
@@ -860,6 +876,31 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
                 continue;
             }
             UINT32 fps = rate.numerator / rate.denominator;
+
+            // Configs written before rational FPS persistence stored only the
+            // truncated display value (for example 59 for 60000/1001). Resolve
+            // that legacy value against a native mode before any output
+            // request is built. Prefer the highest native rational within the
+            // same integer bucket so a historical 59 choice maps back to
+            // 60000/1001 when the card advertises it.
+            if (legacyIntegerRate &&
+                (m_overrideSpec.width == 0 || w == m_overrideSpec.width) &&
+                (m_overrideSpec.height == 0 || h == m_overrideSpec.height) &&
+                fps == m_overrideSpec.fps &&
+                OverrideFormatAcceptsSubtype(m_overrideSpec.format, subtype)) {
+                const bool betterRate =
+                    resolvedLegacyNumerator == 0 ||
+                    static_cast<uint64_t>(rate.numerator) *
+                            resolvedLegacyDenominator >
+                        static_cast<uint64_t>(resolvedLegacyNumerator) *
+                            rate.denominator;
+                if (betterRate) {
+                    resolvedLegacyNumerator = rate.numerator;
+                    resolvedLegacyDenominator = rate.denominator;
+                }
+            }
+
+            if (m_requestP010 && !IsEqualGUID(subtype, MFVideoFormat_P010)) continue;
 
             if (gamingP010Auto) {
                 p010Candidates.push_back({w, h, rate.numerator,
@@ -933,6 +974,17 @@ bool CaptureDevice::NegotiateFormat(IMFMediaSource* source)
                 return true;
             }
             DebugLog(L"P010 Auto policy found no native P010 candidates");
+        }
+
+        if (legacyIntegerRate && resolvedLegacyNumerator > 0) {
+            m_overrideSpec.fpsNumerator = resolvedLegacyNumerator;
+            m_overrideSpec.fpsDenominator = resolvedLegacyDenominator;
+            std::wstringstream ss;
+            ss << L"Resolved legacy " << m_overrideSpec.fps
+               << L" FPS override to native "
+               << FrameRateText(resolvedLegacyNumerator,
+                                resolvedLegacyDenominator);
+            DebugLog(ss.str());
         }
 
         if (bestWidth > 0) {

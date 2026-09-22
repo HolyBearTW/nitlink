@@ -825,7 +825,37 @@
         const key = rateKey(format);
         return key.endsWith('/1') ? label : `${label} (${key})`;
       };
-      const overrideRateKey = () => rateKey(lastOverride);
+      const overrideRateKey = () => {
+        const direct = rateKey(lastOverride);
+        const legacyFps = Number(lastOverride && lastOverride.fps);
+        const legacyNumerator = Number(lastOverride && lastOverride.fpsNumerator);
+        if (!(legacyFps > 0) || legacyNumerator > 0) return direct;
+
+        // Integer-only persisted preferences predate rational-rate storage.
+        // Resolve their display key against the live native list without
+        // mutating lastOverride, so 59 can select 60000/1001 in the picker
+        // while the C++ negotiator still owns the authoritative migration.
+        const w = Number(lastOverride.width) || 0;
+        const h = Number(lastOverride.height) || 0;
+        const format = typeof lastOverride.format === 'string'
+          ? lastOverride.format : '';
+        const candidates = lastAvailableFormats.filter(f =>
+          RENDERABLE.has(f.format) &&
+          (!w || f.width === w) &&
+          (!h || f.height === h) &&
+          Number(f.fps) === legacyFps &&
+          (!format || f.format === format));
+        if (!candidates.length) return direct;
+
+        candidates.sort((a, b) => {
+          const aRate = Number(a.fpsNumerator || a.fps) /
+            Number(a.fpsDenominator || 1);
+          const bRate = Number(b.fpsNumerator || b.fps) /
+            Number(b.fpsDenominator || 1);
+          return bRate - aRate;
+        });
+        return rateKey(candidates[0]);
+      };
       const uniqueFps = () => {
         // Strict filter: fps options appear only when a resolution is
         // selected AND a renderable format exists at that (resolution,
@@ -1084,13 +1114,26 @@
         lastAvailableFormats = Array.isArray(availableFormats)
           ? availableFormats : [];
         const incoming = override || { width: 0, height: 0, fps: 0, format: '' };
+        // Preserve an explicit zero numerator. Integer-only legacy
+        // preferences intentionally use { fps: 59, fpsNumerator: 0 } so the
+        // capture negotiator can resolve that display bucket against the
+        // card's native rational (for example 60000/1001). Reconstructing
+        // 59/1 here would turn an unresolved legacy preference back into the
+        // exact-rate bug when the user later changes another Source field.
+        const hasIncomingNumerator = Object.prototype.hasOwnProperty.call(
+          incoming, 'fpsNumerator');
+        const hasIncomingDenominator = Object.prototype.hasOwnProperty.call(
+          incoming, 'fpsDenominator');
         lastOverride = {
           width: Number(incoming.width) || 0,
           height: Number(incoming.height) || 0,
           fps: Number(incoming.fps) || 0,
-          fpsNumerator: Number(incoming.fpsNumerator) ||
-            (Number(incoming.fps) || 0),
-          fpsDenominator: Number(incoming.fpsDenominator) || 1,
+          fpsNumerator: hasIncomingNumerator
+            ? (Number(incoming.fpsNumerator) || 0)
+            : (Number(incoming.fps) || 0),
+          fpsDenominator: hasIncomingDenominator
+            ? (Number(incoming.fpsDenominator) || 1)
+            : 1,
           format: typeof incoming.format === 'string' ? incoming.format : ''
         };
         nameEl.textContent = lastActive || t('meta.none');

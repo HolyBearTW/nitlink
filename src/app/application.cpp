@@ -1225,8 +1225,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 if (cv.fpsDenominator == 0) cv.fpsDenominator = 1;
                 cv.fps = cv.fpsNumerator / cv.fpsDenominator;
             } else {
+                // Integer-only payloads are legacy/compatibility input. Keep
+                // the rational unresolved so native-mode negotiation can map
+                // 59 back to 60000/1001 instead of inventing 59/1.
                 cv.fpsDenominator = 1;
-                if (cv.fps > 0) cv.fpsNumerator = cv.fps;
             }
             cv.format = fmtStr;
             m_config->Save("nitlink.json");
@@ -3130,9 +3132,18 @@ bool Application::ReconcileCaptureFormat(bool force)
             wantP010, formatPreference);
     }
     const bool actualIsP010 = actualCaptureFormat == NegotiatedCaptureFormatKind::P010;
+    const bool hasNonFormatOverride =
+        configuredOverride.format.empty() &&
+        (configuredOverride.width > 0 ||
+         configuredOverride.height > 0 ||
+         configuredOverride.fps > 0 ||
+         configuredOverride.fpsNumerator > 0);
     const bool formatReopenNeeded = m_isGC553Pro
         ? gc553ProPolicy.reopenCapture
-        : (wantP010 != actualIsP010);
+        : ShouldReopenNonGcCapture(
+              wantP010, actualCaptureFormat,
+              retainedFormatBelongsToCurrentDevice,
+              formatPreference, hasNonFormatOverride);
 
     // Run reaches this decision every render iteration. A failed Open can
     // leave the requested format equal to wantP010 while capture is stopped;
@@ -3301,7 +3312,9 @@ bool Application::ReconcileCaptureFormat(bool force)
             ov.width == 0 && ov.height == 0) {
             ov.width  = m_source4KProMode.width;
             ov.height = m_source4KProMode.height;
-            ov.fps    = m_source4KProMode.fps;
+            SetIntegerFrameRateFields(
+                ov.fps, ov.fpsNumerator, ov.fpsDenominator,
+                m_source4KProMode.fps);
             AppLog(L"Reconcile: 4K X following source "
                    + std::to_wstring(ov.width) + L"x" + std::to_wstring(ov.height)
                    + L"@" + std::to_wstring(ov.fps));
@@ -3311,7 +3324,8 @@ bool Application::ReconcileCaptureFormat(bool force)
         // trades framerate for HDR, the way the 4K S trades resolution).
         if (m_is4KX && wantP010 && ov.height >= 2160 && (ov.fps == 0 || ov.fps > 30)) {
             AppLog(L"Reconcile: 4K X 4K HDR, clamping fps to 30 (4K P010 cap)");
-            ov.fps = 30;
+            SetIntegerFrameRateFields(
+                ov.fps, ov.fpsNumerator, ov.fpsDenominator, 30);
         }
 
         m_captureDevice->SetFormatOverride(ov);

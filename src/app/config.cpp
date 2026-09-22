@@ -238,8 +238,10 @@ bool Config::Load(const std::string& path)
             if (ov.fpsDenominator == 0) ov.fpsDenominator = 1;
             ov.fps = ov.fpsNumerator / ov.fpsDenominator;
         } else {
+            // Legacy configs stored only the integer display FPS. Keep the
+            // rational unspecified so capture negotiation can resolve e.g.
+            // 59 against a native 60000/1001 mode instead of inventing 59/1.
             ov.fpsDenominator = 1;
-            if (ov.fps > 0) ov.fpsNumerator = ov.fps;
         }
     };
 
