@@ -166,7 +166,15 @@
     .about-credits { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12.5px; line-height: 1.5; }
     .about-credit-title { color: var(--ink3); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; }
     .about-credit-entry { margin-top: 4px; }
-    .about-credit-entry a { color: var(--accent-text); font-weight: 500; }
+    .about-credit-entry a {
+      color: var(--accent-text);
+      font-weight: 500;
+      transition: color .12s ease;
+    }
+    .about-credit-entry a:hover,
+    .about-credit-entry a:focus-visible {
+      color: var(--accent);
+    }
 
     /* Source picker popover: device list plus the manual capture-format cascade. */
     .source-popover {
