@@ -160,10 +160,8 @@ bool TestGc553ProNeutralTransitionalSamples()
         return false;
     }
 
-    // GC553Pro NV12 startup samples are also accepted when MF reports FULL;
-    // the existing session gate still limits this to the untrusted startup
-    // period. This is intentionally narrower than a generic black-frame rule.
-    if (!PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
+    // FULL-range legal black remains valid before the first accepted frame.
+    if (PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
             nv12.data(), static_cast<uint32_t>(nv12.size()), width, height,
             PlaceholderDetector::CaptureFormatKind::NV12, family,
             false, false)) {
@@ -196,6 +194,12 @@ bool TestGc553ProNeutralTransitionalSamples()
     // Compute() averages 16 samples per zone; use a saturated value so this
     // single fingerprint-only point remains non-zero after integer division.
     nv12[yOffsetOutsideStructuralSamples] = 0xFF;
+    // A tiny loading logo outside every structural sample must also remain
+    // valid in FULL range; the range gate protects it, not a lucky sample.
+    if (PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
+            nv12.data(), static_cast<uint32_t>(nv12.size()), width, height,
+            PlaceholderDetector::CaptureFormatKind::NV12, family,
+            false, false)) return false;
     const auto nonZeroFingerprint = PlaceholderDetector::Compute(
         nv12.data(), static_cast<uint32_t>(nv12.size()), width, height,
         PlaceholderDetector::CaptureFormatKind::NV12);
@@ -300,7 +304,7 @@ int main()
     drifting[6] = 0x46; // within match tolerance, outside temporal stability
     if (detector.Process(drifting, PlaceholderDetector::CaptureFormatKind::NV12,
                          PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro) !=
-        PlaceholderDetector::FrameClassification::CandidatePlaceholder) return 17;
+        PlaceholderDetector::FrameClassification::Real) return 17;
     auto changed = gc553Pro;
     changed[6] = 0x60;
     if (detector.Process(changed, PlaceholderDetector::CaptureFormatKind::NV12,
@@ -318,9 +322,8 @@ int main()
                          PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro) !=
         PlaceholderDetector::FrameClassification::CandidatePlaceholder) return 21;
 
-    // A known placeholder arriving immediately after unrelated real content
-    // is a candidate, not a Real frame: the stability baseline must not allow
-    // one card-generated NO SIGNAL frame into the renderer.
+    // A known match after unrelated real content is initially unstable.
+    // Only subsequent stable frames can start the 15-frame candidate streak.
     PlaceholderDetector transitionDetector;
     const PlaceholderDetector::Fingerprint realFrame{
         0x58, 0x62, 0x71, 0x44, 0x39, 0x67, 0x52, 0x6A, 0x5D};
@@ -331,7 +334,43 @@ int main()
     if (transitionDetector.Process(
             gc553Pro, PlaceholderDetector::CaptureFormatKind::NV12,
             PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro) !=
-        PlaceholderDetector::FrameClassification::CandidatePlaceholder) return 23;
+        PlaceholderDetector::FrameClassification::Real) return 23;
+    for (int i = 1; i <= 15; ++i) {
+        const auto expected = i < 15
+            ? PlaceholderDetector::FrameClassification::CandidatePlaceholder
+            : PlaceholderDetector::FrameClassification::ConfirmedPlaceholder;
+        if (transitionDetector.Process(gc553Pro,
+                PlaceholderDetector::CaptureFormatKind::NV12,
+                PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro)
+            != expected) return 31;
+    }
+
+    // Both signatures match the Elgato zone tolerance (4), but their temporal
+    // difference (3) exceeds stability tolerance (2). Moving content must
+    // clear a confirmed latch and cannot remain indefinitely quarantined.
+    PlaceholderDetector elgatoDetector;
+    for (int i = 0; i < 15; ++i) {
+        elgatoDetector.Process(elgato, PlaceholderDetector::CaptureFormatKind::P010,
+            PlaceholderDetector::PlaceholderDeviceFamily::Elgato);
+    }
+    if (!elgatoDetector.IsCurrentlyPlaceholder()) return 32;
+    auto movingElgato = elgato;
+    movingElgato[4] += 3;
+    for (int i = 0; i < 40; ++i) {
+        const auto& fp = i % 2 == 0 ? movingElgato : elgato;
+        if (elgatoDetector.Process(fp, PlaceholderDetector::CaptureFormatKind::P010,
+                PlaceholderDetector::PlaceholderDeviceFamily::Elgato) !=
+            PlaceholderDetector::FrameClassification::Real ||
+            elgatoDetector.IsCurrentlyPlaceholder()) return 33;
+    }
+    for (int i = 1; i <= 15; ++i) {
+        const auto expected = i < 15
+            ? PlaceholderDetector::FrameClassification::CandidatePlaceholder
+            : PlaceholderDetector::FrameClassification::ConfirmedPlaceholder;
+        if (elgatoDetector.Process(elgato, PlaceholderDetector::CaptureFormatKind::P010,
+                PlaceholderDetector::PlaceholderDeviceFamily::Elgato) != expected)
+            return 34;
+    }
 
     std::cout << "placeholder detector tests passed\n";
     return 0;

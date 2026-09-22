@@ -376,11 +376,10 @@ bool PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
     if (deviceFamily != PlaceholderDeviceFamily::AverMediaGC553Pro) return false;
     if (hasAcceptedRealFrame) return false;
 
-    // GC553Pro NV12 startup samples have the same zero-luma/neutral-chroma
-    // structure regardless of whether MF reports LIMITED or FULL. P010 is
-    // intentionally kept LIMITED-only: this preserves the already verified
-    // HDR/P010 path and its legal limited-black distinction.
-    if (format == CaptureFormatKind::P010 && !limitedRange) return false;
+    // Zero luma with neutral chroma is legal FULL-range black in both
+    // formats, even before the first accepted frame. Sparse sampling cannot
+    // distinguish that content (or a small loading logo) from startup output.
+    if (!limitedRange) return false;
     if (format != CaptureFormatKind::NV12 && format != CaptureFormatKind::P010) {
         return false;
     }
@@ -447,37 +446,25 @@ PlaceholderDetector::Process(const Fingerprint& fp, CaptureFormatKind format,
     m_prevFp     = fp;
     m_havePrevFp = true;
 
-    if (zoneMatches) {
-        if (stable) {
-            if (m_consecutiveMatches < kRequiredConsecutiveMatches) {
-                ++m_consecutiveMatches;
-            }
-            if (m_consecutiveMatches >= kRequiredConsecutiveMatches) {
-                m_inPlaceholder = true;
-                return FrameClassification::ConfirmedPlaceholder;
-            }
-        } else {
-            // A known placeholder commonly arrives immediately after a real
-            // frame, so the first placeholder fingerprint is expected to be
-            // different from the previous real-content fingerprint. It is
-            // still unsafe to upload: treating this known match as Real
-            // would put the capture card's NO SIGNAL image in the renderer
-            // for one frame before the temporal gate confirms it. Restart the
-            // streak, but keep the frame quarantined as a candidate.
-            m_consecutiveMatches = 0;
-            m_inPlaceholder = false;
+    if (zoneMatches && stable) {
+        if (m_consecutiveMatches < kRequiredConsecutiveMatches) {
+            ++m_consecutiveMatches;
+        }
+        if (m_consecutiveMatches >= kRequiredConsecutiveMatches) {
+            m_inPlaceholder = true;
+            return FrameClassification::ConfirmedPlaceholder;
         }
 
-        // Matched but not yet confirmed: the caller must suppress upload,
-        // including the first matching frame. Logging the transition is
+        // Stable match but not yet confirmed: the caller suppresses upload.
+        // Logging the transition is
         // deferred to ConfirmedPlaceholder so a single false-match does not
         // spam the debug channel.
         return FrameClassification::CandidatePlaceholder;
     }
 
-    // A fingerprint outside the known entry for this device/format is real
-    // source content. Release the placeholder latch immediately so recovery
-    // does not wait for another frame.
+    // A non-match or temporal instability is real source content. Preserve
+    // the moving-content safeguard even when both fingerprints match a known
+    // entry, and release any previous placeholder latch immediately.
     m_consecutiveMatches = 0;
     m_inPlaceholder      = false;
     return FrameClassification::Real;

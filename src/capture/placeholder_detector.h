@@ -77,13 +77,10 @@ public:
     // raw-sample gate. InvalidTransitionalFrame is deliberately not produced
     // by Process(): it is identified before Process() so it cannot alter the
     // placeholder detector's temporal streak.
-    //   Real                  : no match against any known placeholder.
+    //   Real                  : no known match, or temporal instability.
     //                           Caller should upload, bump last-good-frame
-    //                           timer, run FrameDiffer normally. A known
-    //                           match whose first frame is not stable against
-    //                           the previous real frame is still a candidate
-    //                           and is quarantined until the streak settles.
-    //   CandidatePlaceholder  : matched a known placeholder, but the
+    //                           timer, run FrameDiffer normally.
+    //   CandidatePlaceholder  : stable match against a known placeholder, but the
     //                           kRequiredConsecutiveMatches streak hasn't
     //                           been reached yet. Caller should SUPPRESS
     //                           upload immediately (so even the first
@@ -127,9 +124,8 @@ public:
     // GC553Pro startup-specific transitional sample gate. This is deliberately
     // narrower than IsInvalidTransitionalFrame(): it only recognizes the
     // hardware's pre-first-real-frame pattern (zero luma plus neutral chroma).
-    // NV12 accepts the verified structure for either MF range during startup;
-    // P010 remains LIMITED-only so its legal limited-black representation is
-    // not changed. Once the current capture session has accepted a genuine
+    // NV12 and P010 are LIMITED-only: zero luma with neutral chroma is legal
+    // FULL-range black. Once the current capture session has accepted a genuine
     // Real frame the rule is disabled.
     // The raw sample predicate itself is deliberately stricter than a
     // fingerprint match: a known device placeholder has non-zero luma in its
