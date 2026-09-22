@@ -821,9 +821,17 @@
         return fps > 0 ? `${fps}/1` : '0/1';
       };
       const rateLabel = (format) => {
-        const label = `${format.fps} ${t('units.fps')}`;
-        const key = rateKey(format);
-        return key.endsWith('/1') ? label : `${label} (${key})`;
+        const numerator = Number(format && format.fpsNumerator);
+        const denominator = Number(format && format.fpsDenominator);
+        let fps = Number(format && format.fps) || 0;
+        if (numerator > 0 && denominator > 0) {
+          const exact = numerator / denominator;
+          const roundedInteger = Math.round(exact);
+          fps = Math.abs(exact - roundedInteger) < 0.01
+            ? roundedInteger
+            : Number(exact.toFixed(3));
+        }
+        return `${fps} ${t('units.fps')}`;
       };
       const overrideRateKey = () => {
         const direct = rateKey(lastOverride);
