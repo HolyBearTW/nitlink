@@ -102,24 +102,24 @@ int main()
     // of reopening on every render-loop reconcile.
     if (ShouldReopenNonGcCapture(
             true, NegotiatedCaptureFormatKind::NV12, true,
-            CaptureFormatPreference::Auto, true)) return 17;
+            CaptureFormatPreference::Auto, true, true)) return 17;
 
     // Full Auto remains source-policy driven, so HDR preference vs NV12 still
     // requests one format transition.
     if (!ShouldReopenNonGcCapture(
             true, NegotiatedCaptureFormatKind::NV12, true,
-            CaptureFormatPreference::Auto, false)) return 18;
+            CaptureFormatPreference::Auto, false, true)) return 18;
 
     // Manual formats retain their explicit subtype semantics.
     if (ShouldReopenNonGcCapture(
             false, NegotiatedCaptureFormatKind::NV12, true,
-            CaptureFormatPreference::ManualNV12, true)) return 19;
+            CaptureFormatPreference::ManualNV12, true, false)) return 19;
     if (!ShouldReopenNonGcCapture(
             true, NegotiatedCaptureFormatKind::Other, false,
-            CaptureFormatPreference::Auto, true)) return 20;
+            CaptureFormatPreference::Auto, true, true)) return 20;
     if (ShouldReopenNonGcCapture(
             true, NegotiatedCaptureFormatKind::Other, true,
-            CaptureFormatPreference::Auto, true)) return 21;
+            CaptureFormatPreference::Auto, true, true)) return 21;
 
     // The 4K X HDR clamp and follow-source paths both write integer rates.
     // A clamp must replace all three fields so an old 60/1 rational cannot
@@ -131,6 +131,37 @@ int main()
         logicalFps, logicalNumerator, logicalDenominator, 30);
     if (logicalFps != 30 || logicalNumerator != 30 ||
         logicalDenominator != 1) return 22;
+
+    // 4K S, HDR source, SDR output, resolution-only Auto override: Alt+H
+    // must attempt P010 before a negotiated SDR stream can be a fallback.
+    NitLink::NonGcP010FallbackState fallback;
+    fallback.CompleteOpen(false, false);
+    fallback.ObservePolicy(true, true, false);
+    const auto needsAttempt = [&] {
+        return ShouldReopenNonGcCapture(true, NegotiatedCaptureFormatKind::NV12,
+            true, CaptureFormatPreference::Auto, true, fallback.Accepted());
+    };
+    if (!needsAttempt()) return 23;
+    fallback.Reset(); // Close before the attempt.
+    fallback.CompleteOpen(true, false); // Successful SDR fallback readback.
+    for (int i = 0; i < 10; ++i) {
+        fallback.ObservePolicy(true, true, false);
+        if (needsAttempt()) return 24;
+    }
+    fallback.ObservePolicy(false, true, false); // Return to SDR policy.
+    fallback.ObservePolicy(true, true, false);  // A later HDR request is new.
+    if (!needsAttempt()) return 25;
+    fallback.CompleteOpen(true, false);
+    fallback.ObservePolicy(true, false, false); // New/unknown device session.
+    if (fallback.Accepted() || !needsAttempt()) return 26;
+    fallback.CompleteOpen(true, false);
+    fallback.ObservePolicy(true, true, true); // Device/override forced reopen.
+    if (fallback.Accepted() || !needsAttempt()) return 27;
+    fallback.CompleteOpen(true, false);
+    fallback.Reset(); // Same device, but the previous session has closed.
+    if (fallback.Accepted() || !needsAttempt()) return 28;
+    fallback.CompleteOpen(true, true);
+    if (fallback.Accepted()) return 29;
 
     std::cout << "capture output policy tests passed\n";
     return 0;

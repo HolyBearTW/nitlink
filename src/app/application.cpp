@@ -728,6 +728,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
     }
     AppLog(L"Initialize: capture device opened");
+    m_nonGcP010Fallback.CompleteOpen(
+        !m_isGC553Pro && useP010,
+        IsEqualGUID(m_captureDevice->GetOutputFormat().subtype, MFVideoFormat_P010));
     ApplyPresentCap();
     ApplyAspectRatio();
 
@@ -2667,6 +2670,7 @@ void Application::Shutdown()
     // on subsequent runs until USB is reconnected or the system reboots.
     if (m_captureDevice) {
         m_captureDevice->StopCapture();
+        m_nonGcP010Fallback.Reset();
         m_captureDevice->Close();
 
         // Frame-buffer teardown contract (see frame_buffer.h): the capture
@@ -3138,12 +3142,15 @@ bool Application::ReconcileCaptureFormat(bool force)
          configuredOverride.height > 0 ||
          configuredOverride.fps > 0 ||
          configuredOverride.fpsNumerator > 0);
+    m_nonGcP010Fallback.ObservePolicy(
+        wantP010, retainedFormatBelongsToCurrentDevice, force);
     const bool formatReopenNeeded = m_isGC553Pro
         ? gc553ProPolicy.reopenCapture
         : ShouldReopenNonGcCapture(
               wantP010, actualCaptureFormat,
               retainedFormatBelongsToCurrentDevice,
-              formatPreference, hasNonFormatOverride);
+              formatPreference, hasNonFormatOverride,
+              m_nonGcP010Fallback.Accepted());
 
     // Run reaches this decision every render iteration. A failed Open can
     // leave the requested format equal to wantP010 while capture is stopped;
@@ -3195,6 +3202,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // and the IMFMediaSource. m_captureDevice itself is NOT destroyed:
     // its FrameCallback and ownership stays stable.
     m_captureDevice->StopCapture();
+    m_nonGcP010Fallback.Reset();
     m_captureDevice->Close();
 
     // The frame buffer's capacity and stride are fixed at construction;
@@ -3375,6 +3383,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     // can change either), and restart the capture worker.
     m_captureDevice->LogAvailableFormats();
     auto format = m_captureDevice->GetOutputFormat();
+    m_nonGcP010Fallback.CompleteOpen(
+        !m_isGC553Pro && wantP010, IsEqualGUID(format.subtype, MFVideoFormat_P010));
 
     if (const P010SelectionNotice notice =
             m_captureDevice->ConsumeP010SelectionNotice();

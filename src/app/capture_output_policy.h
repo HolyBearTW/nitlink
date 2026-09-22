@@ -67,6 +67,23 @@ constexpr NegotiatedCaptureFormatKind ScopedNegotiatedCaptureFormat(
         : NegotiatedCaptureFormatKind::Other;
 }
 
+// Records a completed P010 request, not the mutable RequestP010 preference.
+// The application resets it before closing the session or changing policy.
+class NonGcP010FallbackState {
+public:
+    void Reset() noexcept { m_accepted = false; }
+    void ObservePolicy(bool desiredP010, bool currentSessionKnown,
+                       bool forceReopen) noexcept {
+        if (!desiredP010 || !currentSessionKnown || forceReopen) Reset();
+    }
+    void CompleteOpen(bool attemptedP010, bool actualP010) noexcept {
+        m_accepted = attemptedP010 && !actualP010;
+    }
+    bool Accepted() const noexcept { return m_accepted; }
+private:
+    bool m_accepted = false;
+};
+
 // A non-GC capture stream that honored a non-format override (for example,
 // resolution-only with Format=Auto) may legitimately negotiate NV12 even when
 // source policy prefers P010. Once that concrete fallback is running, the
@@ -78,13 +95,15 @@ constexpr bool ShouldReopenNonGcCapture(
     NegotiatedCaptureFormatKind actualFormat,
     bool actualFormatKnown,
     CaptureFormatPreference preference,
-    bool hasNonFormatOverride) noexcept
+    bool hasNonFormatOverride,
+    bool acceptedP010FallbackForCurrentSession) noexcept
 {
     const bool actualP010 = actualFormat == NegotiatedCaptureFormatKind::P010;
     const bool acceptedAutoFallback =
         preference == CaptureFormatPreference::Auto &&
         hasNonFormatOverride &&
         actualFormatKnown &&
+        acceptedP010FallbackForCurrentSession &&
         desiredP010 &&
         !actualP010;
 
