@@ -58,6 +58,11 @@ public:
 
     void Render(const Stats& stats);
 
+    // Draw a localized full-window status frame before capture initialization
+    // completes or while a capture-format transition is in progress.
+    void DrawStatusMessage(uint32_t windowW, uint32_t windowH,
+                           const wchar_t* localizationKey);
+
     // Draw the branded "no signal" screen full-window. Called from the
     // app loop when the capture card reports no active HDMI signal:
     // overrides the Elgato hardware placeholder with NitLink's brand

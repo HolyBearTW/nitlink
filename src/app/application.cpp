@@ -25,6 +25,79 @@ static void AppLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/App] " + msg + L"\n").c_str());
 }
 
+static void PlaceholderLog(const std::wstring& msg) {
+    OutputDebugStringW((L"[NitLink/Placeholder] " + msg + L"\n").c_str());
+}
+
+static const wchar_t* PlaceholderFormatName(
+    PlaceholderDetector::CaptureFormatKind format)
+{
+    switch (format) {
+    case PlaceholderDetector::CaptureFormatKind::P010: return L"P010";
+    case PlaceholderDetector::CaptureFormatKind::NV12: return L"NV12";
+    case PlaceholderDetector::CaptureFormatKind::BGRA: return L"BGRA";
+    }
+    return L"Unknown";
+}
+
+static const wchar_t* PresentationStateName(PresentationState state)
+{
+    switch (state) {
+    case PresentationState::WaitingForCapture: return L"WaitingForCapture";
+    case PresentationState::Capture: return L"Capture";
+    case PresentationState::NoSignal: return L"NoSignal";
+    case PresentationState::Transition: return L"Transition";
+    }
+    return L"Unknown";
+}
+
+static const wchar_t* PlaceholderClassificationName(
+    PlaceholderDetector::FrameClassification classification)
+{
+    switch (classification) {
+    case PlaceholderDetector::FrameClassification::Real: return L"Real";
+    case PlaceholderDetector::FrameClassification::CandidatePlaceholder:
+        return L"CandidatePlaceholder";
+    case PlaceholderDetector::FrameClassification::ConfirmedPlaceholder:
+        return L"ConfirmedPlaceholder";
+    case PlaceholderDetector::FrameClassification::InvalidTransitionalFrame:
+        return L"InvalidTransitionalFrame";
+    }
+    return L"Unknown";
+}
+
+static PlaceholderDetector::PlaceholderDeviceFamily PlaceholderFamilyForDevice(
+    const std::wstring& deviceName)
+{
+    if (GetCaptureDevicePolicy(deviceName).family ==
+        CaptureDeviceFamily::AverMediaGC553Pro) {
+        return PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
+    }
+    if (IsElgatoDevice(deviceName)) {
+        return PlaceholderDetector::PlaceholderDeviceFamily::Elgato;
+    }
+    return PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+}
+
+static bool TryPlaceholderFormatForSubtype(
+    const GUID& subtype, PlaceholderDetector::CaptureFormatKind& format)
+{
+    if (IsEqualGUID(subtype, MFVideoFormat_P010)) {
+        format = PlaceholderDetector::CaptureFormatKind::P010;
+        return true;
+    }
+    if (IsEqualGUID(subtype, MFVideoFormat_NV12)) {
+        format = PlaceholderDetector::CaptureFormatKind::NV12;
+        return true;
+    }
+    if (IsEqualGUID(subtype, MFVideoFormat_RGB32) ||
+        IsEqualGUID(subtype, MFVideoFormat_ARGB32)) {
+        format = PlaceholderDetector::CaptureFormatKind::BGRA;
+        return true;
+    }
+    return false;
+}
+
 static std::wstring Tr(const wchar_t* key) {
     return Localization::Instance().Get(key);
 }
@@ -292,8 +365,6 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         return false;
     }
     m_window->SetPreventSleep(m_config->preventSleep);
-    m_window->Show(nCmdShow);
-    AppLog(L"Initialize: window created and shown");
 
     auto [actualW, actualH] = m_window->GetClientSize();
     // Window may not have processed WM_SIZE yet after Show(), so GetClientSize()
@@ -315,6 +386,29 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         return false;
     }
     AppLog(L"Initialize: renderer initialized");
+
+    // Keep the HWND hidden until the renderer and a minimal D2D/DirectWrite
+    // overlay are ready. This prevents the uninitialized client area from
+    // flashing white during potentially slow capture-device bring-up.
+    // Present an explicit startup state before making the window visible.
+    m_overlay = std::make_unique<Overlay>();
+    const bool startupOverlayOk = m_overlay->Initialize(
+        m_renderer->GetDevice(), m_renderer->GetContext(),
+        m_renderer->GetSwapChain(), m_window->GetHWND());
+    if (!startupOverlayOk) {
+        AppLog(L"Initialize: startup Overlay::Initialize FAILED (showing dark renderer clear)");
+    } else {
+        m_renderer->BeginFrame(false);
+        m_overlay->DrawStatusMessage(actualW, actualH,
+                                     L"overlay.initializingCapture");
+        if (m_overlay->IsUsingOffscreen()) {
+            m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
+        }
+        m_renderer->EndFrame();
+    }
+    m_showOverlay = startupOverlayOk && m_config->showOverlay;
+    m_window->Show(nCmdShow);
+    AppLog(L"Initialize: startup frame presented and window shown");
 
     auto devices = DeviceEnumerator::FindCaptureDevices();
     {
@@ -721,6 +815,16 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 
     auto format = m_captureDevice->GetOutputFormat();
 
+    // Freeze device-family and negotiated-format identity before the capture
+    // worker starts so the first startup sample uses authoritative metadata.
+    m_placeholderDeviceFamily = PlaceholderFamilyForDevice(m_currentDeviceInfo.name);
+    m_placeholderCaptureMetadataReady =
+        TryPlaceholderFormatForSubtype(format.subtype, m_placeholderCaptureFormat);
+    if (!m_placeholderCaptureMetadataReady) {
+        m_placeholderDeviceFamily =
+            PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+    }
+
     if (const P010SelectionNotice notice =
             m_captureDevice->ConsumeP010SelectionNotice();
         notice.available) {
@@ -833,6 +937,32 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         m_renderer->SetSourceFormat(rkind);
     }
 
+    // The negotiated placeholder identity and renderer source format are now
+    // complete. Start capture before optional audio/UI/upscaler initialization
+    // so those subsystems cannot delay the first usable capture callback.
+    m_placeholderDetector = std::make_unique<PlaceholderDetector>();
+    m_sessionStartTime = std::chrono::system_clock::now();
+    m_lastGoodFrameTime = std::chrono::steady_clock::now();
+    m_lastMotionTime = m_lastGoodFrameTime;
+    m_lastContentTime = m_lastGoodFrameTime;
+    m_captureFrameValidForSession = false;
+    if (m_renderer) m_renderer->InvalidateCaptureFrame();
+
+    const bool captureStarted = m_captureDevice->StartCapture(
+        [this](const uint8_t* data, uint32_t size, int64_t timestamp,
+               int64_t arrivalWallNs, uint64_t deviceTimestamp) {
+            if (DropPlaceholderFrame(data, size)) return;
+            if (m_frameBuffer) {
+                m_frameBuffer->Write(data, size, timestamp,
+                                     arrivalWallNs, deviceTimestamp);
+            }
+        });
+    if (!captureStarted) {
+        AppLog(L"Initialize: capture start failed");
+    } else {
+        AppLog(L"Initialize: capture started before optional subsystems");
+    }
+
     m_audioRouter = std::make_unique<AudioRouter>();
     // Route audio from the selected capture card to the default playback device.
     //
@@ -861,14 +991,6 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
     }
 
-    m_overlay = std::make_unique<Overlay>();
-    bool overlayOk = m_overlay->Initialize(m_renderer->GetDevice(), m_renderer->GetContext(),
-                                            m_renderer->GetSwapChain(), m_window->GetHWND());
-    if (!overlayOk) {
-        AppLog(L"Initialize: Overlay::Initialize FAILED (continuing without overlay)");
-    }
-    m_showOverlay = overlayOk && m_config->showOverlay;
-
     // NIS upscaler: compile compute shader, upload coefficient tables.
     // Init is best-effort: if it fails (e.g. user doesn't have compute shader
     // support), the rest of the app works fine, just no image upscaling.
@@ -890,10 +1012,6 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(L"Initialize: frame differ ready");
     }
 
-    // Placeholder detector: recognizes Elgato NO SIGNAL placeholder frames
-    // by content fingerprint so the run loop can suppress them. No init
-    // failure path: it owns nothing but ~16 bytes of POD state.
-    m_placeholderDetector = std::make_unique<PlaceholderDetector>();
 
     m_webviewSettings = std::make_unique<WebViewSettings>();
     m_webviewSettings->Initialize(m_window->GetHWND(), actualW, actualH);
@@ -1508,19 +1626,6 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             if (!m_levelsDiagOn) m_toastText.clear();
         });
 
-    m_sessionStartTime = std::chrono::system_clock::now();
-    // Anchor the signal-loss debounce timer at session start so the cold-
-    // startup grace measures from here. The first successful FrameBuffer
-    // read in Run() will bump this and set m_hasEverReceivedFrame=true,
-    // switching the debounce to the longer reacquire-after-loss grace.
-    m_lastGoodFrameTime = std::chrono::steady_clock::now();
-    // Motion-recency gate baselines: initialize both to "now" so the very
-    // first ConfirmedPlaceholder evaluation in the run loop does not see
-    // an epoch-zero timestamp and immediately decide the source is stale.
-    // See m_lastMotionTime / m_lastContentTime / kMotionRecencyWindowMs
-    // in application.h for the gate's full semantics.
-    m_lastMotionTime  = m_lastGoodFrameTime;
-    m_lastContentTime = m_lastGoodFrameTime;
 
     // Apply persisted audio + display state so the live subsystems reflect
     // whatever the user had configured when they last closed the app.
@@ -1550,12 +1655,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(L"Initialize: HDR source poller skipped (property unsupported on this device)");
     }
 
-    m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
-                                          int64_t arrivalWallNs, uint64_t deviceTimestamp) {
-        if (DropPlaceholderFrame(data, size)) return;
-        if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
-    });
-    AppLog(L"Initialize: capture started, entering run loop");
+    AppLog(L"Initialize: entering run loop");
+
 
     m_running = true;
     return true;
@@ -1763,6 +1864,7 @@ void Application::Run()
         bool haveFreshFrame         = false;
         bool freshFrameIsRealSource = false;
         FrameBuffer::FrameData frame;
+        m_lastPresentationFrameFresh = false;
         // Null guard: ReconcileCaptureFormat resets m_frameBuffer and only
         // rebuilds it if Open() succeeds. If both reopen attempts fail
         // (transient driver failure during a PS5 HDMI handshake, etc.) the
@@ -1771,7 +1873,7 @@ void Application::Run()
         if (m_frameBuffer && m_frameBuffer->Read(frame)) {
             haveFreshFrame = true;
 
-            // Elgato placeholder-frame detection.
+            // Capture-device placeholder-frame detection.
             //
             // The card emits its own NO SIGNAL placeholder as a valid frame
             // stream during HDMI unplug / handshake gaps. Those frames need
@@ -1784,28 +1886,44 @@ void Application::Run()
             //
             // Why this is safe against false positives on real static
             // content: a paused game / static menu / black scene transition
-            // is content-shaped and will not match the Elgato placeholder's
+            // is content-shaped and will not match a known device placeholder's
             // specific zone pattern across all 9 zones. See
             // placeholder_detector.h for the fingerprint and matching rules.
             //
-            // Until live fingerprints are baked into placeholder_detector.cpp
-            // via the Ctrl+F5 hotkey, the detector is a no-op: every fresh
-            // frame is treated as real source and the existing pipeline runs
-            // unchanged.
             PlaceholderDetector::Fingerprint fp{};
             auto fmt = PlaceholderDetector::CaptureFormatKind::BGRA;
             auto cls = PlaceholderDetector::FrameClassification::Real;
-            if (m_placeholderDetector && m_captureDevice) {
-                const auto subtype = m_captureDevice->GetOutputFormat().subtype;
-                if (IsEqualGUID(subtype, MFVideoFormat_P010)) {
-                    fmt = PlaceholderDetector::CaptureFormatKind::P010;
-                } else if (IsEqualGUID(subtype, MFVideoFormat_NV12)) {
-                    fmt = PlaceholderDetector::CaptureFormatKind::NV12;
-                } else {
-                    fmt = PlaceholderDetector::CaptureFormatKind::BGRA;
+            if (m_captureDevice) {
+                // Use the metadata latched after Open and before
+                // StartCapture. Re-reading the live capture object here can
+                // briefly expose a default/old subtype while the first MF
+                // sample is already in flight.
+                if (m_placeholderCaptureMetadataReady) {
+                    fmt = m_placeholderCaptureFormat;
                 }
                 fp = PlaceholderDetector::Compute(
                     frame.data, frame.size, frame.width, frame.height, fmt);
+
+                const auto placeholderFamily = m_placeholderCaptureMetadataReady
+                    ? m_placeholderDeviceFamily
+                    : PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+                const bool invalidZeroFilled =
+                    PlaceholderDetector::IsInvalidTransitionalFrame(
+                        frame.data, frame.size, frame.width, frame.height, fmt);
+                const bool neutralTransitional =
+                    PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
+                        frame.data, frame.size, frame.width, frame.height, fmt,
+                        placeholderFamily, !EffectiveSourceFullRange(),
+                        m_captureFrameValidForSession);
+                const bool invalidTransitional =
+                    invalidZeroFilled || neutralTransitional;
+                if (invalidTransitional) {
+                    // Do not call Process(): this frame must not advance or
+                    // reset the placeholder detector's temporal streak. It
+                    // also remains outside the Real path below, so no upload,
+                    // last-good/content update, or FrameDiffer input occurs.
+                    cls = PlaceholderDetector::FrameClassification::InvalidTransitionalFrame;
+                }
 
                 // Debug hotkey: dump this frame's fingerprint and clear the
                 // request. The user presses Ctrl+F5 while the Elgato
@@ -1813,22 +1931,64 @@ void Application::Run()
                 // then pastes the result into kKnownPlaceholders.
                 if (m_dumpFingerprintRequested) {
                     m_dumpFingerprintRequested = false;
+                    const auto negotiated = m_captureDevice->GetOutputFormat();
+                    const auto policy = GetCaptureDevicePolicy(m_currentDeviceInfo.name);
+                    const wchar_t* family =
+                        policy.family == CaptureDeviceFamily::AverMediaGC553Pro
+                            ? L"GC553Pro"
+                            : IsElgatoDevice(m_currentDeviceInfo.name)
+                                ? L"Elgato"
+                                : L"Generic/other";
+                    std::wstringstream metadata;
+                    metadata << L"Placeholder fingerprint capture format: "
+                             << L"deviceFamily=" << family
+                             << L", device=\"" << m_currentDeviceInfo.name << L"\""
+                             << L", negotiatedSubtype=" << FormatGuidToString(negotiated.subtype)
+                             << L", size=" << negotiated.width << L"x" << negotiated.height
+                             << L", fps=" << negotiated.fps;
+                    AppLog(metadata.str());
                     PlaceholderDetector::LogFingerprint(fp,
                         [](const std::wstring& m) {
                             OutputDebugStringW((L"[NitLink/Placeholder] " + m + L"\n").c_str());
                         });
                 }
 
-                cls = m_placeholderDetector->Process(fp, fmt);
+                if (!invalidTransitional && m_placeholderDetector) {
+                    cls = m_placeholderDetector->Process(fp, fmt, placeholderFamily);
+                }
+                const bool shouldUpload = PlaceholderDetector::ShouldUploadCaptureFrame(cls);
                 freshFrameIsRealSource =
-                    (cls == PlaceholderDetector::FrameClassification::Real);
+                    shouldUpload;
+
+                const bool gc553Pro =
+                    placeholderFamily == PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
+                if (gc553Pro) {
+                    const std::wstring formatLabel = PlaceholderFormatName(fmt);
+                    if (cls == PlaceholderDetector::FrameClassification::CandidatePlaceholder &&
+                        !m_placeholderCandidateLogged) {
+                        PlaceholderLog(L"GC553Pro " + formatLabel + L" placeholder candidate");
+                        m_placeholderCandidateLogged = true;
+                    } else if (cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder &&
+                               !m_placeholderConfirmedLogged) {
+                        PlaceholderLog(L"GC553Pro " + formatLabel + L" placeholder confirmed");
+                        m_placeholderConfirmedLogged = true;
+                    } else if (cls == PlaceholderDetector::FrameClassification::Real &&
+                               (m_placeholderCandidateLogged || m_placeholderConfirmedLogged)) {
+                        PlaceholderLog(L"Placeholder cleared by real frame");
+                        m_placeholderCandidateLogged = false;
+                        m_placeholderConfirmedLogged = false;
+                    }
+                }
             } else {
                 // No detector available: fall back to "every fresh frame
                 // is real" so behavior never regresses versus pre-detector state.
                 freshFrameIsRealSource = true;
             }
 
-            // Three-way branch on the classifier:
+            m_lastPresentationFrameFresh = true;
+            m_lastPresentationClassification = cls;
+
+            // Four-way branch on the classifier:
             //
             //   Real                  : upload, bump grace timer, run differ.
             //   CandidatePlaceholder  : suppress upload + differ + grace
@@ -1841,8 +2001,12 @@ void Application::Run()
             //                           log the transition once and let the
             //                           shorter placeholder-specific grace
             //                           inside ShouldShowNoSignal kick in.
-            if (cls == PlaceholderDetector::FrameClassification::Real) {
+            //   InvalidTransitionalFrame: structural zero-filled sample;
+            //                             suppress without touching detector
+            //                             or source-liveness state.
+            if (PlaceholderDetector::ShouldUploadCaptureFrame(cls)) {
                 m_renderer->UpdateCaptureTexture(frame.data, frame.size, frame.width, frame.height);
+                m_captureFrameValidForSession = true;
                 auto captureEnd = Clock::now();
                 m_captureLatencyMs = std::chrono::duration<double, std::milli>(captureEnd - captureStart).count();
 
@@ -1868,6 +2032,21 @@ void Application::Run()
                 }
 
                 m_lastGoodFrameTime    = std::chrono::steady_clock::now();
+                if (m_signalLostLogged || m_signalReacquiringLogged ||
+                    m_noSignalPresentationLatched) {
+                    AppLog(L"Signal: accepted real frame cleared No Signal presentation latch");
+                }
+                m_signalLostLogged = false;
+                m_signalReacquiringLogged = false;
+                // Only a newly accepted Real frame may clear the
+                // presentation latch. Detector Reset/reconcile alone must
+                // never expose an invalidated capture surface or the card's
+                // own placeholder during HDR format changes.
+                m_noSignalPresentationLatched = false;
+                if (m_captureTransitionActive) {
+                    AppLog(L"HDR transition: accepted real frame restored capture presentation");
+                    m_captureTransitionActive = false;
+                }
                 // Motion-recency gate: this frame is non-placeholder content
                 // arriving from the capture device, so bump the content
                 // freshness marker the placeholder gate consults. See
@@ -1910,7 +2089,7 @@ void Application::Run()
                 // kRequiredConsecutiveMatches-th in a row whose fingerprint
                 // matches a baked placeholder, and the streak passed the
                 // temporal-stability check. That is sufficient evidence for
-                // a real Elgato NO SIGNAL placeholder, but it is ALSO
+                // a real capture-device NO SIGNAL placeholder, but it is ALSO
                 // sufficient evidence for a static game intro card whose
                 // luma pattern coincidentally matches the placeholder
                 // (Star Wars Jedi Lucasfilm logo on P010, etc.).
@@ -1931,7 +2110,7 @@ void Application::Run()
                 const auto now = std::chrono::steady_clock::now();
                 if (!RecentSourceActivity(now)) {
                     if (!m_inPlaceholderState) {
-                        AppLog(L"Signal: Elgato placeholder detected, holding last real frame, no upload");
+                        AppLog(L"Signal: capture-device placeholder detected, holding last real frame, no upload");
                         m_inPlaceholderState = true;
                     }
                     // Arm the capture-thread copy gate with the confirmed
@@ -1965,9 +2144,79 @@ void Application::Run()
         // state changes. The render block below reads showNoSignalNow at
         // both the HDR and SDR no-signal trigger sites.
         const bool showNoSignalNow = ShouldShowNoSignal();
-        const bool videoCovered = m_webviewSettings && m_webviewSettings->IsVisible() &&
-                                  m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
-        m_window->SetVideoAvailable(m_hasEverReceivedFrame && !showNoSignalNow && !videoCovered);
+        const bool noSignalPresentation =
+            m_noSignalPresentationLatched || showNoSignalNow;
+        const bool rendererHasFrame = m_renderer && m_renderer->HasCaptureFrame();
+        const bool captureReady = CapturePresentationReady(
+            m_captureFrameValidForSession, rendererHasFrame);
+        const NitLink::PresentationState presentationState =
+            NitLink::DecidePresentation(
+                noSignalPresentation,
+                showNoSignalNow,
+                captureReady,
+                m_captureTransitionActive);
+
+        // Keep the diagnostic transition-only: it reports the state change,
+        // the current renderer/app readiness split, the latest classification,
+        // and the branch the render section will select. This is deliberately
+        // not emitted for every render iteration.
+        const bool panelCoversPicture = m_settingsVisible && m_webviewSettings &&
+            m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
+        m_window->SetVideoAvailable(
+            presentationState == PresentationState::Capture && !panelCoversPicture);
+        if (!m_hasPresentationStateDiagnostic ||
+            presentationState != m_lastPresentationStateDiagnostic) {
+            const wchar_t* reason = L"state evaluation";
+            if (presentationState == PresentationState::WaitingForCapture) {
+                if (m_lastPresentationFrameFresh &&
+                    m_lastPresentationClassification ==
+                        PlaceholderDetector::FrameClassification::InvalidTransitionalFrame) {
+                    reason = L"invalid transitional frame is not presentable";
+                } else if (m_lastPresentationFrameFresh &&
+                           m_lastPresentationClassification ==
+                        PlaceholderDetector::FrameClassification::CandidatePlaceholder) {
+                    reason = L"candidate placeholder is not presentable";
+                } else if (m_lastPresentationFrameFresh &&
+                           m_lastPresentationClassification ==
+                                PlaceholderDetector::FrameClassification::ConfirmedPlaceholder) {
+                    reason = L"confirmed placeholder is not capture content";
+                } else if (!m_captureFrameValidForSession) {
+                    reason = L"no accepted Real frame for current capture session";
+                } else if (!rendererHasFrame) {
+                    reason = L"accepted frame has no renderer capture texture";
+                } else {
+                    reason = L"waiting for presentable capture";
+                }
+            } else if (presentationState == PresentationState::Capture) {
+                reason = L"accepted Real frame is presentable";
+            } else if (presentationState == PresentationState::NoSignal) {
+                reason = noSignalPresentation
+                    ? L"No Signal latch/debounce is authoritative"
+                    : L"No Signal presentation selected";
+            } else if (presentationState == PresentationState::Transition) {
+                reason = L"capture/output transition active";
+            }
+
+            const std::wstring oldState = m_hasPresentationStateDiagnostic
+                ? PresentationStateName(m_lastPresentationStateDiagnostic)
+                : L"<none>";
+            const std::wstring finalBranch = panelCoversPicture
+                ? L"SettingsBlack"
+                : PresentationStateName(presentationState);
+            AppLog(L"Presentation transition: " + oldState + L" -> " +
+                   PresentationStateName(presentationState) +
+                   L"; reason=" + reason +
+                   L"; m_hasFrame=" + (rendererHasFrame ? L"yes" : L"no") +
+                   L"; captureFrameValid=" +
+                   (m_captureFrameValidForSession ? L"yes" : L"no") +
+                   L"; frameClassification=" +
+                   (m_lastPresentationFrameFresh
+                        ? PlaceholderClassificationName(m_lastPresentationClassification)
+                        : L"none") +
+                   L"; finalRenderBranch=" + finalBranch);
+            m_hasPresentationStateDiagnostic = true;
+            m_lastPresentationStateDiagnostic = presentationState;
+        }
 
         // 4K Pro source timing (props 210 and 208) needs a live HDMI signal.
         // UpdateWindowTitle only composes cached state, so a startup read with
@@ -2205,6 +2454,12 @@ void Application::Run()
         bool cadenceHold = false;
         if (pacing == kPacingRefresh) {
             shouldRender = true;
+        } else if (presentationState != PresentationState::Capture) {
+            // Waiting/Transition/NoSignal are independent presentations. They
+            // must keep being rendered even when no fresh capture sample is
+            // available; otherwise BeginFrame/Present pacing can expose a
+            // cleared or undefined backbuffer during startup.
+            shouldRender = true;
         } else if (!haveFreshFrame) {
             // The frame-ready wait timed out: the source is stalled or gone.
             shouldRender = false;
@@ -2290,14 +2545,25 @@ void Application::Run()
         // get its compositing context torn down.
         // A docked panel leaves the picture running beside it, so the black
         // frame applies only to the full-window panel.
-        const bool panelCoversPicture = m_settingsVisible && m_webviewSettings &&
-            m_webviewSettings->GetDock() == WebViewSettings::Dock::Full;
         if (panelCoversPicture) {
             m_renderer->BeginFrame(waitForSwapChain);   // clears to (0,0,0,1): solid black
             m_renderer->EndFrame();     // presents the black frame
             lastPresentTime = std::chrono::steady_clock::now();
             continue;                    // skip the rest of the pipeline
         }
+
+        const auto drawWaitingStatus = [this]() {
+            if (!m_overlay || !m_renderer) return;
+            const bool captureStarted =
+                m_captureDevice && m_captureDevice->IsCapturing();
+            m_overlay->DrawStatusMessage(
+                m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
+                captureStarted ? L"overlay.waitingForSource"
+                               : L"overlay.initializingCapture");
+            if (m_overlay->IsUsingOffscreen()) {
+                m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
+            }
+        };
 
         if (hdrActive) {
             // HDR path bypasses NIS (the NIS compute shader is wired for the
@@ -2310,7 +2576,9 @@ void Application::Run()
             m_renderer->SetPostInputEnabled(false);
 
             m_renderer->BeginFrame(waitForSwapChain);
-            m_renderer->DrawCaptureFrame();
+            if (presentationState == PresentationState::Capture) {
+                m_renderer->DrawCaptureFrame();
+            }
 
             // HDR color-fidelity diagnostic overlay (Ctrl+F4). Draws known
             // scRGB reference patches over the bottom of the captured frame
@@ -2342,12 +2610,21 @@ void Application::Run()
             // showNoSignalNow, so this only affects the HUD stats path.
             const bool signalActive = m_frameBuffer && m_frameBuffer->IsSignalActive();
 
-            if (showNoSignalNow && m_overlay) {
-                m_overlay->DrawNoSignal(m_renderer->GetWindowWidth(),
-                                          m_renderer->GetWindowHeight());
+            if (presentationState == PresentationState::Transition && m_overlay) {
+                m_overlay->DrawStatusMessage(
+                    m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
+                    L"overlay.switchingHdr");
                 if (m_overlay->IsUsingOffscreen()) {
                     m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
                 }
+            } else if (presentationState == PresentationState::NoSignal && m_overlay) {
+                m_overlay->DrawNoSignal(m_renderer->GetWindowWidth(),
+                                        m_renderer->GetWindowHeight());
+                if (m_overlay->IsUsingOffscreen()) {
+                    m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
+                }
+            } else if (presentationState == PresentationState::WaitingForCapture) {
+                drawWaitingStatus();
             }
             // PiP gate: the HUD panel is a fixed 280x156 px overlay, which
             // dominates a 480x270 PiP window and looks broken. Suppress it
@@ -2431,9 +2708,12 @@ void Application::Run()
         m_renderer->SetPostInputEnabled(nisActive);
 
         m_renderer->BeginFrame(waitForSwapChain);
-        m_renderer->DrawCaptureFrame();
+        if (presentationState == PresentationState::Capture) {
+            m_renderer->DrawCaptureFrame();
+        }
 
-        if (nisActive && m_renderer->GetCaptureOutputSRV()) {
+        if (presentationState == PresentationState::Capture &&
+            nisActive && m_renderer->GetCaptureOutputSRV()) {
             const uint32_t inW  = m_renderer->GetCaptureOutputWidth();
             const uint32_t inH  = m_renderer->GetCaptureOutputHeight();
             uint32_t outW = inW;
@@ -2504,9 +2784,15 @@ void Application::Run()
         //
         // Null guard: see HDR branch above. Same rationale.
         const bool signalActive = m_frameBuffer && m_frameBuffer->IsSignalActive();
-        if (showNoSignalNow && m_overlay) {
+        if (presentationState == PresentationState::Transition && m_overlay) {
+            m_overlay->DrawStatusMessage(
+                m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
+                L"overlay.switchingHdr");
+        } else if (presentationState == PresentationState::NoSignal && m_overlay) {
             m_overlay->DrawNoSignal(m_renderer->GetWindowWidth(),
-                                      m_renderer->GetWindowHeight());
+                                    m_renderer->GetWindowHeight());
+        } else if (presentationState == PresentationState::WaitingForCapture) {
+            drawWaitingStatus();
         }
         // Draw overlay if enabled (only when a real signal is present).
         // PiP gate: same rationale as the HDR branch: the 280x156 HUD
@@ -2796,15 +3082,12 @@ bool Application::ShouldShowNoSignal()
     // Startup grace: shorter so a user who launches the app with no
     // source connected isn't staring at a black window for 2.5s.
     constexpr auto kStartupGrace     = milliseconds(1500);
-    // Placeholder-confirmed grace: tighter still. Once the detector has
-    // confirmed an Elgato no-signal placeholder (5 consecutive fingerprint
-    // matches, ~83 ms), there's no point waiting the full 2.5s: by
-    // definition the source is gone and the frames arriving are Elgato's
-    // own image, not the upstream. 1s is short enough to feel responsive
-    // on a real unplug, long enough to absorb the rare case where a brief
-    // HDMI handshake state happens to fingerprint as a placeholder for a
-    // fraction of a second before the real source resumes.
-    constexpr auto kPlaceholderGrace = milliseconds(1000);
+    // Placeholder-confirmed grace is device-policy-specific. GC553Pro has
+    // device + format binding and a 15-frame confirmation streak, so a
+    // confirmed card placeholder can switch immediately to NitLink No Signal.
+    // Keep the legacy Elgato one-second post-confirmation grace.
+    constexpr auto kElgatoPlaceholderGrace = milliseconds(1000);
+    constexpr auto kGc553ProPlaceholderGrace = milliseconds(0);
     // Reacquire-log debounce: minimum elapsed-without-a-real-frame before
     // surfacing the "Signal: reacquiring" transition. The render path
     // already paints the last good capture texture during this window
@@ -2818,6 +3101,23 @@ bool Application::ShouldShowNoSignal()
     constexpr auto kReacquireDebounce = milliseconds(250);
 
     const auto now     = Clock::now();
+    const bool placeholderConfirmed = m_placeholderDetector
+        && m_placeholderDetector->IsCurrentlyPlaceholder();
+    const bool gc553ProPlaceholder =
+        m_placeholderDeviceFamily ==
+        PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
+    const bool useLegacyMotionRecency =
+        m_placeholderDeviceFamily ==
+        PlaceholderDetector::PlaceholderDeviceFamily::Elgato;
+
+    // Once NitLink has committed to its own No Signal presentation, keep it
+    // authoritative across capture-session rebuilds. Only the accepted-Real
+    // branch clears this latch.
+    if (m_noSignalPresentationLatched) return true;
+    if (m_signalLostLogged) {
+        m_noSignalPresentationLatched = true;
+        return true;
+    }
 
     // MOTION-RECENCY EARLY EXIT.
     //
@@ -2842,7 +3142,9 @@ bool Application::ShouldShowNoSignal()
     // connected. Without that guard, the timers initialized to "now()"
     // in Initialize would suppress the startup no-signal screen for
     // the full kMotionRecencyWindowMs.
-    if (m_hasEverReceivedFrame && RecentSourceActivity(now)) {
+    if (m_hasEverReceivedFrame &&
+        (!placeholderConfirmed || useLegacyMotionRecency) &&
+        RecentSourceActivity(now)) {
         if (m_signalLostLogged) {
             AppLog(L"Signal: restored (was lost)");
         } else if (m_signalReacquiringLogged) {
@@ -2852,9 +3154,6 @@ bool Application::ShouldShowNoSignal()
         m_signalReacquiringLogged = false;
         return false;
     }
-
-    const bool placeholderConfirmed = m_placeholderDetector
-        && m_placeholderDetector->IsCurrentlyPlaceholder();
 
     // Decision-of-record: elapsed time since the last frame the run loop
     // accepted as a real source frame (UpdateCaptureTexture called and
@@ -2881,16 +3180,19 @@ bool Application::ShouldShowNoSignal()
     // motion-recency early exit; reuse it here so both checks see the
     // exact same instant.
     const auto elapsed = now - m_lastGoodFrameTime;
-    const auto grace   = !m_hasEverReceivedFrame
-        ? kStartupGrace
-        : (placeholderConfirmed ? kPlaceholderGrace : kReacquireGrace);
+    // A confirmed card placeholder is stronger evidence than the lifetime
+    // startup state, so apply placeholder policy before startup grace.
+    const auto grace = placeholderConfirmed
+        ? (gc553ProPlaceholder ? kGc553ProPlaceholderGrace
+                               : kElgatoPlaceholderGrace)
+        : (!m_hasEverReceivedFrame ? kStartupGrace : kReacquireGrace);
 
     // Active / recovering: elapsed below the reacquire debounce. The
     // capture pipeline has produced a Real frame within the last
     // kReacquireDebounce, so by every meaningful definition the signal
     // is healthy. Clear the latches; the transition log fires only when
     // a "reacquiring" or "lost" latch was held coming into this call.
-    if (elapsed < kReacquireDebounce) {
+    if (!placeholderConfirmed && elapsed < kReacquireDebounce) {
         if (m_signalLostLogged) {
             AppLog(L"Signal: restored (was lost)");
         } else if (m_signalReacquiringLogged) {
@@ -2936,6 +3238,7 @@ bool Application::ShouldShowNoSignal()
         AppLog(ss.str());
         m_signalLostLogged        = true;
         m_signalReacquiringLogged = false;
+        m_noSignalPresentationLatched = true;
     }
     return true;
 }
@@ -2949,6 +3252,16 @@ bool Application::ReconcileCaptureFormat(bool force)
     // a helper for two call sites (Initialize + here) isn't worth the extra
     // indirection yet.
     if (!m_captureDevice || !m_config) return false;
+
+    // Snapshot presentation authority before any capture teardown. A visible
+    // NitLink No Signal page remains authoritative across the reopen; only an
+    // accepted Real frame may clear it.
+    const bool noSignalPresentationLatched =
+        m_noSignalPresentationLatched || m_signalLostLogged;
+    m_noSignalPresentationLatched = noSignalPresentationLatched;
+    if (noSignalPresentationLatched) {
+        m_captureTransitionActive = false;
+    }
 
     // Forced-reopen path: refresh the source's HDR state synchronously
     // before computing wantP010 below. The capture worker only flags
@@ -3097,6 +3410,13 @@ bool Application::ReconcileCaptureFormat(bool force)
         return false;
     }
 
+    const bool formatReopenNeeded = wantP010 != isP010;
+    if (formatReopenNeeded && !noSignalPresentationLatched &&
+        !m_captureTransitionActive) {
+        m_captureTransitionActive = true;
+        AppLog(L"HDR transition: capture format change, showing transition UI");
+    }
+
     m_nextCaptureRetry = retryNow + std::chrono::milliseconds(1000);
 
     if (force && wantP010 == isP010) {
@@ -3108,6 +3428,12 @@ bool Application::ReconcileCaptureFormat(bool force)
             ? L"Reconcile: capture format change, SDR -> P010 HDR10"
             : L"Reconcile: capture format change, P010 HDR10 -> SDR");
     }
+
+    // Invalidate the previous capture session before teardown. The renderer
+    // may retain GPU resources, but they are not presentable until a newly
+    // accepted Real frame from the reopened stream arrives.
+    m_captureFrameValidForSession = false;
+    if (m_renderer) m_renderer->InvalidateCaptureFrame();
 
     // Tear down. StopCapture joins the worker so once it returns no more
     // frames will land in m_frameBuffer; Close releases the source reader
@@ -3290,6 +3616,14 @@ bool Application::ReconcileCaptureFormat(bool force)
     m_captureDevice->LogAvailableFormats();
     auto format = m_captureDevice->GetOutputFormat();
 
+    m_placeholderDeviceFamily = PlaceholderFamilyForDevice(deviceToOpen.name);
+    m_placeholderCaptureMetadataReady =
+        TryPlaceholderFormatForSubtype(format.subtype, m_placeholderCaptureFormat);
+    if (!m_placeholderCaptureMetadataReady) {
+        m_placeholderDeviceFamily =
+            PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+    }
+
     if (const P010SelectionNotice notice =
             m_captureDevice->ConsumeP010SelectionNotice();
         notice.available) {
@@ -3342,6 +3676,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     if (m_placeholderDetector) m_placeholderDetector->Reset();
     m_placeholderHold.store(false, std::memory_order_release);
     m_inPlaceholderState = false;
+    m_placeholderCandidateLogged = false;
+    m_placeholderConfirmedLogged = false;
 
     if (m_renderer) {
         m_renderer->SetSourceRowOrder(format.topDown);
@@ -3400,13 +3736,15 @@ bool Application::ReconcileCaptureFormat(bool force)
         }
     }
 
+    // Publish device identity before StartCapture so first-frame placeholder
+    // family/format decisions cannot observe the previous device.
+    m_currentDeviceInfo = deviceToOpen;
     const bool started = m_captureDevice->StartCapture([this](const uint8_t* data, uint32_t size, int64_t timestamp,
                                           int64_t arrivalWallNs, uint64_t deviceTimestamp) {
         if (DropPlaceholderFrame(data, size)) return;
         if (m_frameBuffer) m_frameBuffer->Write(data, size, timestamp, arrivalWallNs, deviceTimestamp);
     });
 
-    m_currentDeviceInfo = deviceToOpen;
     if (!started) {
         AppLog(L"Reconcile: capture start failed; will retry");
         return false;
@@ -3628,6 +3966,7 @@ bool Application::RecoverFromDeviceLost()
     // Tear down in reverse dependency order: overlay, NIS upscaler, and frame
     // differ all hold D3D11 objects created from the renderer's device, so they
     // must release before the device they were built on.
+    m_captureFrameValidForSession = false;
     m_frameDiffer.reset();
     m_nisUpscaler.reset();
     m_overlay.reset();
