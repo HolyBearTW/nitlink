@@ -38,15 +38,39 @@ static std::wstring P010UnavailableWarning(const CaptureFormat& format)
            std::wstring(FormatGuidToString(format.subtype)) + L" capture is active.";
 }
 
+static std::wstring FormatNoticeFrameRate(const P010SelectionNotice& notice)
+{
+    if (notice.fpsNumerator == 0 || notice.fpsDenominator == 0) {
+        return std::to_wstring(notice.fps);
+    }
+
+    if (notice.fpsNumerator % notice.fpsDenominator == 0) {
+        return std::to_wstring(notice.fpsNumerator / notice.fpsDenominator);
+    }
+
+    // Keep the native rational internally, but show a compact user-facing
+    // decimal (for example, 60000/1001 as 59.94 rather than a raw fraction).
+    const uint64_t hundredths =
+        (static_cast<uint64_t>(notice.fpsNumerator) * 100 +
+         notice.fpsDenominator / 2) / notice.fpsDenominator;
+    const uint64_t whole = hundredths / 100;
+    const uint64_t fraction = hundredths % 100;
+    if (fraction == 0) return std::to_wstring(whole);
+
+    std::wstring result = std::to_wstring(whole) + L".";
+    if (fraction < 10) result += L"0";
+    result += std::to_wstring(fraction);
+    if (result.back() == L'0') result.pop_back();
+    return result;
+}
+
 static std::wstring P010SelectionWarning(const P010SelectionNotice& notice)
 {
-    std::wstringstream text;
-    text << L"HDR requested, but matching P010 mode is unavailable; using native P010 "
-         << notice.width << L"x" << notice.height << L" @ "
-         << (notice.fpsNumerator > 0 ? notice.fpsNumerator : notice.fps)
-         << L"/" << (notice.fpsNumerator > 0 ? notice.fpsDenominator : 1)
-         << L" FPS.";
-    return text.str();
+    return Localization::Instance().Format(
+        L"toast.p010SelectionFallback",
+        {{L"width", std::to_wstring(notice.width)},
+         {L"height", std::to_wstring(notice.height)},
+         {L"fps", FormatNoticeFrameRate(notice)}});
 }
 
 static CaptureFormatPreference FormatPreferenceForOverride(
