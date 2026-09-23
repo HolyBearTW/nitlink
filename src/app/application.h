@@ -454,6 +454,11 @@ private:
     bool m_captureFrameValidForSession = false;
     bool m_captureTransitionActive = false;
     bool m_noSignalPresentationLatched = false;
+    // GC553Pro-only, one-frame upload quarantine for the first temporally
+    // unstable frame matching its known hardware placeholder. Detector
+    // classification remains Real; the guard is scoped to an active session.
+    bool m_gc553ProPlaceholderTransitionGuardConsumed = false;
+    bool m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     bool m_hasPresentationStateDiagnostic = false;
     PresentationState m_lastPresentationStateDiagnostic =
         PresentationState::WaitingForCapture;

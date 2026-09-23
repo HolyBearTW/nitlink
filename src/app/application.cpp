@@ -946,6 +946,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_lastMotionTime = m_lastGoodFrameTime;
     m_lastContentTime = m_lastGoodFrameTime;
     m_captureFrameValidForSession = false;
+    m_gc553ProPlaceholderTransitionGuardConsumed = false;
+    m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
     if (m_renderer) m_renderer->InvalidateCaptureFrame();
 
@@ -1894,6 +1896,10 @@ void Application::Run()
             PlaceholderDetector::Fingerprint fp{};
             auto fmt = PlaceholderDetector::CaptureFormatKind::BGRA;
             auto cls = PlaceholderDetector::FrameClassification::Real;
+            auto placeholderFamily =
+                PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+            bool knownPlaceholder = false;
+            bool shouldUpload = PlaceholderDetector::ShouldUploadCaptureFrame(cls);
             if (m_captureDevice) {
                 // Use the metadata latched after Open and before
                 // StartCapture. Re-reading the live capture object here can
@@ -1905,7 +1911,7 @@ void Application::Run()
                 fp = PlaceholderDetector::Compute(
                     frame.data, frame.size, frame.width, frame.height, fmt);
 
-                const auto placeholderFamily = m_placeholderCaptureMetadataReady
+                placeholderFamily = m_placeholderCaptureMetadataReady
                     ? m_placeholderDeviceFamily
                     : PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
                 const bool invalidZeroFilled =
@@ -1957,12 +1963,27 @@ void Application::Run()
                 if (!invalidTransitional && m_placeholderDetector) {
                     cls = m_placeholderDetector->Process(fp, fmt, placeholderFamily);
                 }
-                const bool shouldUpload = PlaceholderDetector::ShouldUploadCaptureFrame(cls);
+                knownPlaceholder = m_placeholderDetector &&
+                    m_placeholderDetector->IsKnownPlaceholder(fp, fmt, placeholderFamily);
+                shouldUpload = PlaceholderDetector::ShouldUploadCaptureFrame(cls);
+
+                const bool gc553Pro = placeholderFamily ==
+                    PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
+                const bool unstableKnownGc553Pro = gc553Pro &&
+                    cls == PlaceholderDetector::FrameClassification::Real &&
+                    knownPlaceholder;
+                if (unstableKnownGc553Pro && m_captureFrameValidForSession &&
+                    !m_gc553ProPlaceholderTransitionGuardConsumed) {
+                    // Keep the #16 detector safeguard (unstable known match =>
+                    // Real) intact, but do not expose the card's first
+                    // transition frame after an already-presented real frame.
+                    shouldUpload = false;
+                    m_gc553ProPlaceholderTransitionGuardConsumed = true;
+                    AppLog(L"GC553Pro: quarantined one unstable known-placeholder transition frame");
+                }
                 freshFrameIsRealSource =
                     shouldUpload;
 
-                const bool gc553Pro =
-                    placeholderFamily == PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
                 if (gc553Pro) {
                     if (cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder) {
                         m_gc553ProStartupBlackHint.ConfirmPlaceholder();
@@ -1995,6 +2016,21 @@ void Application::Run()
                 freshFrameIsRealSource = true;
             }
 
+            // Re-arm only when a non-placeholder Real frame follows an actual
+            // fresh Candidate/Confirmed placeholder classification. Ordinary
+            // Real -> Real motion can never repeatedly trigger the guard.
+            const bool gc553Pro = placeholderFamily ==
+                PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
+            const bool candidateOrConfirmedPlaceholder =
+                cls == PlaceholderDetector::FrameClassification::CandidatePlaceholder ||
+                cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder;
+            if (gc553Pro && cls == PlaceholderDetector::FrameClassification::Real &&
+                !knownPlaceholder && m_gc553ProPreviousFreshFrameWasPlaceholder) {
+                m_gc553ProPlaceholderTransitionGuardConsumed = false;
+            }
+            m_gc553ProPreviousFreshFrameWasPlaceholder =
+                gc553Pro && candidateOrConfirmedPlaceholder;
+
             m_lastPresentationFrameFresh = true;
             m_lastPresentationClassification = cls;
 
@@ -2014,7 +2050,7 @@ void Application::Run()
             //   InvalidTransitionalFrame: structural zero-filled sample;
             //                             suppress without touching detector
             //                             or source-liveness state.
-            if (PlaceholderDetector::ShouldUploadCaptureFrame(cls)) {
+            if (shouldUpload) {
                 m_renderer->UpdateCaptureTexture(frame.data, frame.size, frame.width, frame.height);
                 m_captureFrameValidForSession = true;
                 auto captureEnd = Clock::now();
@@ -3463,6 +3499,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     // may retain GPU resources, but they are not presentable until a newly
     // accepted Real frame from the reopened stream arrives.
     m_captureFrameValidForSession = false;
+    m_gc553ProPlaceholderTransitionGuardConsumed = false;
+    m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
     if (m_renderer) m_renderer->InvalidateCaptureFrame();
 
@@ -3998,6 +4036,8 @@ bool Application::RecoverFromDeviceLost()
     // differ all hold D3D11 objects created from the renderer's device, so they
     // must release before the device they were built on.
     m_captureFrameValidForSession = false;
+    m_gc553ProPlaceholderTransitionGuardConsumed = false;
+    m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
     m_frameDiffer.reset();
     m_nisUpscaler.reset();
