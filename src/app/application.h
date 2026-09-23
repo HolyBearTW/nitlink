@@ -487,6 +487,7 @@ private:
     PlaceholderDetector::CaptureFormatKind m_placeholderCaptureFormat =
         PlaceholderDetector::CaptureFormatKind::BGRA;
     bool m_placeholderCaptureMetadataReady = false;
+    StartupBlackFrameHint m_gc553ProStartupBlackHint;
 
     // Copy gate for the capture thread. The 4K Pro can deliver its NO SIGNAL
     // image at over 200 frames per second, so copying full frames wastes

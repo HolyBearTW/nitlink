@@ -35,4 +35,40 @@ constexpr PresentationState DecidePresentation(bool noSignalLatched,
     return PresentationState::WaitingForCapture;
 }
 
+// A zero-zone GC553Pro frame can be legal FULL-range black content. Keep it
+// accepted as Real; this state only controls a temporary presentation hint.
+// The hint ends when visible content arrives or the known placeholder is
+// confirmed, and does not affect source liveness or detector classification.
+struct StartupBlackFrameHint {
+    bool eligible = true;
+    bool visible = false;
+
+    constexpr void ObserveFrame(bool acceptedReal, bool zeroLumaZones) noexcept {
+        if (!eligible || !acceptedReal) return;
+        if (zeroLumaZones) {
+            visible = true;
+        } else {
+            eligible = false;
+            visible = false;
+        }
+    }
+
+    constexpr void ConfirmPlaceholder() noexcept {
+        eligible = false;
+        visible = false;
+    }
+
+    constexpr void Reset() noexcept {
+        eligible = true;
+        visible = false;
+    }
+};
+
+constexpr bool ShouldDrawStartupBlackFrameHint(bool isGc553Pro,
+                                               PresentationState state,
+                                               const StartupBlackFrameHint& hint) noexcept
+{
+    return isGc553Pro && state == PresentationState::Capture && hint.visible;
+}
+
 } // namespace NitLink

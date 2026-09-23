@@ -622,7 +622,8 @@ void Overlay::Render(const Stats& stats)
 }
 
 void Overlay::DrawStatusMessage(uint32_t windowW, uint32_t windowH,
-                                const wchar_t* localizationKey)
+                                const wchar_t* localizationKey,
+                                float backgroundOpacity)
 {
     if (DeviceIsLost() || !localizationKey ||
         !m_initialized || !m_d2dContext || !m_d2dTargetBitmap ||
@@ -632,8 +633,9 @@ void Overlay::DrawStatusMessage(uint32_t windowW, uint32_t windowH,
 
     const float w = static_cast<float>(windowW);
     const float h = static_cast<float>(windowH);
+    backgroundOpacity = std::clamp(backgroundOpacity, 0.0f, 1.0f);
     const D2D1_COLOR_F backgroundColor =
-        D2D1::ColorF(0.047f, 0.051f, 0.059f, 1.0f);
+        D2D1::ColorF(0.047f, 0.051f, 0.059f, backgroundOpacity);
     const D2D1_COLOR_F textColor =
         D2D1::ColorF(0.910f, 0.918f, 0.929f, 1.0f);
 

@@ -946,6 +946,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_lastMotionTime = m_lastGoodFrameTime;
     m_lastContentTime = m_lastGoodFrameTime;
     m_captureFrameValidForSession = false;
+    m_gc553ProStartupBlackHint.Reset();
     if (m_renderer) m_renderer->InvalidateCaptureFrame();
 
     const bool captureStarted = m_captureDevice->StartCapture(
@@ -1963,6 +1964,15 @@ void Application::Run()
                 const bool gc553Pro =
                     placeholderFamily == PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro;
                 if (gc553Pro) {
+                    if (cls == PlaceholderDetector::FrameClassification::ConfirmedPlaceholder) {
+                        m_gc553ProStartupBlackHint.ConfirmPlaceholder();
+                    } else {
+                        const bool zeroLumaZones = std::all_of(
+                            fp.begin(), fp.end(), [](uint8_t value) { return value == 0; });
+                        m_gc553ProStartupBlackHint.ObserveFrame(shouldUpload, zeroLumaZones);
+                    }
+                }
+                if (gc553Pro) {
                     const std::wstring formatLabel = PlaceholderFormatName(fmt);
                     if (cls == PlaceholderDetector::FrameClassification::CandidatePlaceholder &&
                         !m_placeholderCandidateLogged) {
@@ -2155,6 +2165,11 @@ void Application::Run()
                 showNoSignalNow,
                 captureReady,
                 m_captureTransitionActive);
+        const bool showGc553ProStartupWaitingCaption =
+            ShouldDrawStartupBlackFrameHint(
+                m_placeholderDeviceFamily ==
+                    PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro,
+                presentationState, m_gc553ProStartupBlackHint);
 
         // Keep the diagnostic transition-only: it reports the state change,
         // the current renderer/app readiness split, the latest classification,
@@ -2668,6 +2683,15 @@ void Application::Run()
                 }
             }
 
+            if (showGc553ProStartupWaitingCaption && m_overlay) {
+                m_overlay->DrawStatusMessage(
+                    m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
+                    L"overlay.waitingForSource", 0.72f);
+                if (m_overlay->IsUsingOffscreen()) {
+                    m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
+                }
+            }
+
             // Transient toast (separate D2D pass on top of everything else).
             // Fades over the last 500 ms so it doesn't pop out.
             if (m_overlay && !m_toastText.empty()) {
@@ -2831,6 +2855,12 @@ void Application::Run()
             stats.nisActive        = m_nisUpscaler && m_config && m_config->nisEnabled;
             stats.colorExpansion   = m_config && m_config->colorExpansion;
             m_overlay->Render(stats);
+        }
+
+        if (showGc553ProStartupWaitingCaption && m_overlay) {
+            m_overlay->DrawStatusMessage(
+                m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
+                L"overlay.waitingForSource", 0.72f);
         }
 
         // Transient toast: see matching block in the HDR branch above.
@@ -3433,6 +3463,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // may retain GPU resources, but they are not presentable until a newly
     // accepted Real frame from the reopened stream arrives.
     m_captureFrameValidForSession = false;
+    m_gc553ProStartupBlackHint.Reset();
     if (m_renderer) m_renderer->InvalidateCaptureFrame();
 
     // Tear down. StopCapture joins the worker so once it returns no more
@@ -3967,6 +3998,7 @@ bool Application::RecoverFromDeviceLost()
     // differ all hold D3D11 objects created from the renderer's device, so they
     // must release before the device they were built on.
     m_captureFrameValidForSession = false;
+    m_gc553ProStartupBlackHint.Reset();
     m_frameDiffer.reset();
     m_nisUpscaler.reset();
     m_overlay.reset();
