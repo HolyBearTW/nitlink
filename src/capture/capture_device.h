@@ -25,6 +25,8 @@ struct CaptureFormat {
     uint32_t width  = 3840;
     uint32_t height = 2160;
     uint32_t fps    = 60;
+    uint32_t fpsNumerator = 60;
+    uint32_t fpsDenominator = 1;
     uint32_t stride = 0; // bytes per row
     GUID     subtype{};  // MF media subtype (NV12, YUY2, RGB32, etc.)
     // Row order of the captured frames. Media Foundation defaults to
@@ -70,6 +72,8 @@ struct P010SelectionNotice {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t fps = 0;
+    uint32_t fpsNumerator = 0;
+    uint32_t fpsDenominator = 1;
 };
 
 // One native media type as exposed by the capture source. Populated during
@@ -81,6 +85,8 @@ struct AvailableFormat {
     uint32_t width      = 0;
     uint32_t height     = 0;
     uint32_t fps        = 0;
+    uint32_t fpsNumerator = 0;
+    uint32_t fpsDenominator = 1;
     GUID     subtype{};
     bool     interlaced = false;
 };
@@ -125,9 +131,12 @@ public:
         uint32_t     height = 0;
         uint32_t     fps    = 0;
         std::wstring format;  // "NV12" / "P010" / "BGRA" / "" for Auto
+        uint32_t     fpsNumerator = 0;
+        uint32_t     fpsDenominator = 1;
 
         bool isFullAuto() const {
-            return width == 0 && height == 0 && fps == 0 && format.empty();
+            return width == 0 && height == 0 && fps == 0 &&
+                   fpsNumerator == 0 && format.empty();
         }
     };
     void SetFormatOverride(const OverrideSpec& ov) { m_overrideSpec = ov; }
@@ -155,6 +164,14 @@ public:
         return m_publishedFormat;
     }
     std::wstring  GetDeviceName()   const { return m_deviceName; }
+    bool HasPublishedFormatForDevice(const DeviceInfo& device) const {
+        std::lock_guard<std::mutex> lock(m_formatMutex);
+        if (!m_hasPublishedFormat) return false;
+        if (!device.symbolicLink.empty() && !m_publishedDeviceIdentity.empty()) {
+            return device.symbolicLink == m_publishedDeviceIdentity;
+        }
+        return device.name == m_publishedDeviceName;
+    }
     bool          IsCapturing()     const { return m_capturing; }
 
     // Enumerate every native media type this device exposes via Media
@@ -210,12 +227,16 @@ private:
     void CaptureLoop();
     bool NegotiateFormat(IMFMediaSource* source);
     HRESULT SetOutputFrameRate(IMFMediaType* outputType);
+    void UpdateP010SelectionNoticeFromActual(const CaptureFormat& actualFormat);
 
     // Commit the finalized m_format into the mutex-guarded m_publishedFormat.
     // Called once at the end of a successful Open(), after every format field
     // has been negotiated. This is the single synchronization point that makes
     // GetOutputFormat() safe to call from any thread.
     void PublishFormat();
+    // End the current capture session's published-format ownership. A new
+    // Open() must publish its own negotiated format before policy may reuse it.
+    void ClearPublishedFormat();
 
     ComPtr<IMFMediaSource>  m_source;
     ComPtr<IMFSourceReader> m_reader;
@@ -229,18 +250,18 @@ private:
     // directly; they read m_publishedFormat via GetOutputFormat().
     CaptureFormat   m_format;
 
-    // Native GC553Pro auto selection retains the exact rate for the reader
-    // request; the integer FPS used by the UI cannot represent 59.94 Hz.
-    ComPtr<IMFMediaType> m_nativeP010Type;
-
     // Thread-safe published copy of m_format, committed by PublishFormat() and
     // read under m_formatMutex by GetOutputFormat(). Decouples the multi-field
     // struct read from the scattered writes so readers never observe a torn
     // (partially updated) value.
     CaptureFormat        m_publishedFormat;
     mutable std::mutex   m_formatMutex;
+    bool                 m_hasPublishedFormat = false;
+    std::wstring         m_publishedDeviceName;
+    std::wstring         m_publishedDeviceIdentity;
 
     std::wstring    m_deviceName;
+    std::wstring    m_deviceIdentity;
 
     // The frame callback and a mutex guarding swaps of it. StartCapture
     // assigns m_callback; the capture worker reads + invokes it once per

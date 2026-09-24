@@ -1,0 +1,170 @@
+#pragma once
+
+#include <cstdint>
+
+namespace NitLink {
+
+// RequestP010() describes a future Open() attempt. The negotiated subtype
+// returned by CaptureDevice::GetOutputFormat() describes the stream that is
+// actually running and is therefore the only input to this runtime policy.
+enum class NegotiatedCaptureFormatKind {
+    Other,
+    NV12,
+    P010,
+};
+
+// The user's format preference is kept separate from the negotiated stream.
+// An empty format override is Auto, even when dimensions or FPS are pinned.
+enum class CaptureFormatPreference {
+    Auto,
+    ManualNV12,
+    ManualP010,
+    ManualOther,
+};
+
+// Frame rate is one logical value. Any application-side integer-rate
+// override (including 4K X HDR clamps and follow-source updates) must update
+// the display FPS and the exact rational fields together.
+constexpr void SetIntegerFrameRateFields(
+    uint32_t& fps,
+    uint32_t& fpsNumerator,
+    uint32_t& fpsDenominator,
+    uint32_t value) noexcept
+{
+    fps = value;
+    fpsNumerator = value;
+    fpsDenominator = 1;
+}
+
+// Keep the existing non-GC553Pro source-detection policy intact, except when
+// the user has explicitly pinned a manual pixel format. A manual SDR format
+// is an accepted constraint and must not be turned into a repeated P010
+// request merely because the HDMI source reports HDR10.
+constexpr bool ApplyManualFormatPreferenceToNonGcPolicy(
+    bool sourcePolicyWantsP010,
+    CaptureFormatPreference preference) noexcept
+{
+    if (preference == CaptureFormatPreference::ManualNV12 ||
+        preference == CaptureFormatPreference::ManualOther) {
+        return false;
+    }
+    if (preference == CaptureFormatPreference::ManualP010) {
+        return true;
+    }
+    return sourcePolicyWantsP010;
+}
+
+// A published negotiated format can only be reused by the policy when it
+// belongs to the currently selected capture device/session. A device switch
+// must begin with an unknown negotiated subtype until the new Open() publishes
+// its own format.
+constexpr NegotiatedCaptureFormatKind ScopedNegotiatedCaptureFormat(
+    bool belongsToCurrentDeviceSession,
+    NegotiatedCaptureFormatKind actualFormat) noexcept
+{
+    return belongsToCurrentDeviceSession
+        ? actualFormat
+        : NegotiatedCaptureFormatKind::Other;
+}
+
+// Records a completed P010 request, not the mutable RequestP010 preference.
+// The application resets it before closing the session or changing policy.
+class NonGcP010FallbackState {
+public:
+    void Reset() noexcept { m_accepted = false; }
+    void ObservePolicy(bool desiredP010, bool currentSessionKnown,
+                       bool forceReopen) noexcept {
+        if (!desiredP010 || !currentSessionKnown || forceReopen) Reset();
+    }
+    void CompleteOpen(bool attemptedP010, bool actualP010) noexcept {
+        m_accepted = attemptedP010 && !actualP010;
+    }
+    bool Accepted() const noexcept { return m_accepted; }
+private:
+    bool m_accepted = false;
+};
+
+// A non-GC capture stream that honored a non-format override (for example,
+// resolution-only with Format=Auto) may legitimately negotiate NV12 even when
+// source policy prefers P010. Once that concrete fallback is running, the
+// render-loop reconcile must not reopen it every iteration merely because the
+// requested and negotiated subtypes differ. Explicit/forced reconciles still
+// retry the preference, and a fully automatic capture remains policy-driven.
+constexpr bool ShouldReopenNonGcCapture(
+    bool desiredP010,
+    NegotiatedCaptureFormatKind actualFormat,
+    bool actualFormatKnown,
+    CaptureFormatPreference preference,
+    bool hasNonFormatOverride,
+    bool acceptedP010FallbackForCurrentSession) noexcept
+{
+    const bool actualP010 = actualFormat == NegotiatedCaptureFormatKind::P010;
+    const bool acceptedAutoFallback =
+        preference == CaptureFormatPreference::Auto &&
+        hasNonFormatOverride &&
+        actualFormatKnown &&
+        acceptedP010FallbackForCurrentSession &&
+        desiredP010 &&
+        !actualP010;
+
+    return acceptedAutoFallback ? false : desiredP010 != actualP010;
+}
+
+struct Gc553ProOutputPolicy {
+    bool desiredCaptureIsP010 = false;
+    bool reopenCapture = false;
+    bool sourceIsHDR10 = false;
+    bool sdrFromHdrTonemap = false;
+    bool hdrRejected = false;
+};
+
+// GC553Pro does not expose a supported vendor HDR source-state interface. This
+// policy only decouples an already negotiated capture stream from the output
+// preference; it does not claim that an SDR source is safe to reinterpret as
+// P010.
+constexpr Gc553ProOutputPolicy DecideGc553ProOutputPolicy(
+    NegotiatedCaptureFormatKind actualFormat,
+    bool hdrOutputEnabled,
+    CaptureFormatPreference preference = CaptureFormatPreference::Auto) noexcept
+{
+    const bool actualP010 = actualFormat == NegotiatedCaptureFormatKind::P010;
+
+    // A manually selected non-P010 format is a hard constraint. HDR output is
+    // rejected by the caller instead of triggering a P010 request/reopen.
+    if (preference == CaptureFormatPreference::ManualNV12 ||
+        preference == CaptureFormatPreference::ManualOther) {
+        return {
+            false,
+            false,
+            actualP010,
+            actualP010 && !hdrOutputEnabled,
+            hdrOutputEnabled,
+        };
+    }
+
+    // Manual P010 remains P010 for both output modes. If a previous attempt
+    // did not actually negotiate P010, do not turn an output toggle into an
+    // automatic retry loop; an explicit override/reopen can retry it.
+    if (preference == CaptureFormatPreference::ManualP010) {
+        return {
+            true,
+            false,
+            actualP010,
+            actualP010 && !hdrOutputEnabled,
+            false,
+        };
+    }
+
+    // Auto promotes NV12 to P010 only when HDR output is requested. Once P010
+    // is actually running, retain it for SDR tone mapping as well.
+    const bool desiredP010 = actualP010 || hdrOutputEnabled;
+    return {
+        desiredP010,
+        desiredP010 != actualP010,
+        actualP010,
+        actualP010 && !hdrOutputEnabled,
+        false,
+    };
+}
+
+} // namespace NitLink
