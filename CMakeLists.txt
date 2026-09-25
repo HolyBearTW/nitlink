@@ -289,4 +289,14 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/src
     )
     add_test(NAME capture_device_names_cache COMMAND NitLinkCaptureDeviceNamesTests)
+
+    add_executable(NitLinkFrameBufferActivityTests
+        tests/frame_buffer_activity_tests.cpp
+        src/capture/frame_buffer.cpp
+        src/capture/frame_buffer.h
+    )
+    target_include_directories(NitLinkFrameBufferActivityTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME frame_buffer_activity COMMAND NitLinkFrameBufferActivityTests)
 endif()

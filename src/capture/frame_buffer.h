@@ -22,12 +22,13 @@ public:
     FrameBuffer(uint32_t width, uint32_t height, uint32_t stride);
 
     // Lifetime / teardown contract:
-    //   The capture worker thread is the producer (calls Write() once per
-    //   captured frame); the render thread is the consumer (calls Read()).
+    //   The capture worker thread is the producer (calls Write() for accepted
+    //   frames and NotifyFrameActivity() for filtered samples); the render
+    //   thread is the consumer (calls Read()).
     //   Concurrent Write()/Read() is the whole point of the triple buffer and
     //   is safe. What is NOT safe is destroying this object while the producer
-    //   can still call Write(): the worker would memcpy into freed storage and
-    //   lock a freed m_swapMutex, a use-after-free.
+    //   can still call Write() or NotifyFrameActivity(): it could access freed
+    //   storage or a closed event.
     //
     //   Every owner must therefore JOIN the capture worker first
     //   (CaptureDevice::StopCapture joins the worker thread) BEFORE freeing the
@@ -47,13 +48,16 @@ public:
     // Returns true if a new frame is available since last read
     bool Read(FrameData& outFrame);
 
-    // Block the calling (render) thread until the next Write() delivers a fresh
-    // frame, or timeoutMs elapses. Powers the low-latency arrival-driven
-    // present: the render loop wakes the instant the capture thread hands over a
-    // frame, instead of on the swap chain's independent clock -- removing the
-    // capture-vs-present phase beat that ages frames up to ~one refresh. The
-    // timeout keeps the loop responsive if frames stop (signal loss).
-    void WaitForFrame(unsigned long timeoutMs);
+    // Block the calling (render) thread until capture activity is reported or
+    // timeoutMs elapses. Activity usually accompanies a Write(), but filtered
+    // samples may also notify without making a frame available; Read() remains
+    // authoritative for frame availability. Returns true when activity wakes
+    // the waiter, false on timeout or if the event could not be created.
+    bool WaitForFrame(unsigned long timeoutMs);
+
+    // Notify the render loop about a capture sample that was intentionally not
+    // written to the triple buffer (for example, a held placeholder frame).
+    void NotifyFrameActivity();
 
     // Stats
     uint64_t GetFramesWritten()       const { return m_framesWritten; }
@@ -132,9 +136,9 @@ private:
     std::atomic<bool>     m_signalActive{false};
 
     // Auto-reset Win32 Event (HANDLE, stored as void* to keep <windows.h> out of
-    // this header). Signaled by Write() on every captured frame; the render loop
-    // blocks on it via WaitForFrame() for low-latency arrival-driven present.
-    void* m_frameReadyEvent = nullptr;
+    // this header). Signals capture activity, which may or may not leave a frame
+    // available for Read().
+    void* m_frameActivityEvent = nullptr;
 };
 
 } // namespace NitLink

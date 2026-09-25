@@ -3287,6 +3287,9 @@ bool Application::DropPlaceholderFrame(const uint8_t* data, uint32_t size)
         return false;
     }
     m_placeholderDropped.fetch_add(1, std::memory_order_relaxed);
+    // This sample is intentionally filtered before FrameBuffer::Write(). Wake
+    // the source-paced render loop without making a readable frame available.
+    if (m_frameBuffer) m_frameBuffer->NotifyFrameActivity();
     return true;
 }
 
