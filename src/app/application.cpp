@@ -1,4 +1,5 @@
 #include "application.h"
+#include "capture_device_names.h"
 #include "WebViewSettings.h"
 #include "game_database.h"
 #include "localization.h"
@@ -495,6 +496,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     if (startupOverlayOk) ApplyNoSignalSettings();
 
     auto devices = DeviceEnumerator::FindCaptureDevices();
+    m_cachedCaptureDeviceNames.clear();
+    m_cachedCaptureDeviceNames.reserve(devices.size());
+    for (const auto& device : devices) {
+        m_cachedCaptureDeviceNames.push_back(device.name);
+    }
     {
         std::wstringstream ss;
         ss << L"Initialize: found " << devices.size() << L" capture device(s)";
@@ -1366,12 +1372,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         // UI-agnostic so a hotkey, a tray menu, or external tooling that
         // drives WebView2 directly can dispatch the same messages.
         if (action == L"getDeviceList") {
-            // Re-enumerate and push state. PushSettingsState calls
-            // DeviceEnumerator::FindCaptureDevices() each invocation,
-            // so the JS side always receives the live list. This is
-            // the lightweight cousin of refreshDevices: no log line,
-            // no implication of user intent.
-            PushSettingsState();
+            // Opening the Source list is an explicit request for fresh
+            // devices. Ordinary settings pushes stay on the cached list.
+            PushSettingsState(/*refreshCaptureDevices=*/true);
             return;
         }
         if (action == L"refreshDevices") {
@@ -1379,7 +1382,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // user-initiated refresh. Lets DebugView distinguish a UI
             // refresh-button click from an automatic state push.
             AppLog(L"WebView2: user requested device refresh");
-            PushSettingsState();
+            PushSettingsState(/*refreshCaptureDevices=*/true);
             return;
         }
         if (action == L"setPreferredDevice") {
@@ -4489,6 +4492,11 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
 
     // Resolve the user-provided name against the live enumeration.
     auto devices = DeviceEnumerator::FindCaptureDevices();
+    m_cachedCaptureDeviceNames.clear();
+    m_cachedCaptureDeviceNames.reserve(devices.size());
+    for (const auto& device : devices) {
+        m_cachedCaptureDeviceNames.push_back(device.name);
+    }
     if (devices.empty()) {
         AppLog(L"SwitchCaptureDevice: enumeration returned no devices");
         return false;
@@ -4668,9 +4676,23 @@ const wchar_t* FormatGuidToString(const GUID& g)
     return L"Unknown";
 }
 
-void Application::PushSettingsState()
+void Application::PushSettingsState(bool refreshCaptureDevices)
 {
     if (!m_webviewSettings || !m_config) return;
+
+    // Media Foundation enumeration can block the UI thread. Only explicit
+    // Source-list requests pass true; F1 opens and ordinary state updates
+    // reuse the startup/switch/refresh cache.
+    RefreshCaptureDeviceNamesIfRequested(
+        refreshCaptureDevices, m_cachedCaptureDeviceNames, [] {
+            const auto devices = DeviceEnumerator::FindCaptureDevices();
+            std::vector<std::wstring> names;
+            names.reserve(devices.size());
+            for (const auto& device : devices) {
+                names.push_back(device.name);
+            }
+            return names;
+        });
 
     // Build a JSON state blob and push to JS via WebView2 PostWebMessageAsJson.
     // Schema must match what nitlink-menu.html's applyState() expects.
@@ -4871,10 +4893,9 @@ void Application::PushSettingsState()
     // picked a device.
     {
         js << L",\"captureDevices\":[";
-        auto devices = DeviceEnumerator::FindCaptureDevices();
-        for (size_t i = 0; i < devices.size(); ++i) {
-            js << L"\"" << JsonEscapeWide(devices[i].name) << L"\"";
-            if (i + 1 < devices.size()) js << L",";
+        for (size_t i = 0; i < m_cachedCaptureDeviceNames.size(); ++i) {
+            js << L"\"" << JsonEscapeWide(m_cachedCaptureDeviceNames[i]) << L"\"";
+            if (i + 1 < m_cachedCaptureDeviceNames.size()) js << L",";
         }
         js << L"]";
 

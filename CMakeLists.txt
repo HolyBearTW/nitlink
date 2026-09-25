@@ -280,4 +280,13 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/src
     )
     add_test(NAME config_round_trip COMMAND NitLinkConfigTests)
+
+    add_executable(NitLinkCaptureDeviceNamesTests
+        tests/capture_device_names_tests.cpp
+        src/app/capture_device_names.h
+    )
+    target_include_directories(NitLinkCaptureDeviceNamesTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME capture_device_names_cache COMMAND NitLinkCaptureDeviceNamesTests)
 endif()

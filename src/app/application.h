@@ -66,7 +66,7 @@ private:
     // toggles/sliders/labels reflect reality. Called on open, on hotkey-
     // driven state changes (Alt+H for HDR), and on the once-per-second
     // stats tick while the menu is visible.
-    void PushSettingsState();
+    void PushSettingsState(bool refreshCaptureDevices = false);
     void SetPiPOpacity(float opacity);
 
     // Game selector helpers. ApplyGameSettings loads the per-game settings
@@ -410,6 +410,9 @@ private:
     // (handles user-replug edge cases) and falls back to this cached copy
     // if enumeration returns empty mid-session.
     DeviceInfo m_currentDeviceInfo{};
+    // Friendly names are refreshed at startup, explicit Source-list refresh,
+    // and live device switches. Ordinary settings pushes reuse this cache.
+    std::vector<std::wstring> m_cachedCaptureDeviceNames;
     NonGcP010FallbackState m_nonGcP010Fallback;
 
     // Performance tracking
