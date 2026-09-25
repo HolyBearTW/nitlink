@@ -140,8 +140,9 @@ const wchar_t* FormatGuidToString(const GUID& g);
 
 static std::wstring P010UnavailableWarning(const CaptureFormat& format)
 {
-    return L"HDR requested, but no compatible P010 mode was negotiated; HDR was disabled and " +
-           std::wstring(FormatGuidToString(format.subtype)) + L" capture is active.";
+    return Localization::Instance().Format(
+        L"toast.p010Unavailable",
+        {{L"format", FormatGuidToString(format.subtype)}});
 }
 
 static std::wstring FormatNoticeFrameRate(const P010SelectionNotice& notice)
