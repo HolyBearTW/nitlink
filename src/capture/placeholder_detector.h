@@ -7,7 +7,7 @@
 
 namespace NitLink {
 
-// PlaceholderDetector: recognizes Elgato NO SIGNAL placeholder frames by
+// PlaceholderDetector: recognizes known capture-device NO SIGNAL placeholder frames by
 // content fingerprint, so the run loop can suppress them and let the
 // in-app no-signal debounce take over.
 //
@@ -28,11 +28,11 @@ namespace NitLink {
 //   placeholder layout from arbitrary content.
 //
 // Matching:
-//   A new fingerprint matches a known one if (a) the known entry was
-//   captured in the same capture format as the current frame (BGRA vs NV12
-//   vs P010 have different luma encodings, so cross-format comparisons are
-//   meaningless and were a real source of false positives on the 4K S NV12
-//   SDR path) and (b) every zone differs by at most kZoneTolerance (8/255,
+//   A new fingerprint matches a known one if (a) the known entry belongs to
+//   the same device family, (b) it was captured in the same capture format as
+//   the current frame (BGRA vs NV12 vs P010 have different luma encodings, so
+//   cross-format comparisons are meaningless), and (c) every zone differs by
+//   at most kZoneTolerance (8/255,
 //   about 3%). Process() additionally requires:
 //     - kRequiredConsecutiveMatches matching frames in a row, AND
 //     - each frame in the streak is temporally STABLE relative to the
@@ -47,17 +47,13 @@ namespace NitLink {
 //       game intro that happens to fall within zone tolerance of a baked
 //       placeholder from being confirmed.
 //
-// Adding more variants: each Elgato firmware / resolution / capture-
-// format combination encodes the NO SIGNAL placeholder differently
-// because BGRA, NV12, and P010 each read luma through a different path.
-// The shipping list covers BGRA (4K Pro SDR) and P010 (4K Pro HDR). To
-// capture a new variant on hardware, press the Ctrl+F5 debug hotkey in
-// Application while the placeholder is on screen: LogFingerprint prints
-// the nine-byte fingerprint to OutputDebugString. Paste the result into
-// kKnownPlaceholders inside placeholder_detector.cpp alongside the
-// CaptureFormatKind that was active when the fingerprint was taken; the
-// runtime matcher only considers entries whose format matches the
-// current capture format.
+// Adding more variants: each device family / resolution / capture-format
+// combination can encode the NO SIGNAL placeholder differently. To capture
+// a new variant on hardware, press the Ctrl+F5 debug hotkey in Application
+// while the placeholder is on screen. The diagnostic prints the device
+// family, negotiated subtype, size, fps, and nine-byte fingerprint to
+// OutputDebugString. Add a new entry only after the hardware and format are
+// verified; the runtime matcher requires both the family and format to match.
 class PlaceholderDetector {
 public:
     using Fingerprint = std::array<uint8_t, 9>;
@@ -68,11 +64,23 @@ public:
     // negotiated MF subtype GUID to this enum.
     enum class CaptureFormatKind { BGRA, NV12, P010 };
 
-    // Per-frame classification returned by Process().
-    //   Real                  : no match against any known placeholder.
+    // Kept local to the detector to avoid making this capture-independent
+    // component include capture-device policy headers. Application maps the
+    // selected device policy to this small enum before calling Process().
+    enum class PlaceholderDeviceFamily {
+        Unknown,
+        Elgato,
+        AverMediaGC553Pro,
+    };
+
+    // Per-frame classification returned by Process() or the application-side
+    // raw-sample gate. InvalidTransitionalFrame is deliberately not produced
+    // by Process(): it is identified before Process() so it cannot alter the
+    // placeholder detector's temporal streak.
+    //   Real                  : no known match, or temporal instability.
     //                           Caller should upload, bump last-good-frame
     //                           timer, run FrameDiffer normally.
-    //   CandidatePlaceholder  : matched a known placeholder, but the
+    //   CandidatePlaceholder  : stable match against a known placeholder, but the
     //                           kRequiredConsecutiveMatches streak hasn't
     //                           been reached yet. Caller should SUPPRESS
     //                           upload immediately (so even the first
@@ -89,22 +97,72 @@ public:
     // The first non-matching frame after any candidate / confirmed streak
     // resets both the streak counter and the latch and returns Real, so
     // recovery is one-frame fast.
-    enum class FrameClassification { Real, CandidatePlaceholder, ConfirmedPlaceholder };
+    enum class FrameClassification {
+        Real,
+        CandidatePlaceholder,
+        ConfirmedPlaceholder,
+        InvalidTransitionalFrame,
+    };
 
     PlaceholderDetector() = default;
 
     // Pure function. Computes the 9-byte fingerprint of one frame. Safe to
     // call on any frame regardless of detector state.
     static Fingerprint Compute(const uint8_t* data, uint32_t size,
-                                uint32_t width, uint32_t height,
-                                CaptureFormatKind format);
+                               uint32_t width, uint32_t height,
+                               CaptureFormatKind format);
+
+    // Detect only a structurally invalid transitional sample: deterministic
+    // samples from both the luma and chroma planes are raw zero. This is not a
+    // black-frame detector. A legitimate black NV12/P010 frame has neutral
+    // chroma (128 / 512 respectively) and therefore does not match. The
+    // fixed sample set keeps the startup hot path bounded even at 4K.
+    static bool IsInvalidTransitionalFrame(const uint8_t* data, uint32_t size,
+                                           uint32_t width, uint32_t height,
+                                           CaptureFormatKind format);
+
+    // GC553Pro startup-specific transitional sample gate. This is deliberately
+    // narrower than IsInvalidTransitionalFrame(): it only recognizes the
+    // hardware's pre-first-real-frame pattern (zero luma plus neutral chroma).
+    // NV12 and P010 are LIMITED-only: zero luma with neutral chroma is legal
+    // FULL-range black. Once the current capture session has accepted a genuine
+    // Real frame the rule is disabled.
+    // The raw sample predicate itself is deliberately stricter than a
+    // fingerprint match: a known device placeholder has non-zero luma in its
+    // verified zones and cannot satisfy the zero-luma/neutral-chroma rule.
+    static bool IsGc553ProNeutralTransitionalFrame(
+        const uint8_t* data, uint32_t size, uint32_t width, uint32_t height,
+        CaptureFormatKind format, PlaceholderDeviceFamily deviceFamily,
+        bool limitedRange, bool hasAcceptedRealFrame);
 
     // Update the detector with the latest frame's fingerprint and return
     // the classification. The format parameter identifies which capture
     // format the fingerprint was computed against; only known fingerprints
     // captured in the same format are eligible to match. See
     // FrameClassification above for the full state-machine semantics.
-    FrameClassification Process(const Fingerprint& fp, CaptureFormatKind format);
+    FrameClassification Process(
+        const Fingerprint& fp,
+        CaptureFormatKind format,
+        PlaceholderDeviceFamily deviceFamily = PlaceholderDeviceFamily::Unknown);
+
+    // A placeholder candidate is already unsafe to upload: the caller must
+    // suppress it immediately, before the temporal confirmation gate finishes.
+    // InvalidTransitionalFrame is likewise never uploadable.
+    static bool ShouldUploadCaptureFrame(FrameClassification classification) {
+        return classification == FrameClassification::Real;
+    }
+
+    // Read-only diagnostic query using the same family/format-scoped table as
+    // Process(). This does not alter detector state.
+    bool IsKnownPlaceholder(const Fingerprint& fp,
+                            CaptureFormatKind format,
+                            PlaceholderDeviceFamily deviceFamily) const {
+        return MatchesAnyKnown(fp, format, deviceFamily);
+    }
+
+    // Native capability query backed by the same table as Process().
+    bool HasKnownPlaceholder(PlaceholderDeviceFamily deviceFamily,
+                             CaptureFormatKind format) const;
 
     // Drop only unchanged fingerprints at the producer. A luma change must
     // reach the detector's stability check so returning source content can
@@ -132,7 +190,8 @@ public:
 
 private:
     static bool ZoneMatch(const Fingerprint& a, const Fingerprint& b, uint8_t tolerance);
-    bool MatchesAnyKnown(const Fingerprint& fp, CaptureFormatKind format) const;
+    bool MatchesAnyKnown(const Fingerprint& fp, CaptureFormatKind format,
+                         PlaceholderDeviceFamily deviceFamily) const;
 
     // How close two zone bytes have to be to "match": 4/255, about 1.5%
     // tolerance. Real Elgato P010 placeholder fingerprints captured via

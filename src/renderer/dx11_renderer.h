@@ -41,6 +41,11 @@ public:
 
     void UpdateCaptureTexture(const uint8_t* data, uint32_t size, uint32_t width, uint32_t height);
 
+    // Invalidate presentation state from the previous capture session without
+    // destroying the renderer resources. The next accepted frame restores it.
+    void InvalidateCaptureFrame() { m_hasFrame = false; }
+    bool HasCaptureFrame() const { return m_hasFrame; }
+
     bool SaveScreenshot(const std::wstring& path);
 
     // Runtime pipeline knobs (wired up by the settings panel).

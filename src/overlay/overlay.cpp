@@ -621,6 +621,59 @@ void Overlay::Render(const Stats& stats)
     }
 }
 
+void Overlay::DrawStatusMessage(uint32_t windowW, uint32_t windowH,
+                                const wchar_t* localizationKey,
+                                float backgroundOpacity)
+{
+    if (DeviceIsLost() || !localizationKey ||
+        !m_initialized || !m_d2dContext || !m_d2dTargetBitmap ||
+        !m_textFormatBig) {
+        return;
+    }
+
+    const float w = static_cast<float>(windowW);
+    const float h = static_cast<float>(windowH);
+    backgroundOpacity = std::clamp(backgroundOpacity, 0.0f, 1.0f);
+    const D2D1_COLOR_F backgroundColor =
+        D2D1::ColorF(0.047f, 0.051f, 0.059f, backgroundOpacity);
+    const D2D1_COLOR_F textColor =
+        D2D1::ColorF(0.910f, 0.918f, 0.929f, 1.0f);
+
+    m_d2dContext->BeginDraw();
+    ComPtr<ID2D1SolidColorBrush> background;
+    ComPtr<ID2D1SolidColorBrush> text;
+    const HRESULT backgroundHr = m_d2dContext->CreateSolidColorBrush(backgroundColor, &background);
+    const HRESULT textHr = m_d2dContext->CreateSolidColorBrush(textColor, &text);
+    if (FAILED(backgroundHr) || FAILED(textHr) || !background || !text) {
+        m_d2dContext->EndDraw();
+        OvLog(L"DrawStatusMessage: brush creation failed");
+        return;
+    }
+
+    m_d2dContext->FillRectangle(D2D1::RectF(0.0f, 0.0f, w, h), background.Get());
+    const std::wstring message = Tr(localizationKey);
+    m_textFormatBig->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_textFormatBig->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    m_textFormatBig->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    const D2D1_RECT_F textRect = D2D1::RectF(
+        std::min(48.0f, w * 0.08f), h * 0.35f,
+        std::max(w - 48.0f, w * 0.92f), h * 0.65f);
+    m_d2dContext->DrawText(message.c_str(), static_cast<UINT32>(message.size()),
+                           m_textFormatBig.Get(), textRect, text.Get());
+
+    const HRESULT hr = m_d2dContext->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+        hr == DXGI_ERROR_DEVICE_RESET) {
+        m_deviceLost = true;
+        ReleaseD2DResources();
+        OvLog(L"DrawStatusMessage reported a lost target");
+    } else if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"DrawStatusMessage EndDraw failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+    }
+}
+
 void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
 {
     if (DeviceIsLost()) return;

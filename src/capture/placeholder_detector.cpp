@@ -9,7 +9,107 @@ namespace NitLink {
 
 namespace {
 
-// Known Elgato placeholder fingerprints, one entry per captured variant.
+constexpr uint32_t kTransitionalSampleCount = 4;
+
+uint32_t SampleCoordinate(uint32_t length, uint32_t index)
+{
+    // 1/8, 3/8, 5/8, 7/8 of the plane dimension. These points avoid the
+    // outermost row/column while covering all four quadrants deterministically.
+    return (length * (2 * index + 1)) / (2 * kTransitionalSampleCount);
+}
+
+bool ReadUInt16LEIsZero(const uint8_t* data, uint64_t offset, uint32_t size)
+{
+    if (offset + 1 >= size) return false;
+    return data[offset] == 0 && data[offset + 1] == 0;
+}
+
+bool ReadUInt16LEEquals(const uint8_t* data, uint64_t offset, uint32_t size,
+                        uint16_t expected)
+{
+    if (offset + 1 >= size) return false;
+    const uint16_t value = static_cast<uint16_t>(data[offset]) |
+                           (static_cast<uint16_t>(data[offset + 1]) << 8);
+    return value == expected;
+}
+
+bool HasZeroLumaAndNeutralChroma(const uint8_t* data, uint32_t size,
+                                 uint32_t width, uint32_t height,
+                                 PlaceholderDetector::CaptureFormatKind format)
+{
+    if (!data || width < 8 || height < 8) return false;
+    if (format != PlaceholderDetector::CaptureFormatKind::NV12 &&
+        format != PlaceholderDetector::CaptureFormatKind::P010) {
+        return false;
+    }
+
+    const uint64_t pixels = static_cast<uint64_t>(width) * height;
+    const uint32_t chromaWidth = width / 2;
+    const uint32_t chromaHeight = height / 2;
+    if (chromaWidth == 0 || chromaHeight == 0) return false;
+
+    if (format == PlaceholderDetector::CaptureFormatKind::NV12) {
+        const uint64_t yBytes = pixels;
+        const uint64_t uvBytes = static_cast<uint64_t>(width) * chromaHeight;
+        if (yBytes + uvBytes > size) return false;
+
+        for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+            const uint32_t y = SampleCoordinate(height, sy);
+            for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+                const uint32_t x = SampleCoordinate(width, sx);
+                const uint64_t yOffset = static_cast<uint64_t>(y) * width + x;
+                if (data[yOffset] != 0) return false;
+            }
+        }
+
+        for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+            const uint32_t y = SampleCoordinate(chromaHeight, sy);
+            for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+                const uint32_t x = SampleCoordinate(chromaWidth, sx);
+                const uint64_t uvOffset = yBytes +
+                    static_cast<uint64_t>(y) * width +
+                    static_cast<uint64_t>(x) * 2;
+                if (uvOffset + 1 >= yBytes + uvBytes ||
+                    data[uvOffset] != 0x80 || data[uvOffset + 1] != 0x80) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    const uint64_t yBytes = pixels * 2;
+    const uint64_t uvBytes = static_cast<uint64_t>(width) * chromaHeight * 2;
+    if (yBytes + uvBytes > size) return false;
+
+    for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+        const uint32_t y = SampleCoordinate(height, sy);
+        for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+            const uint32_t x = SampleCoordinate(width, sx);
+            const uint64_t yOffset = (static_cast<uint64_t>(y) * width + x) * 2;
+            if (!ReadUInt16LEIsZero(data, yOffset, size)) return false;
+        }
+    }
+
+    // P010's neutral 10-bit chroma code is 512, represented in the raw
+    // 16-bit sample as 0x8000 (the low six bits are zero).
+    for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+        const uint32_t y = SampleCoordinate(chromaHeight, sy);
+        for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+            const uint32_t x = SampleCoordinate(chromaWidth, sx);
+            const uint64_t uvOffset = yBytes +
+                (static_cast<uint64_t>(y) * width + x * 2) * 2;
+            if (!ReadUInt16LEEquals(data, uvOffset, size, 0x8000) ||
+                !ReadUInt16LEEquals(data, uvOffset + 2, size, 0x8000)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Known placeholder fingerprints, one entry per verified device/format
+// variant.
 //
 // Entries are captured with Ctrl+F5 while the Elgato NO SIGNAL placeholder
 // is visible on screen. Each press prints a nine-byte [NitLink/Placeholder]
@@ -26,11 +126,13 @@ namespace {
 struct KnownPlaceholder {
     PlaceholderDetector::Fingerprint       zones;
     PlaceholderDetector::CaptureFormatKind format;
+    PlaceholderDetector::PlaceholderDeviceFamily deviceFamily;
 };
 
 const std::vector<KnownPlaceholder>& KnownPlaceholders()
 {
     using FmtKind = PlaceholderDetector::CaptureFormatKind;
+    using Family = PlaceholderDetector::PlaceholderDeviceFamily;
     static const std::vector<KnownPlaceholder> list = {
         // Elgato NO SIGNAL placeholder, BGRA path, Elgato 4K Pro, captured
         // via Ctrl+F5 on 2026-05-19. Confirmed against the run-loop signal
@@ -39,7 +141,7 @@ const std::vector<KnownPlaceholder>& KnownPlaceholders()
         // (Elgato's no-signal output rate, distinct from the 60 Hz it
         // delivers on a live source). That pattern only happens when the
         // upstream HDMI source is gone.
-        { { 0x3A, 0x30, 0x2B, 0x44, 0x3E, 0x33, 0x4F, 0x3C, 0x3A }, FmtKind::BGRA },
+        { { 0x3A, 0x30, 0x2B, 0x44, 0x3E, 0x33, 0x4F, 0x3C, 0x3A }, FmtKind::BGRA, Family::Elgato },
 
         // Elgato NO SIGNAL placeholder, P010 / HDR path, Elgato 4K Pro,
         // captured via Ctrl+F5 on 2026-05-19 with HDR active after HDMI
@@ -51,7 +153,7 @@ const std::vector<KnownPlaceholder>& KnownPlaceholders()
         // robust: real HDR content essentially never produces 8 zones
         // within +/-8 of 0x10 simultaneously, regardless of how dark the
         // scene is.
-        { { 0x10, 0x10, 0x10, 0x10, 0x1D, 0x10, 0x10, 0x10, 0x10 }, FmtKind::P010 },
+        { { 0x10, 0x10, 0x10, 0x10, 0x1D, 0x10, 0x10, 0x10, 0x10 }, FmtKind::P010, Family::Elgato },
 
         // Elgato NO SIGNAL placeholder, NV12 / SDR path, Elgato 4K Pro,
         // captured via Ctrl+F5 on 2026-05-20 with the source disconnected
@@ -62,7 +164,29 @@ const std::vector<KnownPlaceholder>& KnownPlaceholders()
         // the format-tagged matcher needs a separate NV12 entry so the
         // SDR pipeline can confirm the placeholder without falling back
         // to the cross-format comparison (which is rejected by design).
-        { { 0x10, 0x10, 0x10, 0x10, 0x1D, 0x10, 0x10, 0x10, 0x10 }, FmtKind::NV12 },
+        { { 0x10, 0x10, 0x10, 0x10, 0x1D, 0x10, 0x10, 0x10, 0x10 }, FmtKind::NV12, Family::Elgato },
+
+        // AVerMedia Live Gamer ULTRA S GC553Pro + P010 hardware NO SIGNAL
+        // placeholder fingerprint. The format scope is intentional: each
+        // native pixel format has its own independently captured signature.
+        { { 0x00, 0x0D, 0x00, 0x03, 0x04, 0x02, 0x2E, 0x20, 0x18 },
+          FmtKind::P010, Family::AverMediaGC553Pro },
+
+        // AVerMedia Live Gamer ULTRA S GC553Pro, verified on hardware at
+        // 3840x2160 @ 60 FPS NV12 with HDR output OFF after a USB reset while
+        // the HDMI source was already absent. This is the reset/no-source
+        // hardware NO SIGNAL variant.
+        { { 0x00, 0x0C, 0x00, 0x04, 0x05, 0x03, 0x2D, 0x1C, 0x15 },
+          FmtKind::NV12, Family::AverMediaGC553Pro },
+
+        // AVerMedia Live Gamer ULTRA S GC553Pro, verified on hardware at
+        // 3840x2160 @ 60 FPS NV12 with HDR output OFF after valid HDMI input
+        // was established and the source later entered sleep/no-signal. This
+        // variant persisted across NitLink restart while the device remained
+        // connected. The comments describe observable behavior only; they do
+        // not assert a firmware-level cause.
+        { { 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x43, 0x2F, 0x24 },
+          FmtKind::NV12, Family::AverMediaGC553Pro },
     };
     return list;
 }
@@ -163,6 +287,105 @@ PlaceholderDetector::Compute(const uint8_t* data, uint32_t size,
     return fp;
 }
 
+bool PlaceholderDetector::IsInvalidTransitionalFrame(
+    const uint8_t* data, uint32_t size, uint32_t width, uint32_t height,
+    CaptureFormatKind format)
+{
+    if (!data || width < 8 || height < 8) return false;
+    if (format != CaptureFormatKind::NV12 && format != CaptureFormatKind::P010) {
+        return false;
+    }
+
+    const uint64_t pixels = static_cast<uint64_t>(width) * height;
+    const uint32_t chromaWidth = width / 2;
+    const uint32_t chromaHeight = height / 2;
+    if (chromaWidth == 0 || chromaHeight == 0) return false;
+
+    if (format == CaptureFormatKind::NV12) {
+        const uint64_t yBytes = pixels;
+        const uint64_t uvBytes = static_cast<uint64_t>(width) * chromaHeight;
+        if (yBytes + uvBytes > size) return false;
+
+        for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+            const uint32_t y = SampleCoordinate(height, sy);
+            for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+                const uint32_t x = SampleCoordinate(width, sx);
+                const uint64_t yOffset = static_cast<uint64_t>(y) * width + x;
+                if (data[yOffset] != 0) return false;
+            }
+        }
+
+        // NV12 chroma is interleaved Cb/Cr, one pair for each 2x2 luma block.
+        // A raw zero UV plane is structurally invalid; neutral black is 128/128.
+        for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+            const uint32_t y = SampleCoordinate(chromaHeight, sy);
+            for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+                const uint32_t x = SampleCoordinate(chromaWidth, sx);
+                const uint64_t uvOffset = yBytes +
+                    static_cast<uint64_t>(y) * width +
+                    static_cast<uint64_t>(x) * 2;
+                if (uvOffset + 1 >= yBytes + uvBytes ||
+                    data[uvOffset] != 0 || data[uvOffset + 1] != 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // P010 stores 16-bit little-endian samples with the meaningful 10-bit
+    // value in the high bits. Checking the raw 16-bit units catches a true
+    // zero-filled sample while preserving legal full-range black plus neutral
+    // chroma (0 / 512 in 10-bit code space).
+    const uint64_t yBytes = pixels * 2;
+    const uint64_t uvBytes = static_cast<uint64_t>(width) * chromaHeight * 2;
+    if (yBytes + uvBytes > size) return false;
+
+    for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+        const uint32_t y = SampleCoordinate(height, sy);
+        for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+            const uint32_t x = SampleCoordinate(width, sx);
+            const uint64_t yOffset = (static_cast<uint64_t>(y) * width + x) * 2;
+            if (!ReadUInt16LEIsZero(data, yOffset, size)) return false;
+        }
+    }
+
+    for (uint32_t sy = 0; sy < kTransitionalSampleCount; ++sy) {
+        const uint32_t y = SampleCoordinate(chromaHeight, sy);
+        for (uint32_t sx = 0; sx < kTransitionalSampleCount; ++sx) {
+            const uint32_t x = SampleCoordinate(chromaWidth, sx);
+            const uint64_t uvOffset = yBytes +
+                (static_cast<uint64_t>(y) * width + x * 2) * 2;
+            if (!ReadUInt16LEIsZero(data, uvOffset, size) ||
+                !ReadUInt16LEIsZero(data, uvOffset + 2, size)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool PlaceholderDetector::IsGc553ProNeutralTransitionalFrame(
+    const uint8_t* data, uint32_t size, uint32_t width, uint32_t height,
+    CaptureFormatKind format, PlaceholderDeviceFamily deviceFamily,
+    bool limitedRange, bool hasAcceptedRealFrame)
+{
+    // This is intentionally not a general black-frame rule. It is tied to the
+    // verified GC553Pro startup behavior and is disabled after the current
+    // stream has accepted its first genuine Real frame.
+    if (deviceFamily != PlaceholderDeviceFamily::AverMediaGC553Pro) return false;
+    if (hasAcceptedRealFrame) return false;
+
+    // Zero luma with neutral chroma is legal FULL-range black in both
+    // formats, even before the first accepted frame. Sparse sampling cannot
+    // distinguish that content (or a small loading logo) from startup output.
+    if (!limitedRange) return false;
+    if (format != CaptureFormatKind::NV12 && format != CaptureFormatKind::P010) {
+        return false;
+    }
+    return HasZeroLumaAndNeutralChroma(data, size, width, height, format);
+}
+
 bool PlaceholderDetector::ZoneMatch(const Fingerprint& a, const Fingerprint& b,
                                       uint8_t tolerance)
 {
@@ -174,17 +397,31 @@ bool PlaceholderDetector::ZoneMatch(const Fingerprint& a, const Fingerprint& b,
 }
 
 bool PlaceholderDetector::MatchesAnyKnown(const Fingerprint& fp,
-                                            CaptureFormatKind format) const
+                                            CaptureFormatKind format,
+                                            PlaceholderDeviceFamily deviceFamily) const
 {
     for (const auto& known : KnownPlaceholders()) {
         if (known.format != format) continue;
+        if (known.deviceFamily != deviceFamily) continue;
         if (ZoneMatch(fp, known.zones, kZoneTolerance)) return true;
     }
     return false;
 }
 
+bool PlaceholderDetector::HasKnownPlaceholder(
+    PlaceholderDeviceFamily deviceFamily, CaptureFormatKind format) const
+{
+    for (const auto& known : KnownPlaceholders()) {
+        if (known.deviceFamily == deviceFamily && known.format == format) {
+            return true;
+        }
+    }
+    return false;
+}
+
 PlaceholderDetector::FrameClassification
-PlaceholderDetector::Process(const Fingerprint& fp, CaptureFormatKind format)
+PlaceholderDetector::Process(const Fingerprint& fp, CaptureFormatKind format,
+                             PlaceholderDeviceFamily deviceFamily)
 {
     // Temporal-stability check. The Elgato NO SIGNAL placeholder is
     // bit-identical across frames, so consecutive fingerprints land
@@ -202,7 +439,7 @@ PlaceholderDetector::Process(const Fingerprint& fp, CaptureFormatKind format)
     // no previous fingerprint to compare against. Treat stability as
     // vacuously satisfied so a streak can start; the second call onward
     // will check stability against the just-stored fingerprint.
-    const bool zoneMatches = MatchesAnyKnown(fp, format);
+    const bool zoneMatches = MatchesAnyKnown(fp, format, deviceFamily);
     const bool stable      = m_havePrevFp
         ? ZoneMatch(m_prevFp, fp, kStableTolerance)
         : true;
@@ -217,23 +454,17 @@ PlaceholderDetector::Process(const Fingerprint& fp, CaptureFormatKind format)
             m_inPlaceholder = true;
             return FrameClassification::ConfirmedPlaceholder;
         }
-        // Matched but not yet confirmed: the caller must already suppress
-        // upload so even this first matching frame doesn't reach the
-        // renderer's capture texture. Logging the transition is deferred
-        // to ConfirmedPlaceholder so a single false-match doesn't spam.
+
+        // Stable match but not yet confirmed: the caller suppresses upload.
+        // Logging the transition is
+        // deferred to ConfirmedPlaceholder so a single false-match does not
+        // spam the debug channel.
         return FrameClassification::CandidatePlaceholder;
     }
 
-    // Any non-match exits immediately. The non-match can come from:
-    //   - zone fingerprint outside kZoneTolerance of every known entry
-    //     for this capture format (the original signal: not a placeholder)
-    //   - fingerprint drifted more than kStableTolerance from the
-    //     previous frame (the temporal-stability signal: content is
-    //     subtly changing, so even if zones match, this is not the
-    //     bit-static Elgato placeholder)
-    // Either way, a single real-source frame arriving in the middle of
-    // a placeholder streak releases the latch on that same frame so the
-    // renderer resumes uploads without a one-frame stutter.
+    // A non-match or temporal instability is real source content. Preserve
+    // the moving-content safeguard even when both fingerprints match a known
+    // entry, and release any previous placeholder latch immediately.
     m_consecutiveMatches = 0;
     m_inPlaceholder      = false;
     return FrameClassification::Real;

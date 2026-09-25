@@ -30,6 +30,7 @@ set(NITLINK_SOURCES
     src/app/game_database.cpp
     src/app/game_database.h
     src/app/source_cadence.h
+    src/app/presentation_state.h
     src/app/capture_output_policy.h
     src/app/WebViewSettings.cpp
     src/app/WebViewSettings.h
@@ -180,6 +181,27 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/src
     )
     add_test(NAME p010_format_selector COMMAND NitLinkP010SelectorTests)
+
+    add_executable(NitLinkPlaceholderTests
+        tests/placeholder_detector_tests.cpp
+        src/capture/placeholder_detector.cpp
+        src/capture/placeholder_detector.h
+    )
+    target_include_directories(NitLinkPlaceholderTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME placeholder_detector COMMAND NitLinkPlaceholderTests)
+
+    add_executable(NitLinkPresentationStateTests
+        tests/presentation_state_tests.cpp
+        src/app/presentation_state.h
+        src/capture/placeholder_detector.cpp
+        src/capture/placeholder_detector.h
+    )
+    target_include_directories(NitLinkPresentationStateTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME presentation_state COMMAND NitLinkPresentationStateTests)
 
     add_executable(NitLinkP010NegotiationTests
         tests/p010_negotiation_tests.cpp

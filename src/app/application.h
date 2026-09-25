@@ -17,6 +17,7 @@
 #include "config.h"
 #include "capture_output_policy.h"
 #include "source_cadence.h"
+#include "presentation_state.h"
 #include "discord/discord_rpc.h"
 
 #include <memory>
@@ -452,10 +453,24 @@ private:
     // is what the startup grace measures from.
     std::chrono::steady_clock::time_point m_lastGoodFrameTime{};
     bool m_hasEverReceivedFrame      = false;
+    bool m_captureFrameValidForSession = false;
+    bool m_captureTransitionActive = false;
+    bool m_noSignalPresentationLatched = false;
+    // GC553Pro-only, one-frame upload quarantine for the first temporally
+    // unstable frame matching its known hardware placeholder. Detector
+    // classification remains Real; the guard is scoped to an active session.
+    bool m_gc553ProPlaceholderTransitionGuardConsumed = false;
+    bool m_gc553ProPreviousFreshFrameWasPlaceholder = false;
+    bool m_hasPresentationStateDiagnostic = false;
+    PresentationState m_lastPresentationStateDiagnostic =
+        PresentationState::WaitingForCapture;
+    PlaceholderDetector::FrameClassification m_lastPresentationClassification =
+        PlaceholderDetector::FrameClassification::Real;
+    bool m_lastPresentationFrameFresh = false;
     bool m_signalReacquiringLogged   = false;
     bool m_signalLostLogged          = false;
 
-    // Elgato placeholder-frame detection.
+    // Device-scoped placeholder-frame detection.
     //
     // When HDMI is unplugged or during some handshake states the Elgato
     // emits its own NO SIGNAL placeholder as a valid frame stream. Those
@@ -472,6 +487,14 @@ private:
     // Latched for log-once-on-transition into / out of the placeholder
     // branch in the run loop.
     bool m_inPlaceholderState = false;
+    bool m_placeholderCandidateLogged = false;
+    bool m_placeholderConfirmedLogged = false;
+    PlaceholderDetector::PlaceholderDeviceFamily m_placeholderDeviceFamily =
+        PlaceholderDetector::PlaceholderDeviceFamily::Unknown;
+    PlaceholderDetector::CaptureFormatKind m_placeholderCaptureFormat =
+        PlaceholderDetector::CaptureFormatKind::BGRA;
+    bool m_placeholderCaptureMetadataReady = false;
+    StartupBlackFrameHint m_gc553ProStartupBlackHint;
 
     // Copy gate for the capture thread. The 4K Pro can deliver its NO SIGNAL
     // image at over 200 frames per second, so copying full frames wastes
