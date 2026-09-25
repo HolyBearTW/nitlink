@@ -31,6 +31,7 @@ set(NITLINK_SOURCES
     src/app/game_database.h
     src/app/source_cadence.h
     src/app/presentation_state.h
+    src/app/capture_output_policy.h
     src/app/WebViewSettings.cpp
     src/app/WebViewSettings.h
     src/capture/capture_device.cpp
@@ -214,6 +215,13 @@ if(BUILD_TESTING)
     )
     add_test(NAME p010_native_negotiation COMMAND NitLinkP010NegotiationTests)
 
+    add_executable(NitLinkConfigRateTests
+        tests/config_rate_tests.cpp
+        src/app/config.cpp
+    )
+    target_include_directories(NitLinkConfigRateTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME config_rate_migration COMMAND NitLinkConfigRateTests)
+
     add_executable(NitLinkWindowSizeTests
         tests/window_size_tests.cpp
         src/renderer/window.cpp
@@ -231,4 +239,13 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkPlaybackPowerTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(NitLinkPlaybackPowerTests PRIVATE user32 gdi32 dwmapi)
     add_test(NAME playback_power COMMAND NitLinkPlaybackPowerTests)
+
+    add_executable(NitLinkCaptureOutputPolicyTests
+        tests/capture_output_policy_tests.cpp
+        src/app/capture_output_policy.h
+    )
+    target_include_directories(NitLinkCaptureOutputPolicyTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME capture_output_policy COMMAND NitLinkCaptureOutputPolicyTests)
 endif()

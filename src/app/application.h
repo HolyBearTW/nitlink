@@ -15,6 +15,7 @@
 #include "upscale/nis_upscaler.h"
 #include "WebViewSettings.h"
 #include "config.h"
+#include "capture_output_policy.h"
 #include "source_cadence.h"
 #include "presentation_state.h"
 #include "discord/discord_rpc.h"
@@ -400,6 +401,7 @@ private:
     // (handles user-replug edge cases) and falls back to this cached copy
     // if enumeration returns empty mid-session.
     DeviceInfo m_currentDeviceInfo{};
+    NonGcP010FallbackState m_nonGcP010Fallback;
 
     // Performance tracking
     double m_captureLatencyMs = 0.0;

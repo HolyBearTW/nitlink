@@ -2,6 +2,7 @@
 #include "WebViewSettings.h"
 #include "game_database.h"
 #include "localization.h"
+#include "capture_output_policy.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
@@ -110,13 +111,61 @@ static std::wstring P010UnavailableWarning(const CaptureFormat& format)
            std::wstring(FormatGuidToString(format.subtype)) + L" capture is active.";
 }
 
+static std::wstring FormatNoticeFrameRate(const P010SelectionNotice& notice)
+{
+    if (notice.fpsNumerator == 0 || notice.fpsDenominator == 0) {
+        return std::to_wstring(notice.fps);
+    }
+
+    if (notice.fpsNumerator % notice.fpsDenominator == 0) {
+        return std::to_wstring(notice.fpsNumerator / notice.fpsDenominator);
+    }
+
+    // Keep the native rational internally, but show a compact user-facing
+    // decimal (for example, 60000/1001 as 59.94 rather than a raw fraction).
+    const uint64_t hundredths =
+        (static_cast<uint64_t>(notice.fpsNumerator) * 100 +
+         notice.fpsDenominator / 2) / notice.fpsDenominator;
+    const uint64_t whole = hundredths / 100;
+    const uint64_t fraction = hundredths % 100;
+    if (fraction == 0) return std::to_wstring(whole);
+
+    std::wstring result = std::to_wstring(whole) + L".";
+    if (fraction < 10) result += L"0";
+    result += std::to_wstring(fraction);
+    if (result.back() == L'0') result.pop_back();
+    return result;
+}
+
 static std::wstring P010SelectionWarning(const P010SelectionNotice& notice)
 {
-    std::wstringstream text;
-    text << L"HDR requested, but matching P010 mode is unavailable; using native P010 "
-         << notice.width << L"x" << notice.height << L" @ "
-         << notice.fps << L" FPS.";
-    return text.str();
+    return Localization::Instance().Format(
+        L"toast.p010SelectionFallback",
+        {{L"width", std::to_wstring(notice.width)},
+         {L"height", std::to_wstring(notice.height)},
+         {L"fps", FormatNoticeFrameRate(notice)}});
+}
+
+static CaptureFormatPreference FormatPreferenceForOverride(
+    const CaptureFormatOverride& formatOverride)
+{
+    if (formatOverride.format.empty()) {
+        return CaptureFormatPreference::Auto;
+    }
+    if (formatOverride.format == L"NV12") {
+        return CaptureFormatPreference::ManualNV12;
+    }
+    if (formatOverride.format == L"P010") {
+        return CaptureFormatPreference::ManualP010;
+    }
+    return CaptureFormatPreference::ManualOther;
+}
+
+static std::wstring ManualFormatHDRWarning(const std::wstring& format)
+{
+    return Localization::Instance().Format(
+        L"toast.manualFormatHdrRequiresP010",
+        {{L"format", format}});
 }
 
 void Application::UpdateCaptureColorInterpretation(const std::wstring& deviceName) {
@@ -617,6 +666,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Existing Elgato auto-detection remains unchanged. GC553Pro is the one
     // explicit non-Elgato exception and uses only the manual HDR preference.
     const bool userWantsHDR = m_config && m_config->hdrEnabled;
+    const CaptureFormatOverride configuredOverride =
+        m_config ? m_config->GetOverride(chosen.name) : CaptureFormatOverride{};
+    const CaptureFormatPreference formatPreference =
+        FormatPreferenceForOverride(configuredOverride);
 
     // Source-ID auto-tonemap heuristic: when direct HDR signal detection
     // isn't available AND the connected source is identified as a known
@@ -656,7 +709,18 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     //   hdr_enabled config.
     bool useP010;
     if (m_isGC553Pro) {
-        useP010 = userWantsHDR;
+        const auto startupPolicy = DecideGc553ProOutputPolicy(
+            NegotiatedCaptureFormatKind::Other,
+            userWantsHDR,
+            formatPreference);
+        useP010 = startupPolicy.desiredCaptureIsP010;
+        if (startupPolicy.hdrRejected) {
+            m_config->hdrEnabled = false;
+            const std::wstring warning = ManualFormatHDRWarning(
+                configuredOverride.format);
+            AppLog(L"Initialize: " + warning);
+            ShowToast(warning, std::chrono::milliseconds(8000));
+        }
     } else if (m_is4KS) {
         useP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
     } else {
@@ -724,11 +788,12 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     {
         CaptureDevice::OverrideSpec ov;
         if (m_config) {
-            const CaptureFormatOverride cv = m_config->GetOverride(chosen.name);
-            ov.width  = cv.width;
-            ov.height = cv.height;
-            ov.fps    = cv.fps;
-            ov.format = cv.format;
+            ov.width  = configuredOverride.width;
+            ov.height = configuredOverride.height;
+            ov.fps    = configuredOverride.fps;
+            ov.fpsNumerator = configuredOverride.fpsNumerator;
+            ov.fpsDenominator = configuredOverride.fpsDenominator;
+            ov.format = configuredOverride.format;
         }
 
         // 4K S HDR resolution clamp: when the HDR pipeline is selected
@@ -781,6 +846,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
     }
     AppLog(L"Initialize: capture device opened");
+    m_nonGcP010Fallback.CompleteOpen(
+        !m_isGC553Pro && useP010,
+        IsEqualGUID(m_captureDevice->GetOutputFormat().subtype, MFVideoFormat_P010));
     ApplyPresentCap();
     ApplyAspectRatio();
 
@@ -1278,6 +1346,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             const std::wstring rawW   = extractRaw(L"width");
             const std::wstring rawH   = extractRaw(L"height");
             const std::wstring rawFps = extractRaw(L"fps");
+            const std::wstring rawFpsNumerator = extractRaw(L"fpsNumerator");
+            const std::wstring rawFpsDenominator = extractRaw(L"fpsDenominator");
             const std::wstring fmtStr = extractStr(L"format");
 
             // Clamp each axis to a sane ceiling. These are untrusted bridge
@@ -1297,6 +1367,17 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             cv.width  = parseUint(rawW, 16384);
             cv.height = parseUint(rawH, 16384);
             cv.fps    = parseUint(rawFps, 1000);
+            cv.fpsNumerator = parseUint(rawFpsNumerator, 1000000000);
+            cv.fpsDenominator = parseUint(rawFpsDenominator, 1000000000);
+            if (cv.fpsNumerator > 0) {
+                if (cv.fpsDenominator == 0) cv.fpsDenominator = 1;
+                cv.fps = cv.fpsNumerator / cv.fpsDenominator;
+            } else {
+                // Integer-only payloads are legacy/compatibility input. Keep
+                // the rational unresolved so native-mode negotiation can map
+                // 59 back to 60000/1001 instead of inventing 59/1.
+                cv.fpsDenominator = 1;
+            }
             cv.format = fmtStr;
             m_config->Save("nitlink.json");
 
@@ -2201,12 +2282,6 @@ void Application::Run()
                 showNoSignalNow,
                 captureReady,
                 m_captureTransitionActive);
-        const bool showGc553ProStartupWaitingCaption =
-            ShouldDrawStartupBlackFrameHint(
-                m_placeholderDeviceFamily ==
-                    PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro,
-                presentationState, m_gc553ProStartupBlackHint);
-
         // Keep the diagnostic transition-only: it reports the state change,
         // the current renderer/app readiness split, the latest classification,
         // and the branch the render section will select. This is deliberately
@@ -2603,6 +2678,19 @@ void Application::Run()
             continue;                    // skip the rest of the pipeline
         }
 
+        // Start/advance the presentation-only cap only on an iteration that
+        // will actually render the hint. This keeps startup time, skipped
+        // duplicate presents, and the full-window settings blackout from
+        // consuming its visible-duration budget.
+        const bool showGc553ProStartupWaitingCaption =
+            shouldRender && m_overlay && m_renderer &&
+            ShouldDrawStartupBlackFrameHint(
+                m_placeholderDeviceFamily ==
+                    PlaceholderDetector::PlaceholderDeviceFamily::AverMediaGC553Pro,
+                presentationState, m_gc553ProStartupBlackHint,
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count()));
+
         const auto drawWaitingStatus = [this]() {
             if (!m_overlay || !m_renderer) return;
             const bool captureStarted =
@@ -2965,6 +3053,7 @@ void Application::Shutdown()
     // on subsequent runs until USB is reconnected or the system reboots.
     if (m_captureDevice) {
         m_captureDevice->StopCapture();
+        m_nonGcP010Fallback.Reset();
         m_captureDevice->Close();
 
         // Frame-buffer teardown contract (see frame_buffer.h): the capture
@@ -3404,47 +3493,74 @@ bool Application::ReconcileCaptureFormat(bool force)
         (void)titleDirty;
     }
 
-    // Capture format selection: P010 whenever the source is HDR10, regardless
-    // of the user's HDR-rendering preference. When the user has HDR rendering
-    // off but the source is HDR10, the P010 shader path does an in-shader
-    // PQ -> linear -> BT.709 -> Reinhard -> sRGB tonemap to the SDR backbuffer.
+    // Keep the capture-format policy separate from the output-mode policy.
+    // For GC553Pro, GetOutputFormat().subtype is the source of truth for the
+    // stream that is actually running; RequestP010()/IsP010Requested() only
+    // describe a future Open attempt and must not drive this decision.
     //
-    // Why not switch to NV12 when the user wants SDR output? Two reasons:
-    //   1) The Elgato hardware tonemap toggle (IKsPropertySet "TonemapEnable")
-    //      reliably turns OFF at init time but does NOT reliably turn back ON
-    //      mid-session on this firmware: Set() returns S_OK but the card
-    //      keeps passing raw HDR10. So NV12 + raw HDR10 codes interpreted as
-    //      sRGB BT.709 gives a green cast (the v1.0.0 bug that drove this design).
-    //   2) Tonemapping in shader gives 10-bit precision through the
-    //      conversion (P010 source) and full control over the operator,
-    //      which is better than the Elgato's baked-in tonemap anyway.
-    //
-    // For non-HDR sources the NV12 path still applies because P010 would
-    // waste bandwidth (24MB/frame vs 12MB/frame at 4K).
-    //
-    // When HDR detection is unavailable (4K S), fall back to trusting the
-    // user's hdrEnabled flag, same as Initialize.
-    //
-    // Existing Elgato detection policy remains unchanged. GC553Pro is the one
-    // manual-only exception and still relies on native MF capability.
+    // An already negotiated P010 stream is retained when HDR output is turned
+    // off. The renderer's existing P010 HDR-to-SDR path handles that output
+    // mode, so no Media Foundation reader restart is needed.
     const bool userWantsHDR = m_config->hdrEnabled;
-    // Same 4K S vs 4K Pro split as Initialize:
-    //   4K S: wantP010 only when source HDR AND user opts in (resolution
-    //         clamp to 1080p is the trade-off; opting out keeps 4K NV12
-    //         with card-side tonemap).
-    //   4K Pro / non-Elgato detection: existing logic (P010 whenever
-    //         source HDR, shader handles SDR tonemap when user wants SDR).
+    const bool retainedFormatBelongsToCurrentDevice =
+        m_captureDevice->HasPublishedFormatForDevice(m_currentDeviceInfo);
+    const CaptureFormat negotiatedFormat = m_captureDevice->GetOutputFormat();
+    const NegotiatedCaptureFormatKind scopedActualCaptureFormat =
+        IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_P010)
+            ? NegotiatedCaptureFormatKind::P010
+            : (IsEqualGUID(negotiatedFormat.subtype, MFVideoFormat_NV12)
+                   ? NegotiatedCaptureFormatKind::NV12
+                   : NegotiatedCaptureFormatKind::Other);
+    const NegotiatedCaptureFormatKind actualCaptureFormat =
+        ScopedNegotiatedCaptureFormat(retainedFormatBelongsToCurrentDevice,
+                                      scopedActualCaptureFormat);
+    const CaptureFormatOverride configuredOverride =
+        m_config->GetOverride(m_currentDeviceInfo.name);
+    const CaptureFormatPreference formatPreference =
+        FormatPreferenceForOverride(configuredOverride);
+
     bool wantP010;
+    Gc553ProOutputPolicy gc553ProPolicy{};
     if (m_isGC553Pro) {
-        wantP010 = userWantsHDR;
+        gc553ProPolicy = DecideGc553ProOutputPolicy(
+            actualCaptureFormat, userWantsHDR, formatPreference);
+        wantP010 = gc553ProPolicy.desiredCaptureIsP010;
+        if (gc553ProPolicy.hdrRejected) {
+            m_config->hdrEnabled = false;
+            const std::wstring warning = ManualFormatHDRWarning(
+                configuredOverride.format);
+            AppLog(L"Reconcile: " + warning);
+            ShowToast(warning, std::chrono::milliseconds(8000));
+        }
     } else if (m_is4KS) {
+        // Existing Elgato 4K S policy is intentionally unchanged.
         wantP010 = isElgato && m_sourceIsHDR10 && userWantsHDR;
     } else {
+        // Existing Elgato HDR source policy is intentionally unchanged.
         wantP010 = isElgato &&
                    (m_sourceIsHDR10 ||
                     (userWantsHDR && !m_hdrDetectionAvailable));
     }
-    const bool isP010       = m_captureDevice->IsP010Requested();
+    if (!m_isGC553Pro) {
+        wantP010 = ApplyManualFormatPreferenceToNonGcPolicy(
+            wantP010, formatPreference);
+    }
+    const bool actualIsP010 = actualCaptureFormat == NegotiatedCaptureFormatKind::P010;
+    const bool hasNonFormatOverride =
+        configuredOverride.format.empty() &&
+        (configuredOverride.width > 0 ||
+         configuredOverride.height > 0 ||
+         configuredOverride.fps > 0 ||
+         configuredOverride.fpsNumerator > 0);
+    m_nonGcP010Fallback.ObservePolicy(
+        wantP010, retainedFormatBelongsToCurrentDevice, force);
+    const bool formatReopenNeeded = m_isGC553Pro
+        ? gc553ProPolicy.reopenCapture
+        : ShouldReopenNonGcCapture(
+              wantP010, actualCaptureFormat,
+              retainedFormatBelongsToCurrentDevice,
+              formatPreference, hasNonFormatOverride,
+              m_nonGcP010Fallback.Accepted());
 
     // Run reaches this decision every render iteration. A failed Open can
     // leave the requested format equal to wantP010 while capture is stopped;
@@ -3467,16 +3583,14 @@ bool Application::ReconcileCaptureFormat(bool force)
     const auto retryNow = std::chrono::steady_clock::now();
     if (captureStopped && !force && retryNow < m_nextCaptureRetry) return false;
 
-    if (wantP010 == isP010 && !force && !captureStopped) {
-        // Device is already in the format the current state dictates.
-        // The renderer-side flag updates (m_hdrEnabled, sourceIsHDR10) flow
-        // through the cbuffer every frame, so the shader picks up the
-        // SDR-from-HDR branch without needing a capture-format swap.
-        // Cheap no-op: this method runs every reconcile trigger.
+    if (!formatReopenNeeded && !force && !captureStopped) {
+        // The capture stream already has the required format. In particular,
+        // P010 + HDR OFF remains P010 and is rendered through the existing
+        // HDR-to-SDR tone-map path; the renderer-side HDR output switch below
+        // is independent of this capture-side no-op.
         return false;
     }
 
-    const bool formatReopenNeeded = wantP010 != isP010;
     if (formatReopenNeeded && !noSignalPresentationLatched &&
         !m_captureTransitionActive) {
         m_captureTransitionActive = true;
@@ -3485,10 +3599,14 @@ bool Application::ReconcileCaptureFormat(bool force)
 
     m_nextCaptureRetry = retryNow + std::chrono::milliseconds(1000);
 
-    if (force && wantP010 == isP010) {
+    if (force && !formatReopenNeeded) {
         AppLog(wantP010
             ? L"Reconcile: forced reopen, staying on P010 HDR10"
             : L"Reconcile: forced reopen, staying on SDR");
+    } else if (!formatReopenNeeded && captureStopped) {
+        AppLog(actualIsP010
+            ? L"Reconcile: capture stopped, reopening the negotiated P010 stream"
+            : L"Reconcile: capture stopped, reopening the negotiated SDR stream");
     } else {
         AppLog(wantP010
             ? L"Reconcile: capture format change, SDR -> P010 HDR10"
@@ -3509,6 +3627,7 @@ bool Application::ReconcileCaptureFormat(bool force)
     // and the IMFMediaSource. m_captureDevice itself is NOT destroyed:
     // its FrameCallback and ownership stays stable.
     m_captureDevice->StopCapture();
+    m_nonGcP010Fallback.Reset();
     m_captureDevice->Close();
 
     // The frame buffer's capacity and stride are fixed at construction;
@@ -3596,6 +3715,8 @@ bool Application::ReconcileCaptureFormat(bool force)
             ov.width  = cv.width;
             ov.height = cv.height;
             ov.fps    = cv.fps;
+            ov.fpsNumerator = cv.fpsNumerator;
+            ov.fpsDenominator = cv.fpsDenominator;
             ov.format = cv.format;
         }
 
@@ -3624,7 +3745,9 @@ bool Application::ReconcileCaptureFormat(bool force)
             ov.width == 0 && ov.height == 0) {
             ov.width  = m_source4KProMode.width;
             ov.height = m_source4KProMode.height;
-            ov.fps    = m_source4KProMode.fps;
+            SetIntegerFrameRateFields(
+                ov.fps, ov.fpsNumerator, ov.fpsDenominator,
+                m_source4KProMode.fps);
             AppLog(L"Reconcile: 4K X following source "
                    + std::to_wstring(ov.width) + L"x" + std::to_wstring(ov.height)
                    + L"@" + std::to_wstring(ov.fps));
@@ -3634,7 +3757,8 @@ bool Application::ReconcileCaptureFormat(bool force)
         // trades framerate for HDR, the way the 4K S trades resolution).
         if (m_is4KX && wantP010 && ov.height >= 2160 && (ov.fps == 0 || ov.fps > 30)) {
             AppLog(L"Reconcile: 4K X 4K HDR, clamping fps to 30 (4K P010 cap)");
-            ov.fps = 30;
+            SetIntegerFrameRateFields(
+                ov.fps, ov.fpsNumerator, ov.fpsDenominator, 30);
         }
 
         m_captureDevice->SetFormatOverride(ov);
@@ -3684,6 +3808,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     // can change either), and restart the capture worker.
     m_captureDevice->LogAvailableFormats();
     auto format = m_captureDevice->GetOutputFormat();
+    m_nonGcP010Fallback.CompleteOpen(
+        !m_isGC553Pro && wantP010, IsEqualGUID(format.subtype, MFVideoFormat_P010));
 
     m_placeholderDeviceFamily = PlaceholderFamilyForDevice(deviceToOpen.name);
     m_placeholderCaptureMetadataReady =
@@ -4367,6 +4493,8 @@ void Application::PushSettingsState()
             js << L"{\"width\":"   << af.width
                << L",\"height\":" << af.height
                << L",\"fps\":"    << af.fps
+               << L",\"fpsNumerator\":" << af.fpsNumerator
+               << L",\"fpsDenominator\":" << af.fpsDenominator
                << L",\"format\":\"" << FormatGuidToString(af.subtype) << L"\"}";
         }
         js << L"],";
@@ -4390,6 +4518,8 @@ void Application::PushSettingsState()
            << L"\"width\":"  << ov.width  << L","
            << L"\"height\":" << ov.height << L","
            << L"\"fps\":"    << ov.fps    << L","
+           << L"\"fpsNumerator\":" << ov.fpsNumerator << L","
+           << L"\"fpsDenominator\":" << ov.fpsDenominator << L","
            << L"\"format\":\"" << ov.format << L"\""
            << L"},";
     }

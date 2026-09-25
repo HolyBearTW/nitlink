@@ -7,6 +7,8 @@ using NitLink::DecidePresentation;
 using NitLink::CapturePresentationReady;
 using NitLink::PresentationState;
 using NitLink::PlaceholderDetector;
+using NitLink::ShouldDrawStartupBlackFrameHint;
+using NitLink::StartupBlackFrameHint;
 
 int main()
 {
@@ -63,6 +65,78 @@ int main()
             PlaceholderDetector::FrameClassification::Real) &&
         DecidePresentation(false, false, true, false) != PresentationState::Capture) {
         return 9;
+    }
+
+    // Simulates legal FULL-range black where zone sampling misses a small
+    // loading logo. The presentation-only cap starts on first drawable
+    // activation and never changes Capture state.
+    {
+        StartupBlackFrameHint hint;
+        hint.ObserveFrame(true, true);
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 1000)) return 15;
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 3999)) return 16;
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                            hint, 4000)) return 17;
+        if (hint.eligible || hint.visible ||
+            DecidePresentation(false, false, true, false) != PresentationState::Capture) {
+            return 18;
+        }
+        // Continuing accepted black frames in the same session cannot re-arm.
+        hint.ObserveFrame(true, true);
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                            hint, 5000)) return 19;
+        // Only a new capture session reset may make the startup hint eligible
+        // again; ordinary black frames in this session cannot do so.
+        hint.Reset();
+        hint.ObserveFrame(true, true);
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 7000)) return 27;
+    }
+
+    // A confirmed placeholder immediately replaces the hint with NoSignal,
+    // even before its presentation timeout expires.
+    {
+        StartupBlackFrameHint hint;
+        hint.ObserveFrame(true, true);
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 1000)) return 20;
+        hint.ConfirmPlaceholder();
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::NoSignal,
+                                            hint, 2250) ||
+            DecidePresentation(true, false, false, false) != PresentationState::NoSignal) {
+            return 21;
+        }
+    }
+
+    // Any accepted source frame with non-zero sampled zones ends the startup
+    // hint; later legitimate game-black frames cannot re-arm it.
+    {
+        StartupBlackFrameHint hint;
+        hint.ObserveFrame(true, true);
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 1000)) return 22;
+        hint.ObserveFrame(true, false);
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                            hint, 1100)) return 23;
+        hint.ObserveFrame(true, true);
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                            hint, 1200)) return 24;
+    }
+
+    // WaitingForCapture itself does not start the timeout. It begins only
+    // when the overlay is drawable over Capture, not from app startup time.
+    {
+        StartupBlackFrameHint hint;
+        hint.ObserveFrame(true, true);
+        if (ShouldDrawStartupBlackFrameHint(true, PresentationState::WaitingForCapture,
+                                            hint, 9000) || hint.activationStarted) {
+            return 25;
+        }
+        if (!ShouldDrawStartupBlackFrameHint(true, PresentationState::Capture,
+                                             hint, 10000) ||
+            hint.activatedAtMs != 10000) return 26;
     }
 
     std::cout << "presentation state tests passed\n";

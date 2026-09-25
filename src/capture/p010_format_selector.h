@@ -9,7 +9,8 @@ namespace NitLink {
 struct P010Candidate {
     uint32_t width = 0;
     uint32_t height = 0;
-    uint32_t fps = 0;
+    uint32_t fpsNumerator = 0;
+    uint32_t fpsDenominator = 1;
 };
 
 enum class P010SelectionReason {

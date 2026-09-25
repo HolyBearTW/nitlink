@@ -734,7 +734,10 @@
       // User's persisted override. Each numeric field at 0 means Auto for
       // that axis; empty format string means Auto for format. All-Auto =
       // full automatic negotiation (the default).
-      let lastOverride = { width: 0, height: 0, fps: 0, format: '' };
+      let lastOverride = {
+        width: 0, height: 0, fps: 0,
+        fpsNumerator: 0, fpsDenominator: 1, format: ''
+      };
 
       const closePop = () => { pop.dataset.open = 'false'; };
 
@@ -810,6 +813,57 @@
         });
         return [...map.entries()].sort((a, b) => b[1].w - a[1].w);
       };
+      const rateKey = (format) => {
+        const numerator = Number(format && format.fpsNumerator);
+        const denominator = Number(format && format.fpsDenominator);
+        if (numerator > 0 && denominator > 0) return `${numerator}/${denominator}`;
+        const fps = Number(format && format.fps);
+        return fps > 0 ? `${fps}/1` : '0/1';
+      };
+      const rateLabel = (format) => {
+        const numerator = Number(format && format.fpsNumerator);
+        const denominator = Number(format && format.fpsDenominator);
+        let fps = Number(format && format.fps) || 0;
+        if (numerator > 0 && denominator > 0) {
+          const exact = numerator / denominator;
+          const roundedInteger = Math.round(exact);
+          fps = Math.abs(exact - roundedInteger) < 0.01
+            ? roundedInteger
+            : Number(exact.toFixed(3));
+        }
+        return `${fps} ${t('units.fps')}`;
+      };
+      const overrideRateKey = () => {
+        const direct = rateKey(lastOverride);
+        const legacyFps = Number(lastOverride && lastOverride.fps);
+        const legacyNumerator = Number(lastOverride && lastOverride.fpsNumerator);
+        if (!(legacyFps > 0) || legacyNumerator > 0) return direct;
+
+        // Integer-only persisted preferences predate rational-rate storage.
+        // Resolve their display key against the live native list without
+        // mutating lastOverride, so 59 can select 60000/1001 in the picker
+        // while the C++ negotiator still owns the authoritative migration.
+        const w = Number(lastOverride.width) || 0;
+        const h = Number(lastOverride.height) || 0;
+        const format = typeof lastOverride.format === 'string'
+          ? lastOverride.format : '';
+        const candidates = lastAvailableFormats.filter(f =>
+          RENDERABLE.has(f.format) &&
+          (!w || f.width === w) &&
+          (!h || f.height === h) &&
+          Number(f.fps) === legacyFps &&
+          (!format || f.format === format));
+        if (!candidates.length) return direct;
+
+        candidates.sort((a, b) => {
+          const aRate = Number(a.fpsNumerator || a.fps) /
+            Number(a.fpsDenominator || 1);
+          const bRate = Number(b.fpsNumerator || b.fps) /
+            Number(b.fpsDenominator || 1);
+          return bRate - aRate;
+        });
+        return rateKey(candidates[0]);
+      };
       const uniqueFps = () => {
         // Strict filter: fps options appear only when a resolution is
         // selected AND a renderable format exists at that (resolution,
@@ -817,14 +871,15 @@
         // returns empty so the user picks resolution first. Prevents
         // the cascade from offering fps that are not achievable at
         // the chosen resolution.
-        const set = new Set();
+        const set = new Map();
         const w = lastOverride.width, h = lastOverride.height;
         if (!w || !h) return [];
         lastAvailableFormats.forEach(f => {
           if (!RENDERABLE.has(f.format)) return;
-          if (f.width === w && f.height === h) set.add(f.fps);
+          if (f.width === w && f.height === h) set.set(rateKey(f), f);
         });
-        return [...set].sort((a, b) => b - a);
+        return [...set.values()].sort((a, b) =>
+          b.fps - a.fps || Number(b.fpsNumerator || b.fps) - Number(a.fpsNumerator || a.fps));
       };
       const uniqueFormats = () => {
         // Strict filter: format options appear only when a resolution
@@ -832,12 +887,12 @@
         // picks resolution first.
         const set = new Set();
         const w = lastOverride.width, h = lastOverride.height;
-        const fps = lastOverride.fps;
+        const selectedRate = overrideRateKey();
         if (!w || !h) return [];
         lastAvailableFormats.forEach(f => {
           if (!RENDERABLE.has(f.format)) return;
           if (f.width === w && f.height === h) {
-            if (!fps || f.fps === fps) set.add(f.format);
+            if (selectedRate === '0/1' || rateKey(f) === selectedRate) set.add(f.format);
           }
         });
         return [...set];
@@ -852,8 +907,8 @@
         const choices = {
             'source.resolution': [uniqueResolutions().map(([key]) => ({ value: key, label: key })),
             lastOverride.width ? `${lastOverride.width}x${lastOverride.height}` : ''],
-          'source.framerate': [uniqueFps().map(f => ({ value: f, label: `${f} ${t('units.fps')}` })),
-            lastOverride.fps ? String(lastOverride.fps) : ''],
+            'source.framerate': [uniqueFps().map(f => ({ value: rateKey(f), label: rateLabel(f) })),
+            overrideRateKey() === '0/1' ? '' : overrideRateKey()],
           'source.format': [uniqueFormats().map(f => ({ value: f, label: f })), lastOverride.format],
         };
         Object.entries(choices).forEach(([label, [options, value]]) => {
@@ -924,7 +979,8 @@
             // overrides (native-best resolution with a specific
             // fps/format) are rarely supported by real hardware.
             if (!w || !h) {
-              sendOverride({ width: 0, height: 0, fps: 0, format: '' });
+              sendOverride({ width: 0, height: 0, fps: 0,
+                fpsNumerator: 0, fpsDenominator: 1, format: '' });
               return;
             }
             // Stale-child invalidation: if the persisted fps or format
@@ -936,13 +992,16 @@
             const validAtNewRes = lastAvailableFormats.filter(f =>
               RENDERABLE.has(f.format) &&
               f.width === w && f.height === h);
-            const fpsStillValid = lastOverride.fps &&
-              validAtNewRes.some(f => f.fps === lastOverride.fps);
+            const selectedRate = overrideRateKey();
+            const fpsStillValid = selectedRate !== '0/1' &&
+              validAtNewRes.some(f => rateKey(f) === selectedRate);
             const fmtStillValid = lastOverride.format &&
               validAtNewRes.some(f => f.format === lastOverride.format);
             sendOverride({
               width: w, height: h,
               fps: fpsStillValid ? lastOverride.fps : 0,
+              fpsNumerator: fpsStillValid ? lastOverride.fpsNumerator : 0,
+              fpsDenominator: fpsStillValid ? lastOverride.fpsDenominator : 1,
               format: fmtStillValid ? lastOverride.format : '',
             });
           }
@@ -950,10 +1009,20 @@
 
         const fpsValues = uniqueFps();
         makeSelectRow('source.framerate',
-          fpsValues.map(f => ({ value: f, label: `${f} ${t('units.fps')}` })),
-          lastOverride.fps ? String(lastOverride.fps) : '',
+          fpsValues.map(f => ({ value: rateKey(f), label: rateLabel(f) })),
+          overrideRateKey() === '0/1' ? '' : overrideRateKey(),
           (newVal) => {
-            const newFps = newVal ? Number(newVal) : 0;
+            const selected = newVal
+              ? lastAvailableFormats.find(f =>
+                  f.width === lastOverride.width &&
+                  f.height === lastOverride.height &&
+                  RENDERABLE.has(f.format) && rateKey(f) === newVal)
+              : null;
+            const newFps = selected ? selected.fps : 0;
+            const newFpsNumerator = selected
+              ? Number(selected.fpsNumerator || selected.fps) : 0;
+            const newFpsDenominator = selected
+              ? Number(selected.fpsDenominator || 1) : 1;
             // Stale-child invalidation: if the persisted format is no
             // longer renderable at (currentResolution, newFps), reset
             // format to Auto. Prevents sending {res, fps, format}
@@ -964,13 +1033,15 @@
                 RENDERABLE.has(f.format) &&
                 f.width === lastOverride.width &&
                 f.height === lastOverride.height &&
-                (!newFps || f.fps === newFps));
+                (!newVal || rateKey(f) === newVal));
               if (!validAtCombo.some(f => f.format === format)) format = '';
             }
             sendOverride({
               width: lastOverride.width,
               height: lastOverride.height,
               fps: newFps,
+              fpsNumerator: newFpsNumerator,
+              fpsDenominator: newFpsDenominator,
               format: format,
             });
           }
@@ -985,6 +1056,8 @@
               width: lastOverride.width,
               height: lastOverride.height,
               fps: lastOverride.fps,
+              fpsNumerator: lastOverride.fpsNumerator,
+              fpsDenominator: lastOverride.fpsDenominator,
               format: newVal,
             });
           }
@@ -1048,7 +1121,29 @@
         lastActive = typeof active === 'string' ? active : '';
         lastAvailableFormats = Array.isArray(availableFormats)
           ? availableFormats : [];
-        lastOverride = override || { width: 0, height: 0, fps: 0, format: '' };
+        const incoming = override || { width: 0, height: 0, fps: 0, format: '' };
+        // Preserve an explicit zero numerator. Integer-only legacy
+        // preferences intentionally use { fps: 59, fpsNumerator: 0 } so the
+        // capture negotiator can resolve that display bucket against the
+        // card's native rational (for example 60000/1001). Reconstructing
+        // 59/1 here would turn an unresolved legacy preference back into the
+        // exact-rate bug when the user later changes another Source field.
+        const hasIncomingNumerator = Object.prototype.hasOwnProperty.call(
+          incoming, 'fpsNumerator');
+        const hasIncomingDenominator = Object.prototype.hasOwnProperty.call(
+          incoming, 'fpsDenominator');
+        lastOverride = {
+          width: Number(incoming.width) || 0,
+          height: Number(incoming.height) || 0,
+          fps: Number(incoming.fps) || 0,
+          fpsNumerator: hasIncomingNumerator
+            ? (Number(incoming.fpsNumerator) || 0)
+            : (Number(incoming.fps) || 0),
+          fpsDenominator: hasIncomingDenominator
+            ? (Number(incoming.fpsDenominator) || 1)
+            : 1,
+          format: typeof incoming.format === 'string' ? incoming.format : ''
+        };
         nameEl.textContent = lastActive || t('meta.none');
         trigger.dataset.multi = (lastDevices.length > 1) ? 'true' : 'false';
         if (pop.dataset.open === 'true') {

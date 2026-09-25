@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace NitLink {
 
 // Single render decision used by both SDR and HDR paths. The no-signal latch
@@ -40,8 +42,12 @@ constexpr PresentationState DecidePresentation(bool noSignalLatched,
 // The hint ends when visible content arrives or the known placeholder is
 // confirmed, and does not affect source liveness or detector classification.
 struct StartupBlackFrameHint {
+    static constexpr std::uint64_t kMaximumVisibleDurationMs = 3000;
+
     bool eligible = true;
     bool visible = false;
+    bool activationStarted = false;
+    std::uint64_t activatedAtMs = 0;
 
     constexpr void ObserveFrame(bool acceptedReal, bool zeroLumaZones) noexcept {
         if (!eligible || !acceptedReal) return;
@@ -50,25 +56,49 @@ struct StartupBlackFrameHint {
         } else {
             eligible = false;
             visible = false;
+            activationStarted = false;
         }
     }
 
     constexpr void ConfirmPlaceholder() noexcept {
         eligible = false;
         visible = false;
+        activationStarted = false;
     }
 
     constexpr void Reset() noexcept {
         eligible = true;
         visible = false;
+        activationStarted = false;
+        activatedAtMs = 0;
     }
 };
 
 constexpr bool ShouldDrawStartupBlackFrameHint(bool isGc553Pro,
                                                PresentationState state,
-                                               const StartupBlackFrameHint& hint) noexcept
+                                               StartupBlackFrameHint& hint,
+                                               std::uint64_t nowMs) noexcept
 {
-    return isGc553Pro && state == PresentationState::Capture && hint.visible;
+    if (!isGc553Pro || state != PresentationState::Capture ||
+        !hint.eligible || !hint.visible) {
+        return false;
+    }
+
+    // Start the cap only when this presentation hint can actually be drawn,
+    // not at application launch or while WaitingForCapture is still shown.
+    if (!hint.activationStarted) {
+        hint.activationStarted = true;
+        hint.activatedAtMs = nowMs;
+    }
+
+    if (nowMs >= hint.activatedAtMs &&
+        nowMs - hint.activatedAtMs >= StartupBlackFrameHint::kMaximumVisibleDurationMs) {
+        hint.eligible = false;
+        hint.visible = false;
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace NitLink

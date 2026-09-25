@@ -185,6 +185,12 @@ bool Config::Load(const std::string& path)
         } else if (key == "capture_override_fps") {
             legacyOverride.fps = ParseU32(val, 0, 0, 1000);
             sawLegacyOverride = true;
+        } else if (key == "capture_override_fps_numerator") {
+            legacyOverride.fpsNumerator = ParseU32(val, 0, 0, 1000000000);
+            sawLegacyOverride = true;
+        } else if (key == "capture_override_fps_denominator") {
+            legacyOverride.fpsDenominator = ParseU32(val, 1, 1, 1000000000);
+            sawLegacyOverride = true;
         } else if (key == "capture_override_format") {
             // Format strings are always ASCII ("NV12" / "P010" / "BGRA"
             // / "") so the same narrow-to-wide convention as
@@ -210,7 +216,13 @@ bool Config::Load(const std::string& path)
                     } else if (field == "height") {
                         indexedOverrides[idx].height = std::stoul(val);
                     } else if (field == "fps") {
-                        indexedOverrides[idx].fps = std::stoul(val);
+                        indexedOverrides[idx].fps = ParseU32(val, 0, 0, 1000);
+                    } else if (field == "fps_numerator") {
+                        indexedOverrides[idx].fpsNumerator =
+                            ParseU32(val, 0, 0, 1000000000);
+                    } else if (field == "fps_denominator") {
+                        indexedOverrides[idx].fpsDenominator =
+                            ParseU32(val, 1, 1, 1000000000);
                     } else if (field == "format") {
                         indexedOverrides[idx].format.assign(val.begin(), val.end());
                     }
@@ -219,6 +231,23 @@ bool Config::Load(const std::string& path)
                 }
             }
         }
+    }
+
+    auto normalizeOverrideRate = [](CaptureFormatOverride& ov) {
+        if (ov.fpsNumerator > 0) {
+            if (ov.fpsDenominator == 0) ov.fpsDenominator = 1;
+            ov.fps = ov.fpsNumerator / ov.fpsDenominator;
+        } else {
+            // Legacy configs stored only the integer display FPS. Keep the
+            // rational unspecified so capture negotiation can resolve e.g.
+            // 59 against a native 60000/1001 mode instead of inventing 59/1.
+            ov.fpsDenominator = 1;
+        }
+    };
+
+    normalizeOverrideRate(legacyOverride);
+    for (auto& [idx, ov] : indexedOverrides) {
+        normalizeOverrideRate(ov);
     }
 
     // Post-loop: transpose indexed overrides into the per-device map.
@@ -295,7 +324,8 @@ bool Config::Save(const std::string& path)
 
     file << "# Capture format overrides (per device, F1 Source picker)\n";
     file << "# Schema: capture_override.<N>.<field> = <value>\n";
-    file << "# Fields per entry: device, width, height, fps, format\n";
+    file << "# Fields per entry: device, width, height, fps, fps_numerator,\n";
+    file << "# fps_denominator, format\n";
     file << "# Numeric fields at 0 (or empty for format) mean Auto.\n";
     file << "# Format value: NV12 / P010 / BGRA / (empty for Auto).\n";
     if (!captureFormatOverrides.empty()) {
@@ -318,6 +348,10 @@ bool Config::Save(const std::string& path)
             file << "capture_override." << idx << ".width = "  << ov.width  << "\n";
             file << "capture_override." << idx << ".height = " << ov.height << "\n";
             file << "capture_override." << idx << ".fps = "    << ov.fps    << "\n";
+            file << "capture_override." << idx << ".fps_numerator = "
+                 << ov.fpsNumerator << "\n";
+            file << "capture_override." << idx << ".fps_denominator = "
+                 << ov.fpsDenominator << "\n";
             file << "capture_override." << idx << ".format = " << narrowFormat << "\n";
             ++idx;
         }
