@@ -170,6 +170,14 @@ struct Config {
     // "stretch" fills the window and ignores the ratio entirely.
     std::string  aspectRatio = "auto";
 
+    // Presentation-only replacement for NitLink's branded No Signal page.
+    // The path is persisted as UTF-8 and converted to UTF-16 only at the
+    // Windows/WIC boundary. These settings never alter capture aspect ratio.
+    std::string  noSignalMode = "default"; // default | image
+    std::string  noSignalImage = {};        // UTF-8 filesystem path
+    std::string  noSignalFit = "contain";  // contain | cover | stretch
+    bool         noSignalDimImage = true;
+
     // Where the F1 panel opens. "right" and "left" dock it as a strip beside
     // the picture, which keeps playing underneath. "full" covers the whole
     // window with the wide layout and holds a black frame while it is open.

@@ -31,26 +31,30 @@ FrameBuffer::FrameBuffer(uint32_t width, uint32_t height, uint32_t stride)
         m_buffers[i].data.resize(frameSize);
     }
 
-    // Auto-reset, initially non-signaled. Set on every Write(); the render loop
-    // blocks on it in WaitForFrame() for arrival-driven present.
-    m_frameReadyEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    // Auto-reset, initially non-signaled. Capture activity wakes the render
+    // loop; Read() determines whether that activity included a new frame.
+    m_frameActivityEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 }
 
 FrameBuffer::~FrameBuffer()
 {
     // Owners join the capture worker before destroying the buffer (see the
     // teardown contract in frame_buffer.h), so no Write() can race this close.
-    if (m_frameReadyEvent) {
-        CloseHandle((HANDLE)m_frameReadyEvent);
-        m_frameReadyEvent = nullptr;
+    if (m_frameActivityEvent) {
+        CloseHandle((HANDLE)m_frameActivityEvent);
+        m_frameActivityEvent = nullptr;
     }
 }
 
-void FrameBuffer::WaitForFrame(unsigned long timeoutMs)
+bool FrameBuffer::WaitForFrame(unsigned long timeoutMs)
 {
-    if (m_frameReadyEvent) {
-        WaitForSingleObject((HANDLE)m_frameReadyEvent, timeoutMs);
-    }
+    if (!m_frameActivityEvent) return false;
+    return WaitForSingleObject((HANDLE)m_frameActivityEvent, timeoutMs) == WAIT_OBJECT_0;
+}
+
+void FrameBuffer::NotifyFrameActivity()
+{
+    if (m_frameActivityEvent) SetEvent((HANDLE)m_frameActivityEvent);
 }
 
 void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp,
@@ -125,11 +129,9 @@ void FrameBuffer::Write(const uint8_t* data, uint32_t size, int64_t timestamp,
     m_newFrameAvailable = true;
     m_framesWritten++;
 
-    // Wake the render loop's arrival-driven present (low-latency mode). The
-    // auto-reset event latches, so a Write that lands between the render
-    // thread's Read and its next WaitForFrame is not lost -- the wait returns
-    // immediately.
-    if (m_frameReadyEvent) SetEvent((HANDLE)m_frameReadyEvent);
+    // The auto-reset event latches, so activity that lands between the render
+    // thread's Read and its next wait is not lost.
+    NotifyFrameActivity();
 }
 
 bool FrameBuffer::Read(FrameData& outFrame)

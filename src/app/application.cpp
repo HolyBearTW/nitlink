@@ -1,4 +1,5 @@
 #include "application.h"
+#include "capture_device_names.h"
 #include "WebViewSettings.h"
 #include "game_database.h"
 #include "localization.h"
@@ -103,12 +104,46 @@ static std::wstring Tr(const wchar_t* key) {
     return Localization::Instance().Get(key);
 }
 
+static std::wstring Utf8ToWide(const std::string& value)
+{
+    if (value.empty()) return {};
+    const int count = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), nullptr, 0);
+    if (count <= 0) return {};
+    std::wstring result(static_cast<size_t>(count), L'\0');
+    if (MultiByteToWideChar(
+            CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+            static_cast<int>(value.size()), result.data(), count) != count) {
+        return {};
+    }
+    return result;
+}
+
+static std::string WideToUtf8(const std::wstring& value)
+{
+    if (value.empty()) return {};
+    const int count = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+        static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (count <= 0) return {};
+    std::string result(static_cast<size_t>(count), '\0');
+    if (WideCharToMultiByte(
+            CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+            static_cast<int>(value.size()), result.data(), count,
+            nullptr, nullptr) != count) {
+        return {};
+    }
+    return result;
+}
+
 const wchar_t* FormatGuidToString(const GUID& g);
 
 static std::wstring P010UnavailableWarning(const CaptureFormat& format)
 {
-    return L"HDR requested, but no compatible P010 mode was negotiated; HDR was disabled and " +
-           std::wstring(FormatGuidToString(format.subtype)) + L" capture is active.";
+    return Localization::Instance().Format(
+        L"toast.p010Unavailable",
+        {{L"format", FormatGuidToString(format.subtype)}});
 }
 
 static std::wstring FormatNoticeFrameRate(const P010SelectionNotice& notice)
@@ -458,8 +493,14 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_showOverlay = startupOverlayOk && m_config->showOverlay;
     m_window->Show(nCmdShow);
     AppLog(L"Initialize: startup frame presented and window shown");
+    if (startupOverlayOk) ApplyNoSignalSettings();
 
     auto devices = DeviceEnumerator::FindCaptureDevices();
+    m_cachedCaptureDeviceNames.clear();
+    m_cachedCaptureDeviceNames.reserve(devices.size());
+    for (const auto& device : devices) {
+        m_cachedCaptureDeviceNames.push_back(device.name);
+    }
     {
         std::wstringstream ss;
         ss << L"Initialize: found " << devices.size() << L" capture device(s)";
@@ -1160,6 +1201,44 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
             return;
         }
+        if (action == L"setNoSignalMode" && m_config) {
+            const std::wstring requested = extractStr(L"value");
+            if (requested == L"default" || requested == L"image") {
+                m_config->noSignalMode =
+                    requested == L"image" ? "image" : "default";
+                ApplyNoSignalSettings();
+                m_config->Save("nitlink.json");
+                PushSettingsState();
+            }
+            return;
+        }
+        if (action == L"cycleNoSignalMode") {
+            CycleNoSignalMode();
+            return;
+        }
+        if (action == L"chooseNoSignalImage") {
+            ChooseNoSignalImage();
+            return;
+        }
+        if (action == L"setNoSignalFit" && m_config) {
+            const std::wstring requested = extractStr(L"value");
+            if (requested == L"contain" || requested == L"cover" ||
+                requested == L"stretch") {
+                m_config->noSignalFit = WideToUtf8(requested);
+                ApplyNoSignalSettings();
+                m_config->Save("nitlink.json");
+                PushSettingsState();
+            }
+            return;
+        }
+        if (action == L"cycleNoSignalFit") {
+            CycleNoSignalFit();
+            return;
+        }
+        if (action == L"cycleNoSignalDimImage") {
+            CycleNoSignalDimImage();
+            return;
+        }
         if (action == L"toggleHDR" && m_config) {
             m_config->hdrEnabled = !m_config->hdrEnabled;
             // Render loop's HDR-sync block picks this up next iteration.
@@ -1293,12 +1372,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         // UI-agnostic so a hotkey, a tray menu, or external tooling that
         // drives WebView2 directly can dispatch the same messages.
         if (action == L"getDeviceList") {
-            // Re-enumerate and push state. PushSettingsState calls
-            // DeviceEnumerator::FindCaptureDevices() each invocation,
-            // so the JS side always receives the live list. This is
-            // the lightweight cousin of refreshDevices: no log line,
-            // no implication of user intent.
-            PushSettingsState();
+            // Opening the Source list is an explicit request for fresh
+            // devices. Ordinary settings pushes stay on the cached list.
+            PushSettingsState(/*refreshCaptureDevices=*/true);
             return;
         }
         if (action == L"refreshDevices") {
@@ -1306,7 +1382,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // user-initiated refresh. Lets DebugView distinguish a UI
             // refresh-button click from an automatic state push.
             AppLog(L"WebView2: user requested device refresh");
-            PushSettingsState();
+            PushSettingsState(/*refreshCaptureDevices=*/true);
             return;
         }
         if (action == L"setPreferredDevice") {
@@ -3211,6 +3287,9 @@ bool Application::DropPlaceholderFrame(const uint8_t* data, uint32_t size)
         return false;
     }
     m_placeholderDropped.fetch_add(1, std::memory_order_relaxed);
+    // This sample is intentionally filtered before FrameBuffer::Write(). Wake
+    // the source-paced render loop without making a readable frame available.
+    if (m_frameBuffer) m_frameBuffer->NotifyFrameActivity();
     return true;
 }
 
@@ -4109,6 +4188,156 @@ void Application::CycleAspectRatio()
     if (m_settingsVisible) PushSettingsState();
 }
 
+bool Application::ApplyNoSignalSettings(bool forceReload)
+{
+    if (!m_overlay || !m_config) return false;
+
+    const std::wstring imagePath = Utf8ToWide(m_config->noSignalImage);
+    if (!m_config->noSignalImage.empty() && imagePath.empty()) {
+        AppLog(L"No Signal image path is not valid UTF-8; using branded fallback");
+        return false;
+    }
+
+    const bool loaded = m_overlay->SetNoSignalSettings(
+        m_config->noSignalMode, imagePath, m_config->noSignalFit,
+        m_config->noSignalDimImage, forceReload);
+    if (!loaded && m_config->noSignalMode == "image") {
+        AppLog(L"No Signal custom image is unavailable; using branded fallback");
+    }
+    return loaded;
+}
+
+bool Application::ChooseNoSignalImage()
+{
+    if (!m_config || !m_window) return false;
+
+    ComPtr<IFileOpenDialog> dialog;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr,
+                                  CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&dialog));
+    if (FAILED(hr)) {
+        AppLog(L"ChooseNoSignalImage: failed to create IFileOpenDialog");
+        return false;
+    }
+
+    const std::wstring imageFilter = Tr(L"dialog.imagesFilter");
+    const std::wstring allFilesFilter = Tr(L"dialog.allFilesFilter");
+    const std::wstring dialogTitle = Tr(L"dialog.chooseNoSignalImage");
+    const COMDLG_FILTERSPEC filters[] = {
+        {imageFilter.c_str(), L"*.png;*.jpg;*.jpeg;*.bmp"},
+        {allFilesFilter.c_str(), L"*.*"},
+    };
+    hr = dialog->SetFileTypes(ARRAYSIZE(filters), filters);
+    if (FAILED(hr)) {
+        AppLog(L"ChooseNoSignalImage: SetFileTypes failed");
+        return false;
+    }
+    hr = dialog->SetFileTypeIndex(1);
+    if (FAILED(hr)) {
+        AppLog(L"ChooseNoSignalImage: SetFileTypeIndex failed");
+        return false;
+    }
+    hr = dialog->SetTitle(dialogTitle.c_str());
+    if (FAILED(hr)) {
+        AppLog(L"ChooseNoSignalImage: SetTitle failed");
+        return false;
+    }
+    FILEOPENDIALOGOPTIONS options{};
+    hr = dialog->GetOptions(&options);
+    if (FAILED(hr) || FAILED(dialog->SetOptions(
+            options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST))) {
+        AppLog(L"ChooseNoSignalImage: failed to configure dialog options");
+        return false;
+    }
+
+    hr = dialog->Show(m_window->GetHWND());
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return false;
+    if (FAILED(hr)) {
+        AppLog(L"ChooseNoSignalImage: dialog failed");
+        return false;
+    }
+
+    ComPtr<IShellItem> item;
+    hr = dialog->GetResult(&item);
+    if (FAILED(hr) || !item) {
+        AppLog(L"ChooseNoSignalImage: GetResult failed");
+        return false;
+    }
+
+    PWSTR rawPath = nullptr;
+    hr = item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath);
+    if (FAILED(hr) || !rawPath) {
+        AppLog(L"ChooseNoSignalImage: GetDisplayName failed");
+        return false;
+    }
+    const std::wstring path(rawPath);
+    CoTaskMemFree(rawPath);
+
+    const std::string utf8Path = WideToUtf8(path);
+    if (utf8Path.empty()) {
+        AppLog(L"ChooseNoSignalImage: selected path is not valid Unicode");
+        return false;
+    }
+
+    AppLog(L"No Signal image selected: \"" + path + L"\"");
+    m_config->noSignalImage = utf8Path;
+    m_config->noSignalMode = "image";
+    const bool loaded = ApplyNoSignalSettings(/*forceReload=*/true);
+    if (!m_config->Save("nitlink.json")) {
+        AppLog(L"No Signal image: could not save nitlink.json");
+    }
+    ShowToast(loaded ? Tr(L"toast.noSignalImageLoaded")
+                     : Tr(L"toast.noSignalImageLoadFailed"),
+              std::chrono::milliseconds(5000));
+    PushSettingsState();
+    return true;
+}
+
+void Application::CycleNoSignalMode()
+{
+    if (!m_config) return;
+    m_config->noSignalMode =
+        m_config->noSignalMode == "image" ? "default" : "image";
+    ApplyNoSignalSettings();
+    if (!m_config->Save("nitlink.json")) {
+        AppLog(L"No Signal mode: could not save nitlink.json");
+    }
+    AppLog(L"No Signal mode: " + Utf8ToWide(m_config->noSignalMode));
+    if (m_settingsVisible) PushSettingsState();
+}
+
+void Application::CycleNoSignalFit()
+{
+    if (!m_config) return;
+    if (m_config->noSignalFit == "contain") {
+        m_config->noSignalFit = "cover";
+    } else if (m_config->noSignalFit == "cover") {
+        m_config->noSignalFit = "stretch";
+    } else {
+        m_config->noSignalFit = "contain";
+    }
+    ApplyNoSignalSettings();
+    if (!m_config->Save("nitlink.json")) {
+        AppLog(L"No Signal fit: could not save nitlink.json");
+    }
+    AppLog(L"No Signal image fit: " + Utf8ToWide(m_config->noSignalFit));
+    if (m_settingsVisible) PushSettingsState();
+}
+
+void Application::CycleNoSignalDimImage()
+{
+    if (!m_config) return;
+    m_config->noSignalDimImage = !m_config->noSignalDimImage;
+    ApplyNoSignalSettings();
+    if (!m_config->Save("nitlink.json")) {
+        AppLog(L"No Signal dim setting: could not save nitlink.json");
+    }
+    AppLog(m_config->noSignalDimImage
+        ? L"No Signal image dimming: ON"
+        : L"No Signal image dimming: OFF");
+    if (m_settingsVisible) PushSettingsState();
+}
+
 std::wstring Application::ApplyPanelLayout()
 {
     std::string side = m_config ? m_config->panelSide : std::string("right");
@@ -4167,7 +4396,10 @@ bool Application::RecoverFromDeviceLost()
     m_gc553ProStartupBlackHint.Reset();
     m_frameDiffer.reset();
     m_nisUpscaler.reset();
-    m_overlay.reset();
+    // Keep the Overlay object itself so its device-independent decoded No
+    // Signal pixels survive the graphics-device rebuild. Shutdown releases all
+    // old-device COM resources; Initialize below recreates only the D2D bitmap.
+    if (m_overlay) m_overlay->Shutdown();
     m_renderer.reset();
 
     if (w == 0 || h == 0) {
@@ -4187,9 +4419,10 @@ bool Application::RecoverFromDeviceLost()
     // as Initialize: a failed dependent disables its feature but the app keeps
     // running. (Kept in lock-step with the Initialize bring-up at the overlay/
     // NIS/frame-differ block.)
-    m_overlay = std::make_unique<Overlay>();
+    if (!m_overlay) m_overlay = std::make_unique<Overlay>();
     if (m_overlay->Initialize(m_renderer->GetDevice(), m_renderer->GetContext(),
                               m_renderer->GetSwapChain(), m_window->GetHWND())) {
+        ApplyNoSignalSettings();
         m_showOverlay = m_config->showOverlay;
     } else {
         m_showOverlay = false;
@@ -4262,6 +4495,11 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
 
     // Resolve the user-provided name against the live enumeration.
     auto devices = DeviceEnumerator::FindCaptureDevices();
+    m_cachedCaptureDeviceNames.clear();
+    m_cachedCaptureDeviceNames.reserve(devices.size());
+    for (const auto& device : devices) {
+        m_cachedCaptureDeviceNames.push_back(device.name);
+    }
     if (devices.empty()) {
         AppLog(L"SwitchCaptureDevice: enumeration returned no devices");
         return false;
@@ -4441,9 +4679,23 @@ const wchar_t* FormatGuidToString(const GUID& g)
     return L"Unknown";
 }
 
-void Application::PushSettingsState()
+void Application::PushSettingsState(bool refreshCaptureDevices)
 {
     if (!m_webviewSettings || !m_config) return;
+
+    // Media Foundation enumeration can block the UI thread. Only explicit
+    // Source-list requests pass true; F1 opens and ordinary state updates
+    // reuse the startup/switch/refresh cache.
+    RefreshCaptureDeviceNamesIfRequested(
+        refreshCaptureDevices, m_cachedCaptureDeviceNames, [] {
+            const auto devices = DeviceEnumerator::FindCaptureDevices();
+            std::vector<std::wstring> names;
+            names.reserve(devices.size());
+            for (const auto& device : devices) {
+                names.push_back(device.name);
+            }
+            return names;
+        });
 
     // Build a JSON state blob and push to JS via WebView2 PostWebMessageAsJson.
     // Schema must match what nitlink-menu.html's applyState() expects.
@@ -4469,6 +4721,14 @@ void Application::PushSettingsState()
     js << L"\"scalerName\":\"Catmull-Rom\",";
     js << L"\"aspectRatio\":\"" << JsonEscapeWide(ApplyAspectRatio()) << L"\",";
     js << L"\"panelSide\":\"" << ApplyPanelLayout() << L"\",";
+    js << L"\"noSignalMode\":\""
+       << JsonEscapeWide(Utf8ToWide(m_config->noSignalMode)) << L"\",";
+    js << L"\"noSignalImage\":\""
+       << JsonEscapeWide(Utf8ToWide(m_config->noSignalImage)) << L"\",";
+    js << L"\"noSignalFit\":\""
+       << JsonEscapeWide(Utf8ToWide(m_config->noSignalFit)) << L"\",";
+    js << L"\"noSignalDimImage\":"
+       << (m_config->noSignalDimImage ? L"true" : L"false") << L",";
 
     if (m_captureDevice) {
         auto fmt = m_captureDevice->GetOutputFormat();
@@ -4636,10 +4896,9 @@ void Application::PushSettingsState()
     // picked a device.
     {
         js << L",\"captureDevices\":[";
-        auto devices = DeviceEnumerator::FindCaptureDevices();
-        for (size_t i = 0; i < devices.size(); ++i) {
-            js << L"\"" << JsonEscapeWide(devices[i].name) << L"\"";
-            if (i + 1 < devices.size()) js << L",";
+        for (size_t i = 0; i < m_cachedCaptureDeviceNames.size(); ++i) {
+            js << L"\"" << JsonEscapeWide(m_cachedCaptureDeviceNames[i]) << L"\"";
+            if (i + 1 < m_cachedCaptureDeviceNames.size()) js << L",";
         }
         js << L"]";
 

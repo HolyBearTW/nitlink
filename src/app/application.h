@@ -66,7 +66,7 @@ private:
     // toggles/sliders/labels reflect reality. Called on open, on hotkey-
     // driven state changes (Alt+H for HDR), and on the once-per-second
     // stats tick while the menu is visible.
-    void PushSettingsState();
+    void PushSettingsState(bool refreshCaptureDevices = false);
     void SetPiPOpacity(float opacity);
 
     // Game selector helpers. ApplyGameSettings loads the per-game settings
@@ -163,6 +163,15 @@ private:
     // list, persists the choice, and re-applies it.
     std::wstring ApplyAspectRatio();
     void CycleAspectRatio();
+
+    // Custom No Signal image configuration. This changes only the visual
+    // content drawn after PresentationState::NoSignal is selected; signal
+    // detection and presentation-state policy remain untouched.
+    bool ApplyNoSignalSettings(bool forceReload = false);
+    bool ChooseNoSignalImage();
+    void CycleNoSignalMode();
+    void CycleNoSignalFit();
+    void CycleNoSignalDimImage();
 
     // Pushes the configured panel placement (right, left, or full) to the
     // WebView2 host and returns the label shown in the panel.
@@ -401,6 +410,9 @@ private:
     // (handles user-replug edge cases) and falls back to this cached copy
     // if enumeration returns empty mid-session.
     DeviceInfo m_currentDeviceInfo{};
+    // Friendly names are refreshed at startup, explicit Source-list refresh,
+    // and live device switches. Ordinary settings pushes reuse this cache.
+    std::vector<std::wstring> m_cachedCaptureDeviceNames;
     NonGcP010FallbackState m_nonGcP010Fallback;
 
     // Performance tracking

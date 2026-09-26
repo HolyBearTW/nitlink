@@ -67,6 +67,9 @@ set(NITLINK_SOURCES
     src/audio/audio_router.h
     src/overlay/overlay.cpp
     src/overlay/overlay.h
+    src/overlay/no_signal_cache.h
+    src/overlay/no_signal_layout.cpp
+    src/overlay/no_signal_layout.h
     src/upscale/nis_upscaler.cpp
     src/upscale/nis_upscaler.h
     src/discord/discord_rpc.cpp
@@ -192,6 +195,25 @@ if(BUILD_TESTING)
     )
     add_test(NAME placeholder_detector COMMAND NitLinkPlaceholderTests)
 
+    add_executable(NitLinkNoSignalLayoutTests
+        tests/no_signal_layout_tests.cpp
+        src/overlay/no_signal_layout.cpp
+        src/overlay/no_signal_layout.h
+    )
+    target_include_directories(NitLinkNoSignalLayoutTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME no_signal_layout COMMAND NitLinkNoSignalLayoutTests)
+
+    add_executable(NitLinkNoSignalCacheTests
+        tests/no_signal_cache_tests.cpp
+        src/overlay/no_signal_cache.h
+    )
+    target_include_directories(NitLinkNoSignalCacheTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME no_signal_cache COMMAND NitLinkNoSignalCacheTests)
+
     add_executable(NitLinkPresentationStateTests
         tests/presentation_state_tests.cpp
         src/app/presentation_state.h
@@ -248,4 +270,33 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/src
     )
     add_test(NAME capture_output_policy COMMAND NitLinkCaptureOutputPolicyTests)
+
+    add_executable(NitLinkConfigTests
+        tests/config_tests.cpp
+        src/app/config.cpp
+        src/app/config.h
+    )
+    target_include_directories(NitLinkConfigTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME config_round_trip COMMAND NitLinkConfigTests)
+
+    add_executable(NitLinkCaptureDeviceNamesTests
+        tests/capture_device_names_tests.cpp
+        src/app/capture_device_names.h
+    )
+    target_include_directories(NitLinkCaptureDeviceNamesTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME capture_device_names_cache COMMAND NitLinkCaptureDeviceNamesTests)
+
+    add_executable(NitLinkFrameBufferActivityTests
+        tests/frame_buffer_activity_tests.cpp
+        src/capture/frame_buffer.cpp
+        src/capture/frame_buffer.h
+    )
+    target_include_directories(NitLinkFrameBufferActivityTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+    )
+    add_test(NAME frame_buffer_activity COMMAND NitLinkFrameBufferActivityTests)
 endif()

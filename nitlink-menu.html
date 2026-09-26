@@ -58,6 +58,13 @@
       transition: background .12s ease, color .12s ease;
     }
     .rail-item:hover { background: rgba(255, 255, 255, 0.045); color: var(--ink2); }
+    /* Keep WebView2's default button ring out of the UI. This shared rule
+       applies to both the vertical rail and the narrow horizontal tab row. */
+    .rail-item:focus { outline: none; }
+    .rail-item:focus-visible {
+      outline: 1px solid var(--accent);
+      outline-offset: -2px;
+    }
     .rail-item[data-active="true"] { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
     .rail-item[data-active="true"]::before {
       content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
@@ -125,6 +132,8 @@
     .row-right.end { justify-content: flex-end; }
     .row-chip { color: var(--ink3); font-size: 12px; }
     .row-value { min-width: 0; color: var(--ink); font-size: 13px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+    .no-signal-image-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .no-signal-choose { flex: none; }
     .row.kv { min-height: 42px; }
 
     .notice {
@@ -164,7 +173,15 @@
     .about-credits { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12.5px; line-height: 1.5; }
     .about-credit-title { color: var(--ink3); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; }
     .about-credit-entry { margin-top: 4px; }
-    .about-credit-entry a { color: var(--accent-text); font-weight: 500; }
+    .about-credit-entry a {
+      color: var(--accent-text);
+      font-weight: 500;
+      transition: color .12s ease;
+    }
+    .about-credit-entry a:hover,
+    .about-credit-entry a:focus-visible {
+      color: var(--accent);
+    }
 
     /* Source picker popover: device list plus the manual capture-format cascade. */
     .source-popover {
@@ -416,6 +433,42 @@
             <div class="row-right">
               <span class="row-chip" data-i18n="chip.nis"></span>
               <div class="toggle" id="toggle-nis"></div>
+            </div>
+          </div>
+
+          <div class="band" id="no-signal-section-band">
+            <span class="band-title" data-i18n="section.noSignal"></span>
+            <span class="band-hint" data-i18n="section.noSignalHint"></span>
+          </div>
+          <div class="row" id="no-signal-screen-row" data-action="cycleNoSignalMode">
+            <span class="row-name" data-i18n="row.noSignalScreen"></span>
+            <div class="row-right">
+              <span class="row-value" id="no-signal-mode-val"></span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </div>
+          <div class="row" id="no-signal-image-row" data-action="chooseNoSignalImage"
+            hidden data-i18n-title="tooltip.noSignalImage">
+            <span class="row-name" data-i18n="row.noSignalImage"></span>
+            <div class="row-right">
+              <span class="row-value no-signal-image-name" id="no-signal-image-value"></span>
+              <span class="row-value no-signal-choose" data-i18n="action.choose"></span>
+            </div>
+          </div>
+          <div class="row" id="no-signal-fit-row" data-action="cycleNoSignalFit"
+            hidden data-i18n-title="tooltip.noSignalFit">
+            <span class="row-name" data-i18n="row.noSignalFit"></span>
+            <div class="row-right">
+              <span class="row-value" id="no-signal-fit-val"></span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            </div>
+          </div>
+          <div class="row" id="no-signal-dim-row" data-action="cycleNoSignalDimImage"
+            hidden data-i18n-title="tooltip.noSignalDimImage">
+            <span class="row-name" data-i18n="row.noSignalDimImage"></span>
+            <div class="row-right">
+              <span class="row-value" id="no-signal-dim-val"></span>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" class="chevron" aria-hidden="true"><path d="M4 3l4 3-4 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
             </div>
           </div>
 
@@ -1218,6 +1271,7 @@
       if (languageSelect && s.languagePreference) languageSelect.value = s.languagePreference;
       const setToggle = (id, on) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
       const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      const setHidden = (id, hidden) => { const el = document.getElementById(id); if (el) el.hidden = hidden; };
       setToggle('toggle-hdr', s.hdrEnabled);
       setToggle('toggle-color', s.colorExpansion);
       setToggle('toggle-nis', s.nisEnabled);
@@ -1240,6 +1294,25 @@
       if (s.panelSide) {
         setText('panel-side-val', localizeValue(s.panelSide));
         document.documentElement.dataset.side = String(s.panelSide).toLowerCase();
+      }
+      const noSignalMode = s.noSignalMode === 'image' ? 'image' : 'default';
+      setText('no-signal-mode-val', t(
+        noSignalMode === 'image' ? 'value.customImage' : 'value.nitlinkDefault'));
+      const noSignalFit = ['contain', 'cover', 'stretch'].includes(s.noSignalFit)
+        ? s.noSignalFit : 'contain';
+      setText('no-signal-fit-val', t(`value.${noSignalFit}`));
+      setText('no-signal-dim-val', s.noSignalDimImage === false
+        ? t('value.off') : t('value.on'));
+      const customNoSignal = noSignalMode === 'image';
+      setHidden('no-signal-image-row', !customNoSignal);
+      setHidden('no-signal-fit-row', !customNoSignal);
+      setHidden('no-signal-dim-row', !customNoSignal);
+      const imageValue = document.getElementById('no-signal-image-value');
+      if (imageValue) {
+        const path = typeof s.noSignalImage === 'string' ? s.noSignalImage : '';
+        const slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+        imageValue.textContent = path ? path.substring(slash + 1) : t('meta.none');
+        imageValue.title = path || t('meta.none');
       }
       const hasSignal = s.negotiatedWidth > 0 && s.negotiatedHeight > 0 && s.negotiatedFps > 0;
       setText('meta-resolution', hasSignal

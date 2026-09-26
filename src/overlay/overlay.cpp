@@ -1,14 +1,18 @@
 #include "overlay.h"
 #include "../ui/theme.h"
 #include "../app/localization.h"
+#include "no_signal_cache.h"
+#include "no_signal_layout.h"
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
 #include <debugapi.h>
+#include <limits>
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace NitLink {
 
@@ -27,6 +31,7 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
     m_context   = context;
     m_swapChain = swapChain;
     m_hwnd      = hwnd;
+    m_deviceLost = false;
 
     // D2D factory: single-threaded since it's only used from the render thread.
     D2D1_FACTORY_OPTIONS opts{};
@@ -73,6 +78,17 @@ bool Overlay::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,
         __uuidof(IDWriteFactory), (IUnknown**)m_dwriteFactory.GetAddressOf());
     if (FAILED(hr)) return false;
+
+    // WIC is optional for the built-in branded page. If it is unavailable,
+    // custom-image mode safely falls back while the rest of the overlay keeps
+    // working.
+    hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_PPV_ARGS(&m_wicFactory));
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"WIC factory unavailable: 0x" << std::hex << hr;
+        OvLog(ss.str());
+    }
 
     if (!RefreshTextFormats()) {
         OvLog(L"RefreshTextFormats failed during init");
@@ -156,6 +172,192 @@ bool Overlay::RefreshTextFormats()
     return true;
 }
 
+bool Overlay::SetNoSignalSettings(const std::string& mode,
+                                  const std::wstring& imagePath,
+                                  const std::string& fit,
+                                  bool dimImage,
+                                  bool forceReload)
+{
+    const std::string normalizedMode = mode == "image" ? "image" : "default";
+    const std::string normalizedFit =
+        (fit == "cover" || fit == "stretch") ? fit : "contain";
+    const bool pathChanged = imagePath != m_noSignalImagePath;
+    const bool modeChanged = normalizedMode != m_noSignalMode;
+
+    m_noSignalMode = normalizedMode;
+    m_noSignalFit = normalizedFit;
+    m_noSignalDimImage = dimImage;
+    m_noSignalImagePath = imagePath;
+
+    OvLog(L"No Signal settings: mode=" +
+          std::wstring(m_noSignalMode == "image" ? L"image" : L"default") +
+          L" path=\"" + imagePath + L"\"");
+
+    if (m_noSignalMode != "image") return true;
+    if (imagePath.empty()) {
+        m_noSignalBitmap.Reset();
+        m_noSignalPixels.clear();
+        m_noSignalImageWidth = 0;
+        m_noSignalImageHeight = 0;
+        m_noSignalImageStride = 0;
+        return false;
+    }
+
+    if (ShouldReloadNoSignalImage(forceReload, pathChanged, modeChanged,
+                                  !m_noSignalPixels.empty())) {
+        // Invalidate both caches before decoding. A failed explicit reload
+        // cannot accidentally continue displaying the previous bitmap.
+        m_noSignalBitmap.Reset();
+        m_noSignalPixels.clear();
+        m_noSignalImageWidth = 0;
+        m_noSignalImageHeight = 0;
+        m_noSignalImageStride = 0;
+        m_noSignalLastAttemptPath.clear();
+        m_noSignalLastAttemptFailed = false;
+        return LoadNoSignalImage(imagePath);
+    }
+
+    return m_noSignalBitmap ? true : CreateNoSignalBitmap();
+}
+
+bool Overlay::LoadNoSignalImage(const std::wstring& imagePath)
+{
+    OvLog(L"Custom No Signal image load begin: \"" + imagePath + L"\"");
+
+    auto fail = [&](const std::wstring& reason) {
+        const bool repeated = m_noSignalLastAttemptFailed &&
+                              m_noSignalLastAttemptPath == imagePath;
+        m_noSignalLastAttemptPath = imagePath;
+        m_noSignalLastAttemptFailed = true;
+        if (!repeated) {
+            OvLog(L"Custom No Signal image load failed: " + reason);
+        }
+        m_noSignalBitmap.Reset();
+        m_noSignalPixels.clear();
+        m_noSignalImageWidth = 0;
+        m_noSignalImageHeight = 0;
+        m_noSignalImageStride = 0;
+        return false;
+    };
+
+    if (!m_wicFactory) return fail(L"WIC factory is unavailable");
+    if (imagePath.empty()) return fail(L"path is empty");
+
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = m_wicFactory->CreateDecoderFromFilename(
+        imagePath.c_str(), nullptr, GENERIC_READ,
+        WICDecodeMetadataCacheOnLoad, &decoder);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"CreateDecoderFromFilename failed: 0x" << std::hex << hr;
+        return fail(ss.str());
+    }
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, &frame);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"GetFrame failed: 0x" << std::hex << hr;
+        return fail(ss.str());
+    }
+
+    ComPtr<IWICFormatConverter> converter;
+    hr = m_wicFactory->CreateFormatConverter(&converter);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"CreateFormatConverter failed: 0x" << std::hex << hr;
+        return fail(ss.str());
+    }
+    hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                               WICBitmapDitherTypeNone, nullptr, 0.0,
+                               WICBitmapPaletteTypeCustom);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"FormatConverter::Initialize failed: 0x" << std::hex << hr;
+        return fail(ss.str());
+    }
+
+    UINT width = 0;
+    UINT height = 0;
+    hr = converter->GetSize(&width, &height);
+    if (FAILED(hr) || width == 0 || height == 0 ||
+        width > std::numeric_limits<UINT>::max() / 4u) {
+        std::wstringstream ss;
+        ss << L"GetSize failed or returned invalid dimensions: 0x"
+           << std::hex << hr;
+        return fail(ss.str());
+    }
+
+    const UINT stride = width * 4u;
+    const uint64_t byteCount = static_cast<uint64_t>(stride) * height;
+    if (byteCount == 0 || byteCount > std::numeric_limits<UINT>::max() ||
+        byteCount > std::numeric_limits<size_t>::max()) {
+        return fail(L"image dimensions exceed the WIC pixel-buffer limit");
+    }
+
+    std::vector<uint8_t> pixels;
+    try {
+        pixels.resize(static_cast<size_t>(byteCount));
+    } catch (...) {
+        return fail(L"pixel cache allocation failed");
+    }
+
+    hr = converter->CopyPixels(nullptr, stride, static_cast<UINT>(byteCount),
+                               pixels.data());
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"CopyPixels failed: 0x" << std::hex << hr;
+        return fail(ss.str());
+    }
+
+    m_noSignalPixels = std::move(pixels);
+    m_noSignalImageWidth = width;
+    m_noSignalImageHeight = height;
+    m_noSignalImageStride = stride;
+    m_noSignalLastAttemptPath = imagePath;
+    m_noSignalLastAttemptFailed = false;
+    OvLog(L"Custom No Signal image loaded: " + std::to_wstring(width) +
+          L"x" + std::to_wstring(height));
+
+    if (!CreateNoSignalBitmap()) {
+        OvLog(L"Custom No Signal image decoded, but bitmap creation failed; "
+              L"using branded fallback");
+        return false;
+    }
+    return true;
+}
+
+bool Overlay::CreateNoSignalBitmap()
+{
+    m_noSignalBitmap.Reset();
+    if (!m_d2dContext || m_noSignalPixels.empty() ||
+        m_noSignalImageWidth == 0 || m_noSignalImageHeight == 0 ||
+        m_noSignalImageStride == 0) {
+        return false;
+    }
+
+    const D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_NONE,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                          D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f);
+    const HRESULT hr = m_d2dContext->CreateBitmap(
+        D2D1::SizeU(m_noSignalImageWidth, m_noSignalImageHeight),
+        m_noSignalPixels.data(), m_noSignalImageStride,
+        &properties, &m_noSignalBitmap);
+    if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"Custom No Signal bitmap creation failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+        return false;
+    }
+
+    OvLog(L"Custom No Signal bitmap created: " +
+          std::to_wstring(m_noSignalImageWidth) + L"x" +
+          std::to_wstring(m_noSignalImageHeight));
+    return true;
+}
+
 bool Overlay::CreateD2DResources()
 {
     ComPtr<ID3D11Texture2D> backBuffer;
@@ -195,6 +397,9 @@ bool Overlay::CreateD2DResources()
         m_d2dContext->CreateSolidColorBrush(th.textDim, &m_brushDim);
         m_d2dContext->CreateSolidColorBrush(
             D2D1::ColorF(0.706f, 0.706f, 0.706f, 1.0f), &m_brushInk2);
+        if (!m_noSignalPixels.empty() && !CreateNoSignalBitmap()) {
+            OvLog(L"CreateD2DResources: custom No Signal bitmap recreation failed");
+        }
         return true;
     }
 
@@ -231,6 +436,10 @@ bool Overlay::CreateD2DResources()
     m_d2dContext->CreateSolidColorBrush(th.textDim, &m_brushDim);
     m_d2dContext->CreateSolidColorBrush(
         D2D1::ColorF(0.706f, 0.706f, 0.706f, 1.0f), &m_brushInk2);
+
+    if (!m_noSignalPixels.empty() && !CreateNoSignalBitmap()) {
+        OvLog(L"CreateD2DResources: custom No Signal bitmap recreation failed");
+    }
 
     return true;
 }
@@ -280,6 +489,7 @@ void Overlay::ReleaseD2DResources()
 {
     if (m_d2dContext) m_d2dContext->SetTarget(nullptr);
     m_d2dTargetBitmap.Reset();
+    m_noSignalBitmap.Reset();
     // Offscreen texture + SRV go too: they're sized to the backbuffer
     // and a resize/HDR-toggle invalidates the old dimensions.
     m_offscreenTex.Reset();
@@ -320,6 +530,11 @@ void Overlay::Shutdown()
     m_textFormat.Reset();
     m_smallTextFormat.Reset();
     m_dwriteFactory.Reset();
+    m_wicFactory.Reset();
+    m_device = nullptr;
+    m_context = nullptr;
+    m_swapChain = nullptr;
+    m_hwnd = nullptr;
     m_initialized = false;
 }
 
@@ -681,6 +896,25 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
         return;
     }
 
+    // Custom and branded presentations share this D2D target. In HDR mode it
+    // is the existing BGRA8 offscreen surface, which the caller sends through
+    // DX11Renderer::CompositeUI(); no separate HDR image path is introduced.
+    if (m_noSignalMode == "image" && m_noSignalBitmap &&
+        DrawCustomNoSignalImage(windowW, windowH)) {
+        if (!m_noSignalRouteKnown || !m_noSignalUsingCustom) {
+            OvLog(L"No Signal render route: custom");
+            m_noSignalRouteKnown = true;
+            m_noSignalUsingCustom = true;
+        }
+        return;
+    }
+
+    if (!m_noSignalRouteKnown || m_noSignalUsingCustom) {
+        OvLog(L"No Signal render route: branded fallback");
+        m_noSignalRouteKnown = true;
+        m_noSignalUsingCustom = false;
+    }
+
     const float w = (float)windowW;
     const float h = (float)windowH;
 
@@ -857,6 +1091,71 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
         ReleaseD2DResources();
         OvLog(L"EndDraw reported a lost target; overlay parked until the application rebuilds it");
     }
+}
+
+bool Overlay::DrawCustomNoSignalImage(uint32_t windowW, uint32_t windowH)
+{
+    const NoSignalImageLayout layout = CalculateNoSignalImageLayout(
+        static_cast<float>(windowW), static_cast<float>(windowH),
+        static_cast<float>(m_noSignalImageWidth),
+        static_cast<float>(m_noSignalImageHeight), m_noSignalFit);
+    if (!layout.valid) return false;
+
+    m_d2dContext->BeginDraw();
+
+    ComPtr<ID2D1SolidColorBrush> background;
+    HRESULT hr = m_d2dContext->CreateSolidColorBrush(
+        D2D1::ColorF(0.047f, 0.051f, 0.059f, 1.0f), &background);
+    if (FAILED(hr) || !background) {
+        m_d2dContext->EndDraw();
+        OvLog(L"Custom No Signal image background brush creation failed");
+        m_noSignalBitmap.Reset();
+        return false;
+    }
+
+    m_d2dContext->FillRectangle(
+        D2D1::RectF(0.0f, 0.0f,
+                    static_cast<float>(windowW),
+                    static_cast<float>(windowH)),
+        background.Get());
+
+    const D2D1_RECT_F destination = D2D1::RectF(
+        layout.destination.left, layout.destination.top,
+        layout.destination.right, layout.destination.bottom);
+    const D2D1_RECT_F source = D2D1::RectF(
+        layout.source.left, layout.source.top,
+        layout.source.right, layout.source.bottom);
+    m_d2dContext->DrawBitmap(m_noSignalBitmap.Get(), &destination, 1.0f,
+                             D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                             &source);
+
+    if (m_noSignalDimImage) {
+        ComPtr<ID2D1SolidColorBrush> dimBrush;
+        hr = m_d2dContext->CreateSolidColorBrush(
+            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.40f), &dimBrush);
+        if (FAILED(hr) || !dimBrush) {
+            m_d2dContext->EndDraw();
+            OvLog(L"Custom No Signal image dim brush creation failed");
+            m_noSignalBitmap.Reset();
+            return false;
+        }
+        m_d2dContext->FillRectangle(destination, dimBrush.Get());
+    }
+
+    hr = m_d2dContext->EndDraw();
+    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+        hr == DXGI_ERROR_DEVICE_RESET) {
+        m_deviceLost = true;
+        ReleaseD2DResources();
+        OvLog(L"Custom No Signal image draw lost its target; overlay parked");
+    } else if (FAILED(hr)) {
+        std::wstringstream ss;
+        ss << L"Custom No Signal image EndDraw failed: 0x" << std::hex << hr;
+        OvLog(ss.str());
+        m_noSignalBitmap.Reset();
+        return false;
+    }
+    return true;
 }
 
 void Overlay::DrawToast(uint32_t windowW, uint32_t windowH,

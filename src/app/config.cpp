@@ -155,6 +155,14 @@ bool Config::Load(const std::string& path)
         if (key == "prevent_sleep")  preventSleep = ParseBool(val);
         if (key == "present_cap_hz") presentCapHz = ParseI32(val, presentCapHz, -1, 1000);
         if (key == "aspect_ratio")   aspectRatio  = val.substr(0, 16);
+        if (key == "no_signal_mode") {
+            noSignalMode = (val == "image") ? "image" : "default";
+        }
+        if (key == "no_signal_image") noSignalImage = val;
+        if (key == "no_signal_fit") {
+            noSignalFit = (val == "cover" || val == "stretch") ? val : "contain";
+        }
+        if (key == "no_signal_dim_image") noSignalDimImage = ParseBool(val);
         if (key == "panel_side")     panelSide    = val.substr(0, 8);
         if (key == "panel_width")    panelWidth   = ParseI32(val, panelWidth, 320, 1200);
         if (key == "enable_shaders")  enableShaders = ParseBool(val);
@@ -414,6 +422,14 @@ bool Config::Save(const std::string& path)
     file << "# window), or a fixed ratio such as 4:3, 16:9, 16:10, 21:9.\n";
     file << "# Cycle with Alt+A or from the F1 panel.\n";
     file << "aspect_ratio = " << aspectRatio << "\n\n";
+
+    file << "# No Signal presentation: default uses NitLink's branded page;\n";
+    file << "# image uses a local PNG, JPEG/JPG, or BMP file. The path is UTF-8.\n";
+    file << "no_signal_mode = " << noSignalMode << "\n";
+    file << "no_signal_image = " << noSignalImage << "\n";
+    file << "# Image fit: contain | cover | stretch\n";
+    file << "no_signal_fit = " << noSignalFit << "\n";
+    file << "no_signal_dim_image = " << (noSignalDimImage ? "true" : "false") << "\n\n";
 
     file << "# F1 panel placement: right or left docks it beside the picture,\n";
     file << "# full covers the window. panel_width is in device-independent pixels.\n";
