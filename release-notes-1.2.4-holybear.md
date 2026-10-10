@@ -33,7 +33,7 @@ HUD Present FPS counts successful DXGI submissions, not game FPS or physical dis
 - The release workflow runs the complete test suite with WebView runtime tests enabled. It permits only that exact single baseline assertion failure, rejects skipped/missing tests and any new failure, and records the actual CI result below.
 - Each release is rebuilt from its tag. The workflow checks EXE version/architecture, bundled files, Microsoft runtime signatures, source/tag identity and file hashes after extracting the ZIP into a fresh directory.
 - Native update regressions use mock responses for numeric version ordering, typed formal-release validation, malformed JSON, timeout/403/429/500, opt-in, 24-hour interval and cancellation. WebView tests cover update state in all three languages without external network access.
-- CI verifies Setup payload bytes, all three installer languages, install/upgrade/uninstall metadata, shortcuts and retained settings. An isolated signing job verifies all three GPG signatures with only the pinned public key and rechecks SHA-256; publication fails if any required check fails.
+- CI verifies Setup payload bytes, all three installer languages, install/upgrade/uninstall metadata, shortcuts and retained settings. One protected `release` Environment stage signs and verifies all three GPG signatures with only the pinned public key and rechecks SHA-256 before publication; any failed check blocks publication. A separate validation mode signs test artifacts without creating a Release.
 
 ## Known Limitations
 

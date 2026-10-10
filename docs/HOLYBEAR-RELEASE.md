@@ -70,13 +70,16 @@ The opt-in native update checker accepts only this fork's formal Releases.
 See [network behavior and tests](HOLYBEAR-UPDATES.md). Background checks default
 off. No updater downloads or runs an installer.
 
-After Windows validation, an isolated Linux signing job creates three mandatory
+After Windows validation, one protected Windows signing/publication job creates three mandatory
 GPG detached signatures over the final ZIP, Setup and outer SHA256SUMS.txt.
 See [signing key, Secrets and verification](HOLYBEAR-RELEASE-SIGNING.md). No
 private material enters artifacts; missing Secrets/signature/hash failures block
-publication. Branch previews are explicitly unsigned and cannot be published.
+publication. Normal branch previews are unsigned and cannot be published.
+For a real Environment signing test without a Release, use the documented new
+`v<VERSION>-signing-check-<digits>` validation tag or explicit manual validation
+mode. It produces signed test artifacts while the publication step stays skipped.
 
-Only the tag-push publish job has contents:write; it uses GITHUB_TOKEN and is
+Only the Environment-protected signing/publication stage has contents:write; it uses GITHUB_TOKEN and is
 restricted to HolyBearTW/nitlink. It verifies downloaded CI artifacts, refuses
 an existing Release, creates a draft with all assets, verifies the uploaded
 draft bytes and all signatures, then publishes it as an official Latest Release.

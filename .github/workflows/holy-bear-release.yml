@@ -5,6 +5,11 @@ on:
     branches: [holy-bear/integrated]
     tags: ['v*-holybear*']
   workflow_dispatch:
+    inputs:
+      signing_validation:
+        description: 'Sign and verify only; never create or publish a Release'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,11 +23,31 @@ jobs:
     if: github.repository == 'HolyBearTW/nitlink'
     runs-on: windows-2022
     timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.operation.outputs.tag }}
+      release: ${{ steps.operation.outputs.release }}
+      validate: ${{ steps.operation.outputs.validate }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Select build, signing validation or formal release
+        id: operation
+        shell: pwsh
+        env:
+          SIGNING_VALIDATION: ${{ inputs.signing_validation }}
+        run: |
+          . ./scripts/holy-bear-common.ps1
+          $info = Get-HolyBearVersion
+          $tagPush = $env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF.StartsWith('refs/tags/')
+          $release = $tagPush -and $env:GITHUB_REF_NAME -eq $info.Tag
+          $validationTag = $env:GITHUB_REF_NAME -match ('^' + [regex]::Escape($info.Tag) + '-signing-check-[0-9]+$')
+          $validate = ($tagPush -and $validationTag) -or ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:SIGNING_VALIDATION -eq 'true')
+          if ($tagPush -and -not $release -and -not $validationTag) { throw 'Unrecognized HolyBear tag; refusing release/signing.' }
+          "tag=$($info.Tag)" >> $env:GITHUB_OUTPUT
+          "release=$($release.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "validate=$($validate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
       - name: Ensure WebView2 Runtime on the CI runner
         shell: pwsh
         run: |
@@ -43,7 +68,7 @@ jobs:
       - name: Package and verify fresh portable ZIP and branded Setup
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF.StartsWith('refs/tags/')) {
+          if ('${{ steps.operation.outputs.release }}' -eq 'true') {
             ./scripts/package-holybear.ps1 -Tag $env:GITHUB_REF_NAME -RequireTag
           } else {
             ./scripts/package-holybear.ps1
@@ -71,48 +96,10 @@ jobs:
           if-no-files-found: warn
 
   sign:
-    if: github.repository == 'HolyBearTW/nitlink' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    name: Protected signing, verification and optional publication
+    if: github.repository == 'HolyBearTW/nitlink' && (needs.build.outputs.release == 'true' || needs.build.outputs.validate == 'true')
     needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require a matching tag from the reviewed integration branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF_NAME" = "v$(cat VERSION)"
-          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
-          git merge-base --is-ancestor HEAD origin/holy-bear/integrated
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: holy-bear-portable
-          path: release-assets
-      - name: Sign final Windows artifacts and verify using the pinned public key
-        env:
-          HOLYBEAR_GPG_PRIVATE_KEY: ${{ secrets.HOLYBEAR_GPG_PRIVATE_KEY }}
-          HOLYBEAR_GPG_PASSPHRASE: ${{ secrets.HOLYBEAR_GPG_PASSPHRASE }}
-          HOLYBEAR_GPG_FINGERPRINT: ${{ secrets.HOLYBEAR_GPG_FINGERPRINT }}
-        run: python3 scripts/release-signing.py sign --assets release-assets --tag "$GITHUB_REF_NAME"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: holy-bear-signed
-          path: |
-            release-assets/*.zip
-            release-assets/*Setup-x64.exe
-            release-assets/*.asc
-            release-assets/SHA256SUMS.txt
-            release-assets/RELEASE-NOTES.md
-          if-no-files-found: error
-
-  publish:
-    if: github.repository == 'HolyBearTW/nitlink' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [build, sign]
+    environment: release
     runs-on: windows-2022
     timeout-minutes: 15
     permissions:
@@ -122,11 +109,56 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Require a trusted source and locate GPG
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          . ./scripts/holy-bear-common.ps1
+          if ($env:GITHUB_REF.StartsWith('refs/tags/')) {
+            $commit = & git rev-parse "$($env:GITHUB_REF)^{commit}"
+            if ($LASTEXITCODE -ne 0 -or $commit -ne (Get-HolyBearCommit)) { throw 'Source tag mismatch.' }
+          } elseif ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or $env:GITHUB_REF -ne 'refs/heads/holy-bear/integrated') {
+            throw 'Manual signing requires the integration branch or a trusted tag.'
+          }
+          & git merge-base --is-ancestor HEAD origin/holy-bear/integrated
+          if ($LASTEXITCODE -ne 0) { throw 'Source is outside the reviewed integration branch.' }
+          if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
+            $tools = Join-Path $env:ProgramFiles 'Git/usr/bin'
+            if (-not (Test-Path -LiteralPath (Join-Path $tools 'gpg.exe'))) { throw 'GPG tools missing.' }
+            "$tools" >> $env:GITHUB_PATH
+          }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: holy-bear-signed
+          name: holy-bear-portable
           path: release-assets
+      - name: Unlock the selected subkey, sign and verify all three final files
+        shell: pwsh
+        env:
+          HOLYBEAR_GPG_PRIVATE_KEY: ${{ secrets.HOLYBEAR_GPG_PRIVATE_KEY }}
+          HOLYBEAR_GPG_PASSPHRASE: ${{ secrets.HOLYBEAR_GPG_PASSPHRASE }}
+          HOLYBEAR_GPG_FINGERPRINT: ${{ secrets.HOLYBEAR_GPG_FINGERPRINT }}
+          HOLYBEAR_SIGNING_ENVIRONMENT: release
+          SIGNING_VALIDATION: ${{ needs.build.outputs.validate }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          $options = @('scripts/release-signing.py', 'sign', '--assets', 'release-assets', '--tag', $env:RELEASE_TAG)
+          if ($env:SIGNING_VALIDATION -eq 'true') { $options += '--validation-only' }
+          & python @options
+          if ($LASTEXITCODE -ne 0) { throw 'GPG unlock, signature or hash verification failed; publication blocked.' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: holy-bear-signed
+          path: |
+            release-assets/*.zip
+            release-assets/*Setup-x64.exe
+            release-assets/*.asc
+            release-assets/SHA256SUMS.txt
+            release-assets/RELEASE-NOTES.md
+            release-assets/SIGNING-VERIFICATION.txt
+          if-no-files-found: error
       - name: Verify uploaded draft assets and publish official Latest Release
+        if: needs.build.outputs.release == 'true' && needs.build.outputs.validate != 'true' && github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

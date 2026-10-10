@@ -11,6 +11,10 @@ Assert-HolyBearTag $Tag $commit
 & git -C $HolyBearRoot merge-base --is-ancestor HEAD origin/holy-bear/integrated
 if ($LASTEXITCODE -ne 0) { throw 'Release tag is not part of the reviewed integration branch.' }
 $assetRoot = (Resolve-Path -LiteralPath (Join-Path $HolyBearRoot $Assets)).ProviderPath
+$signingReport = Get-Content -LiteralPath (Join-Path $assetRoot 'SIGNING-VERIFICATION.txt')
+if ($signingReport -cnotcontains 'validation_only=false' -or
+    $signingReport -cnotcontains "source_ref=refs/tags/$Tag" -or
+    $signingReport -cnotcontains 'environment=release') { throw 'Signing-validation artifacts cannot be published.' }
 if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
     $gitGpg = Join-Path $env:ProgramFiles 'Git/usr/bin/gpg.exe'
     if (-not (Test-Path -LiteralPath $gitGpg)) { throw 'GPG verification tools are missing.' }

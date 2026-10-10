@@ -129,6 +129,7 @@ def main():
     parser.add_argument("mode", choices=("sign", "verify"))
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--validation-only", action="store_true", help="Explicit trusted signing check; publication is forbidden")
     args = parser.parse_args()
     names = identity(args.tag)
     config, public = pinned_key()
@@ -138,9 +139,17 @@ def main():
     if args.mode == "sign":
         require(os.environ.get("GITHUB_ACTIONS") == "true" and
                 os.environ.get("GITHUB_REPOSITORY") == "HolyBearTW/nitlink" and
-                os.environ.get("GITHUB_EVENT_NAME") == "push" and
-                os.environ.get("GITHUB_REF") == "refs/tags/" + args.tag,
-                "Signing is restricted to HolyBear tag-push Actions runs.")
+                os.environ.get("HOLYBEAR_SIGNING_ENVIRONMENT") == "release",
+                "Signing requires the protected HolyBear release Environment.")
+        event, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF", "")
+        validation_tag = re.fullmatch(re.escape("refs/tags/" + args.tag) + r"-signing-check-[0-9]+", ref)
+        if args.validation_only:
+            require((event == "push" and validation_tag) or
+                    (event == "workflow_dispatch" and (ref == "refs/heads/holy-bear/integrated" or validation_tag or ref == "refs/tags/" + args.tag)),
+                    "Signing validation requires an explicit trusted branch/tag invocation.")
+        else:
+            require(event == "push" and ref == "refs/tags/" + args.tag,
+                    "Release signing is restricted to the matching formal tag push.")
         private, passphrase, fingerprint = (os.environ.pop(name, "") for name in SECRET_NAMES)
         require(private and passphrase and fingerprint, "All three HolyBear GPG Secrets are required; unsigned releases are forbidden.")
         require(fingerprint == config["signing_subkey_fingerprint"], "Secret fingerprint differs from the reviewed pinned subkey.")
@@ -165,6 +174,17 @@ def main():
         gpg(home, ["--import"], public.read_bytes())
         validate_key(home, config)
         verify(home, assets, names, config)
+    if args.mode == "sign":
+        report = ["Verified actual GPG signing and public-key-only verification.",
+                  f"validation_only={str(args.validation_only).lower()}",
+                  "environment=release", f"source_ref={os.environ['GITHUB_REF']}",
+                  "signing_subkey=" + config["signing_subkey_fingerprint"],
+                  "primary_key=" + config["primary_fingerprint"]]
+        for name in [names[0], names[0] + ".asc", names[1], names[1] + ".asc", names[2], names[2] + ".asc", "RELEASE-NOTES.md"]:
+            with (assets / name).open("rb") as stream:
+                report.append(hashlib.file_digest(stream, "sha256").hexdigest() + "  " + name)
+        (assets / "SIGNING-VERIFICATION.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+        print("Signing validation complete; publication is a separate, strictly gated step.")
 
 
 if __name__ == "__main__":
