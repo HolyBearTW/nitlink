@@ -29,11 +29,17 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 NitLink Contributors"
 
 !define MUI_ICON "..\assets\nitlink.ico"
 !define MUI_UNICON "..\assets\nitlink.ico"
-!define MUI_WELCOMEFINISHPAGE_BITMAP "..\assets\installer\wizard.bmp"
-!define MUI_UNWELCOMEFINISHPAGE_BITMAP "..\assets\installer\wizard.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "..\assets\installer\wizard@3x.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP_STRETCH AspectFitHeight
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "..\assets\installer\wizard@3x.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP_STRETCH AspectFitHeight
 !define MUI_HEADERIMAGE
 !define MUI_HEADERIMAGE_RIGHT
-!define MUI_HEADERIMAGE_BITMAP "..\assets\installer\banner.bmp"
+!define MUI_HEADERIMAGE_BITMAP "..\assets\installer\banner@3x.bmp"
+!define MUI_HEADERIMAGE_BITMAP_STRETCH AspectFitHeight
+!define MUI_HEADERIMAGE_UNBITMAP "..\assets\installer\banner@3x.bmp"
+!define MUI_HEADERIMAGE_UNBITMAP_STRETCH AspectFitHeight
+!define MUI_COMPONENTSPAGE_SMALLDESC
 !define MUI_BGCOLOR "101827"
 !define MUI_TEXTCOLOR "EDF2FA"
 !define MUI_INSTFILESPAGE_COLORS "EDF2FA 101827"
@@ -41,27 +47,54 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 NitLink Contributors"
 !define MUI_LANGDLL_ALLLANGUAGES
 !define MUI_LANGDLL_WINDOWTITLE "${TITLE}"
 !define MUI_LANGDLL_INFO "$(ChooseLanguage)"
+!define MUI_WELCOMEPAGE_TITLE "$(WelcomeTitle)"
 !define MUI_WELCOMEPAGE_TEXT "$(WelcomeText)"
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "${PACKAGE_DIR}\LICENSE"
+!define MUI_PAGE_HEADER_TEXT "$(LicensePageTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(LicensePageSubtitle)"
+!define MUI_LICENSEPAGE_TEXT_TOP "$(LicensePageIntro)"
+!define MUI_LICENSEPAGE_TEXT_BOTTOM "$(LicensePageConsent)"
+!define MUI_LICENSEPAGE_BUTTON "$(LicensePageButton)"
+!insertmacro MUI_PAGE_LICENSE "${LICENSE_RTF}"
+!define MUI_PAGE_HEADER_TEXT "$(ComponentsPageTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(ComponentsPageSubtitle)"
+!define MUI_COMPONENTSPAGE_TEXT_TOP "$(ComponentsPageTop)"
+!define MUI_COMPONENTSPAGE_TEXT_COMPLIST "$(ComponentsPageList)"
+!define MUI_COMPONENTSPAGE_TEXT_DESCRIPTION_TITLE "$(ComponentsDescriptionTitle)"
+!define MUI_COMPONENTSPAGE_TEXT_DESCRIPTION_INFO "$(ComponentsDescriptionHint)"
 !insertmacro MUI_PAGE_COMPONENTS
+!define MUI_PAGE_HEADER_TEXT "$(DirectoryPageTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(DirectoryPageSubtitle)"
 !insertmacro MUI_PAGE_DIRECTORY
+!define MUI_PAGE_HEADER_TEXT "$(InstallPageTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(InstallPageSubtitle)"
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchNitLink
 !define MUI_FINISHPAGE_RUN_TEXT "$(LaunchText)"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
+!define MUI_FINISHPAGE_TITLE "$(FinishTitle)"
+!define MUI_FINISHPAGE_TEXT "$(FinishText)"
 !insertmacro MUI_PAGE_FINISH
+!define MUI_WELCOMEPAGE_TITLE "$(UninstallWelcomeTitle)"
 !define MUI_WELCOMEPAGE_TEXT "$(UninstallWelcome)"
 !insertmacro MUI_UNPAGE_WELCOME
+!define MUI_PAGE_HEADER_TEXT "$(UninstallConfirmTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(UninstallConfirmSubtitle)"
 !insertmacro MUI_UNPAGE_CONFIRM
+!define MUI_PAGE_HEADER_TEXT "$(UninstallingTitle)"
+!define MUI_PAGE_HEADER_SUBTEXT "$(UninstallingSubtitle)"
 !insertmacro MUI_UNPAGE_INSTFILES
+!define MUI_FINISHPAGE_TITLE "$(UninstallFinishTitle)"
 !define MUI_FINISHPAGE_TEXT "$(UninstallFinish)"
 !insertmacro MUI_UNPAGE_FINISH
 
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "TradChinese"
 !insertmacro MUI_LANGUAGE "SimpChinese"
+SetFont /LANG=${LANG_ENGLISH} "Segoe UI" 9
+SetFont /LANG=${LANG_TRADCHINESE} "Segoe UI" 9
+SetFont /LANG=${LANG_SIMPCHINESE} "Segoe UI" 9
 !include "strings.nsh"
 !include "language.nsh"
 !insertmacro MUI_RESERVEFILE_LANGDLL

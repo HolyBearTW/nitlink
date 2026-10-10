@@ -325,7 +325,7 @@ int main(int argc, char** argv) {
             const std::wstring state = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"holyBearUpdate\":{\"current\":\"1.2.4-holybear\",\"latest\":\"v1.2.5-holybear\","
                 L"\"lastCheckUtc\":1791730000,\"automatic\":false,\"busy\":false,\"status\":\"available\","
-                L"\"unread\":true,\"url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear\"}}}";
+                L"\"hasNewer\":true,\"unread\":true,\"url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear\"}}}";
             host.PostMessage(state);
             Check(PumpUntil([&] { return Script(view, L"document.getElementById('holy-bear-update-status').textContent === window.NitLinkLocales[document.documentElement.lang]['update.available'].replace('{version}', '1.2.5') && document.getElementById('holy-bear-release-link').href.endsWith('/v1.2.5-holybear') && !document.getElementById('holy-bear-update-badge').hidden && document.getElementById('holy-bear-latest-version').textContent === 'v1.2.5-holybear'") == L"true"; }),
                   "HolyBear update notification localizes without network or HTML injection");

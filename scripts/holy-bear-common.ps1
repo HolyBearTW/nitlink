@@ -24,9 +24,12 @@ function Get-HolyBearVersion {
         if (-not $resource.Contains(('VALUE "{0}", "{1}"' -f $field, $value))) { throw "Resource $field mismatch." }
     }
     $menu = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'nitlink-menu.html') -Raw
+    $menuScript = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'assets/menu/menu.js') -Raw
     $overlay = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/overlay/overlay.cpp') -Raw
     $native = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/app/holybear_version.h') -Raw
-    if (-not $menu.Contains("<span class=`"row-value`" id=`"holy-bear-version`">$value</span>") -or
+    if (-not $menu.Contains('id="holy-bear-product-title"') -or
+        -not $menu.Contains('id="holy-bear-version"') -or
+        -not $menuScript.Contains("const currentTag = typeof s.current") -or
         -not $overlay.Contains(('L"v{0}"' -f $value)) -or
         -not $native.Contains(('L"{0}"' -f $value))) { throw 'About/HUD/native update version mismatch.' }
     [pscustomobject]@{

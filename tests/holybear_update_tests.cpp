@@ -45,8 +45,23 @@ int main(int argc, char** argv) {
     check(ClassifyReply({200, 0, std::string(MaxResponseBytes + 1, 'x')}).status == UpdateStatus::Invalid, "response size bound");
     check(ClassifyReply({0, ERROR_WINHTTP_TIMEOUT, {}}).status == UpdateStatus::Offline, "timeout nonfatal");
     check(ClassifyReply({0, ERROR_WINHTTP_CANNOT_CONNECT, {}}).status == UpdateStatus::Offline, "offline nonfatal");
-    for (auto code : {403u, 429u, 500u, 404u, 302u})
-        check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ApiUnavailable, "API failure nonfatal");
+    check(ClassifyReply({403, 0, "{}", 0}).status == UpdateStatus::RateLimited, "403 with zero remaining is rate-limited");
+    check(ClassifyReply({403, 0, "{}", 28}).status == UpdateStatus::ApiUnavailable, "403 with remaining quota is not called rate-limited");
+    check(ClassifyReply({403, 0, "{}"}).status == UpdateStatus::ApiUnavailable, "403 without quota evidence is not called rate-limited");
+    check(ClassifyReply({429, 0, "{}"}).status == UpdateStatus::RateLimited, "429 temporarily rate-limited");
+    check(ClassifyReply({404, 0, "{}"}).status == UpdateStatus::NotFound, "404 means no release endpoint found");
+    for (auto code : {500u, 502u, 503u, 599u})
+        check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ServerUnavailable, "5xx server unavailable");
+    for (auto code : {400u, 401u, 418u, 302u})
+        check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ApiUnavailable, "other HTTP response nonfatal");
+    check(ParseRateLimitRemaining("0") == 0, "rate limit header parses zero");
+    check(ParseRateLimitRemaining(" 28\r\n") == 28, "rate limit header trims HTTP whitespace");
+    for (auto value : {"", "-1", "28, 30", "4294967296", "1x"})
+        check(!ParseRateLimitRemaining(value), "malformed rate limit header rejected");
+    check(std::wstring_view(StatusKey(UpdateStatus::RateLimited)) == L"rateLimited" &&
+        std::wstring_view(StatusKey(UpdateStatus::NotFound)) == L"notFound" &&
+        std::wstring_view(StatusKey(UpdateStatus::ServerUnavailable)) == L"serverUnavailable",
+        "HTTP categories map to localized UI states");
     check(!AutoCheckDue(false, false, 200000, 0), "automatic default off");
     check(AutoCheckDue(true, false, 200000, 0), "first enabled check");
     check(!AutoCheckDue(true, true, 200000, 0), "busy request deduplication");

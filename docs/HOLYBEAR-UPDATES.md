@@ -1,10 +1,13 @@
 # Optional HolyBear update checks
 
-F1 → About → Software Updates displays the installed/latest version, last
-attempt time, status, manual check button, automatic check toggle and a link
-to a newer Release. English, Traditional Chinese and Simplified Chinese use
-the existing localization and settings layout. An unread badge is cleared
-when About is opened; no startup popup, toast or forced update is used.
+F1 → About shows the running HolyBear version once, a compact update control,
+and easy-to-find feedback/support links. Technical details, the complete build
+tag, last attempt time, source/license links and contributor credits are in a
+keyboard-accessible disclosure. The shared capture/signal strip is hidden only
+while About is selected and returns on the other tabs. English, Traditional
+Chinese and Simplified Chinese use the existing localization and settings
+layout. An unread badge is cleared when About is opened; no startup popup, toast
+or forced update is used.
 
 Automatic checks are **off by default**. Enabling them allows a background
 check on startup and when enabled in F1, at most once per 24 hours after the
@@ -26,8 +29,15 @@ header, with no token, configuration, device identifiers, game data or telemetry
 GitHub sees the usual network address/request metadata; Windows may use the
 system-configured proxy. Requests have phase timeouts, a 15-second total wait
 budget and a 256 KiB response limit. Redirects are disabled and Windows' normal
-TLS certificate checks remain enabled. Failures/limits display a quiet F1 status
-and never affect capture or open an error window.
+TLS certificate checks remain enabled. Failures display a short F1 status and
+never affect capture or open an error window. Connection/DNS/timeouts are
+reported as connection failures. HTTP 404 means no published latest-release
+record was found; HTTP 429 is a temporary request limit. HTTP 403 is called
+rate-limited only when the response includes `X-RateLimit-Remaining: 0`;
+otherwise the UI reports a generic API failure. GitHub 5xx responses are server
+outages, and malformed JSON or release fields are rejected as unverifiable
+version information. No token or account data is sent, and no response body or
+release text is inserted into HTML.
 
 Only a typed, non-draft, `prerelease=false` release from HolyBearTW/nitlink with
 a valid `tag_name` and matching GitHub release URL is accepted. Version order

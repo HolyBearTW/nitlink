@@ -4968,6 +4968,7 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
        << L",\"automatic\":" << (m_config->holyBearAutoUpdateCheck ? L"true" : L"false")
        << L",\"busy\":" << (m_updateChecker && m_updateChecker->Busy() ? L"true" : L"false")
        << L",\"status\":\"" << HolyBear::StatusKey(status)
+       << L"\",\"hasNewer\":" << (newer ? L"true" : L"false")
        << L"\",\"unread\":" << (newer && m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag ? L"true" : L"false")
        << L",\"url\":\"" << (newer ? std::wstring(HolyBear::ReleasePrefix) + latest : L"") << L"\"},";
     js << L"\"manualHdmiSource\":\""

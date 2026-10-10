@@ -15,9 +15,15 @@
 namespace NitLink::HolyBear {
 inline constexpr size_t MaxResponseBytes = 256 * 1024;
 bool AutoCheckDue(bool enabled, bool busy, uint64_t nowUtc, uint64_t lastCheckUtc);
-enum class UpdateStatus { Never, Checking, Current, Available, Offline, ApiUnavailable, Invalid, Cancelled };
+enum class UpdateStatus { Never, Checking, Current, Available, Offline, RateLimited, NotFound,
+    ServerUnavailable, ApiUnavailable, Invalid, Cancelled };
 const wchar_t* StatusKey(UpdateStatus status);
-struct HttpReply { uint32_t status = 0, error = 0; std::string body; };
+struct HttpReply {
+    uint32_t status = 0, error = 0;
+    std::string body;
+    std::optional<uint32_t> rateLimitRemaining;
+};
+std::optional<uint32_t> ParseRateLimitRemaining(std::string_view value);
 struct UpdateResult { UpdateStatus status = UpdateStatus::Invalid; std::wstring tag; };
 UpdateResult ClassifyReply(const HttpReply& reply, std::wstring_view current = Version);
 

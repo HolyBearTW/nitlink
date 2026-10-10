@@ -193,22 +193,45 @@
     .slider[type="range"] { min-width: 0; width: 100%; margin: 0; accent-color: var(--accent); }
     #slider-pip-opacity-val { width: 42px; }
 
-    .about-copy { padding: 16px 22px 22px; max-width: 560px; }
-    .about-copy p { color: var(--ink2); font-size: 12.5px; line-height: 1.65; text-wrap: pretty; }
-    .about-links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; }
-    .about-links a { font-size: 12.5px; font-weight: 500; }
-    .about-credits { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12.5px; line-height: 1.5; }
-    .about-credit-title { color: var(--ink3); font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em; }
-    .about-credit-entry { margin-top: 4px; }
-    .about-credit-entry a {
-      color: var(--accent-text);
-      font-weight: 500;
-      transition: color .12s ease;
-    }
-    .about-credit-entry a:hover,
-    .about-credit-entry a:focus-visible {
-      color: var(--accent);
-    }
+    .about-hero { padding: 18px 22px 14px; border-bottom: 1px solid var(--hair); }
+    .about-hero h2 { color: var(--ink); font-size: 19px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+    .about-hero p { margin-top: 3px; color: var(--ink3); font-size: 12px; line-height: 1.55; }
+    .about-update { border-bottom: 1px solid var(--hair); }
+    .about-update-heading { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 22px; background: var(--band); }
+    .about-update-heading h3 { color: var(--ink2); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    .about-check-button { flex: none; border: 1px solid var(--hair2); padding: 6px 10px; background: #202020; color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+    .about-check-button:hover:not(:disabled), .about-check-button:focus-visible { border-color: var(--accent); color: var(--accent-text); }
+    .about-check-button:focus-visible, .about-details > summary:focus-visible, .about-links a:focus-visible,
+    .about-source-links a:focus-visible, .about-contributor a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .about-check-button:disabled { opacity: .55; cursor: wait; }
+    .about-update-state { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 11px 22px 6px; }
+    .about-update-status { min-width: 0; flex: 1 1 190px; color: var(--ink2); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+    .about-update-status[hidden], .about-release-link[hidden] { display: none; }
+    .about-auto-check { min-width: 116px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 9px; color: var(--ink2); font-size: 12px; cursor: pointer; }
+    .about-auto-check .toggle { border: 0; }
+    .about-auto-check .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .about-release-row { padding: 0 22px 6px; }
+    .about-release-link { display: inline-block; color: var(--accent-text); font-size: 12px; font-weight: 500; line-height: 1.5; }
+    .about-update-note { padding: 0 22px 12px; color: var(--ink3); font-size: 11.5px; line-height: 1.55; }
+    .about-links { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 22px; border-bottom: 1px solid var(--hair); }
+    .about-links a, .about-source-links a { font-size: 12.5px; font-weight: 500; }
+    .about-details { border-bottom: 1px solid var(--hair); }
+    .about-details > summary { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 22px; color: var(--ink2); background: var(--band); font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; }
+    .about-details > summary::-webkit-details-marker { display: none; }
+    .about-details > summary::after { content: '▾'; color: var(--ink3); transition: transform .12s ease; }
+    .about-details[open] > summary::after { transform: rotate(180deg); }
+    .about-details-body { padding: 12px 22px 18px; }
+    .about-detail-list { display: grid; grid-template-columns: minmax(100px, max-content) minmax(0, 1fr); gap: 6px 16px; font-size: 12px; line-height: 1.5; }
+    .about-detail-list dt { color: var(--ink3); }
+    .about-detail-list dd { min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+    .about-tech { margin-top: 12px; color: var(--ink2); font-size: 12px; line-height: 1.55; }
+    .about-details-body > p { margin-top: 10px; color: var(--ink2); font-size: 12px; line-height: 1.6; text-wrap: pretty; }
+    .about-source-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
+    .about-contributors { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12px; line-height: 1.55; }
+    .about-contributors-title { color: var(--ink3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .about-contributor { margin-top: 4px; }
+    .about-contributor a { color: var(--accent-text); font-weight: 500; transition: color .12s ease; }
+    .about-contributor a:hover { color: var(--accent); }
 
     /* Source picker: HDMI identity, device list and capture-format cascade. */
     .source-popover {
@@ -316,7 +339,17 @@
       .row-chip { display: none; }
       .row-right { justify-content: flex-end; }
       .row:has(.slider-wrap) { grid-template-columns: 1fr; gap: 6px; }
-      .about-copy { padding: 14px 16px 20px; }
+      .about-hero { padding: 14px 16px 12px; }
+      .about-hero h2 { font-size: 17px; }
+      .about-update-heading { padding: 6px 16px; }
+      .about-update-state { align-items: flex-start; padding: 10px 16px 5px; }
+      .about-auto-check { min-width: auto; }
+      .about-release-row { padding: 0 16px 5px; }
+      .about-update-note { padding: 0 16px 10px; }
+      .about-links { gap: 12px 18px; padding: 11px 16px; }
+      .about-details > summary { padding: 10px 16px; }
+      .about-details-body { padding: 11px 16px 16px; }
+      .about-detail-list { grid-template-columns: minmax(88px, max-content) minmax(0, 1fr); gap: 5px 10px; }
       .toast { max-width: calc(100vw - 24px); }
     }
 
@@ -355,6 +388,16 @@
     @media (min-width: 1280px) {
       html[data-side="full"] #pane-video[data-active="true"] {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    html[data-active-pane="pane-about"] .metabar { display: none !important; }
+    @media (min-width: 960px) {
+      html[data-side="full"][data-active-pane="pane-about"] .content {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "warning" "header" "settings";
+      }
+      html[data-side="full"][data-active-pane="pane-about"] #pane-about {
+        width: 100%; max-width: 1180px; margin: 0 auto; padding-top: 22px;
       }
     }
   </style>
@@ -706,44 +749,55 @@
         </section>
 
         <section class="pane" id="pane-about">
-          <div class="band">
-            <span class="band-title" data-i18n="section.about"></span>
-            <span class="band-hint">NitLink 1.2.4 HolyBear Edition</span>
-          </div>
-          <div class="row kv"><span class="row-name" data-i18n="about.build"></span><span class="row-value" id="holy-bear-version">1.2.4-holybear</span></div>
-          <div class="band"><span class="band-title" data-i18n="update.label"></span></div>
-          <div class="row kv"><span class="row-name" data-i18n="update.installed"></span><span class="row-value">1.2.4-holybear</span></div>
-          <div class="row kv"><span class="row-name" data-i18n="update.latest"></span><span class="row-value" id="holy-bear-latest-version"></span></div>
-          <div class="row kv"><span class="row-name" data-i18n="update.lastCheck"></span><span class="row-value" id="holy-bear-last-check" style="font-size:11px"></span></div>
-          <div class="row" data-action="setHolyBearAutoUpdateCheck" data-i18n-title="update.autoHelp">
-            <span class="row-name" data-i18n="update.automatic"></span>
-            <div class="row-right"><button type="button" class="toggle" id="toggle-holy-bear-auto-update" role="switch" aria-checked="false" data-i18n-aria-label="update.automatic" style="border:0"></button></div>
-          </div>
-          <div class="about-copy"><p data-i18n="update.autoHelp"></p></div>
-          <div class="row">
-            <span class="row-name" data-i18n="update.label"></span>
-            <div class="row-right"><button type="button" class="no-signal-action" id="holy-bear-check-update" data-i18n="update.check"></button></div>
-          </div>
-          <div class="about-copy"><p id="holy-bear-update-status" role="status" aria-live="polite"></p><a id="holy-bear-release-link" target="_blank" rel="noopener noreferrer" data-i18n="update.download" hidden></a></div>
-          <div class="row kv"><span class="row-name" data-i18n="about.renderer"></span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
-          <div class="about-copy">
-            <p data-i18n="about.description"></p>
-            <p data-i18n="about.holyBearDisclaimer"></p>
-            <div class="about-links">
-              <a href="https://tally.so/r/EkZjNr" target="_blank" rel="noopener noreferrer" data-i18n="about.feedback"></a>
-              <a href="https://ko-fi.com/klosed89" target="_blank" rel="noopener noreferrer" data-i18n="about.support"></a>
+          <header class="about-hero">
+            <h2 id="holy-bear-product-title">NitLink HolyBear Edition</h2>
+            <p data-i18n="about.subtitle"></p>
+          </header>
+          <section class="about-update" aria-labelledby="about-update-heading">
+            <div class="about-update-heading">
+              <h3 id="about-update-heading" data-i18n="update.label"></h3>
+              <button type="button" class="about-check-button" id="holy-bear-check-update" data-i18n="update.check"></button>
             </div>
-            <div class="about-credits">
-              <div class="about-credit-title" data-i18n="about.contributors"></div>
-              <div class="about-credit-entry">
-                <a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.localizationName"></a>
-                <span data-i18n="about.localizationHandle"></span>
-              </div>
-              <div class="about-credit-entry">
-                <a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer">CN_115</a>
+            <div class="about-update-state">
+              <p id="holy-bear-update-status" class="about-update-status" role="status" aria-live="polite" hidden></p>
+              <div class="about-auto-check" data-action="setHolyBearAutoUpdateCheck">
+                <span data-i18n="update.automatic"></span>
+                <button type="button" class="toggle" id="toggle-holy-bear-auto-update" role="switch" aria-checked="false" data-i18n-aria-label="update.automatic"></button>
               </div>
             </div>
-          </div>
+            <div class="about-release-row">
+              <a id="holy-bear-release-link" class="about-release-link" target="_blank" rel="noopener noreferrer" data-i18n="update.download" hidden></a>
+            </div>
+            <p class="about-update-note" data-i18n="update.autoHelp"></p>
+          </section>
+          <nav class="about-links" data-i18n-aria-label="about.quickLinks">
+            <a href="https://tally.so/r/EkZjNr" target="_blank" rel="noopener noreferrer" data-i18n="about.feedback"></a>
+            <a href="https://ko-fi.com/klosed89" target="_blank" rel="noopener noreferrer" data-i18n="about.support"></a>
+          </nav>
+          <details class="about-details">
+            <summary id="about-details-summary" aria-controls="about-details-body" aria-expanded="false" data-i18n="about.technicalContributors"></summary>
+            <div class="about-details-body" id="about-details-body">
+              <dl class="about-detail-list">
+                <dt data-i18n="about.build"></dt><dd id="holy-bear-version"></dd>
+                <dt data-i18n="about.latestRelease"></dt><dd id="holy-bear-latest-version"></dd>
+                <dt data-i18n="about.lastCheck"></dt><dd id="holy-bear-last-check"></dd>
+              </dl>
+              <p class="about-tech"><strong data-i18n="about.renderer"></strong>: <span data-i18n="about.renderingDetails"></span></p>
+              <p data-i18n="about.description"></p>
+              <p data-i18n="about.holyBearDisclaimer"></p>
+              <div class="about-source-links" data-i18n-aria-label="about.sourceLicense">
+                <a href="https://github.com/nitlink-dev/nitlink" target="_blank" rel="noopener noreferrer" data-i18n="about.originalProject"></a>
+                <a href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" data-i18n="about.projectLicense"></a>
+                <a href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSES.md" target="_blank" rel="noopener noreferrer" data-i18n="about.licenseNotices"></a>
+                <a href="https://github.com/HolyBearTW/nitlink/blob/main/ACKNOWLEDGMENTS.md" target="_blank" rel="noopener noreferrer" data-i18n="about.acknowledgments"></a>
+              </div>
+              <div class="about-contributors">
+                <div class="about-contributors-title" data-i18n="about.contributors"></div>
+                <div class="about-contributor"><a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.holyBearName"></a> <span data-i18n="about.holyBearHandle"></span></div>
+                <div class="about-contributor"><a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer">CN_115</a> <span data-i18n="about.cn115Handle"></span></div>
+              </div>
+            </div>
+          </details>
         </section>
 
       </main>

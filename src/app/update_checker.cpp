@@ -4,10 +4,22 @@
 #include <roapi.h>
 #include <winrt/Windows.Data.Json.h>
 #include <chrono>
+#include <charconv>
 
 namespace NitLink::HolyBear {
 bool AutoCheckDue(bool enabled, bool busy, uint64_t now, uint64_t last) {
     return enabled && !busy && now && (!last || (now >= last && now - last >= 86400));
+}
+std::optional<uint32_t> ParseRateLimitRemaining(std::string_view value) {
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t' ||
+        value.front() == '\r' || value.front() == '\n')) value.remove_prefix(1);
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\t' ||
+        value.back() == '\r' || value.back() == '\n')) value.remove_suffix(1);
+    if (value.empty()) return {};
+    uint32_t remaining = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), remaining);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) return {};
+    return remaining;
 }
 const wchar_t* StatusKey(UpdateStatus status) {
     switch (status) {
@@ -15,6 +27,9 @@ const wchar_t* StatusKey(UpdateStatus status) {
     case UpdateStatus::Current: return L"current";
     case UpdateStatus::Available: return L"available";
     case UpdateStatus::Offline: return L"offline";
+    case UpdateStatus::RateLimited: return L"rateLimited";
+    case UpdateStatus::NotFound: return L"notFound";
+    case UpdateStatus::ServerUnavailable: return L"serverUnavailable";
     case UpdateStatus::ApiUnavailable: return L"apiUnavailable";
     case UpdateStatus::Invalid: return L"invalid";
     default: return L"never";
@@ -23,6 +38,11 @@ const wchar_t* StatusKey(UpdateStatus status) {
 UpdateResult ClassifyReply(const HttpReply& reply, std::wstring_view current) {
     if (reply.error == ERROR_WINHTTP_OPERATION_CANCELLED) return {UpdateStatus::Cancelled, {}};
     if (reply.error || !reply.status) return {UpdateStatus::Offline, {}};
+    if (reply.status == 403)
+        return {reply.rateLimitRemaining == 0 ? UpdateStatus::RateLimited : UpdateStatus::ApiUnavailable, {}};
+    if (reply.status == 404) return {UpdateStatus::NotFound, {}};
+    if (reply.status == 429) return {UpdateStatus::RateLimited, {}};
+    if (reply.status >= 500 && reply.status <= 599) return {UpdateStatus::ServerUnavailable, {}};
     if (reply.status != 200) return {UpdateStatus::ApiUnavailable, {}};
     if (reply.body.empty() || reply.body.size() > MaxResponseBytes || !ParseVersion(current)) return {};
     // Use Windows' JSON implementation, accepting full GitHub objects/arrays but
@@ -98,6 +118,25 @@ struct AsyncRequest {
         }
     }
 };
+std::optional<uint32_t> ReadRateLimitRemaining(HINTERNET request) {
+    wchar_t header[32]{};
+    wchar_t headerName[] = L"X-RateLimit-Remaining";
+    DWORD bytes = 0;
+    if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, headerName, nullptr, &bytes,
+            WINHTTP_NO_HEADER_INDEX) || GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+        !bytes || bytes > sizeof(header)) return {};
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_CUSTOM, headerName, header, &bytes,
+        WINHTTP_NO_HEADER_INDEX)) return {};
+    size_t length = bytes / sizeof(wchar_t);
+    while (length && header[length - 1] == L'\0') --length;
+    std::string value;
+    value.reserve(length);
+    for (size_t i = 0; i < length; ++i) {
+        if (header[i] > 0x7f) return {};
+        value.push_back(static_cast<char>(header[i]));
+    }
+    return ParseRateLimitRemaining(value);
+}
 HttpReply FetchRelease(std::stop_token stop) {
     HttpReply reply;
     const auto deadline = Clock::now() + std::chrono::seconds(15);
@@ -146,6 +185,7 @@ HttpReply FetchRelease(std::stop_token stop) {
             WINHTTP_HEADER_NAME_BY_INDEX, &reply.status, &size, WINHTTP_NO_HEADER_INDEX)) {
         reply.error = GetLastError(); return reply;
     }
+    if (reply.status == 403) reply.rateLimitRemaining = ReadRateLimitRemaining(request.value);
     if (reply.status != 200) return reply;
     char buffer[4096];
     while (!stop.stop_requested()) {

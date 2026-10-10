@@ -107,6 +107,8 @@
         'pane-shortcuts': 'section.shortcuts', 'pane-about': 'section.about'
       };
       const h1 = document.querySelector('.topbar h1');
+      const initiallyActive = tabs.find(tab => tab.dataset.active === 'true');
+      if (initiallyActive) document.documentElement.dataset.activePane = initiallyActive.dataset.tab;
       tabs.forEach(tab => tab.addEventListener('click', () => {
         tabs.forEach(other => {
           const pane = document.getElementById(other.dataset.tab);
@@ -114,6 +116,7 @@
           if (active) other.dataset.active = 'true'; else other.removeAttribute('data-active');
           if (pane) { if (active) pane.dataset.active = 'true'; else pane.removeAttribute('data-active'); }
         });
+        document.documentElement.dataset.activePane = tab.dataset.tab;
         if (h1 && titles[tab.dataset.tab]) h1.textContent = t(titles[tab.dataset.tab]);
         if (tab.dataset.tab === 'pane-about') post('markHolyBearUpdateSeen');
       }));
@@ -132,25 +135,47 @@
       const s = holyBearUpdateState;
       const button = document.getElementById('holy-bear-check-update');
       if (!button) return;
-      document.getElementById('holy-bear-latest-version').textContent = s.latest || t('update.unknown');
-      document.getElementById('holy-bear-last-check').textContent = s.lastCheckUtc ? new Date(s.lastCheckUtc * 1000).toLocaleString(currentLocale) : t('update.never');
+      const currentTag = typeof s.current === 'string' ? s.current : '';
+      const version = currentTag.replace(/^v/, '').replace(/-holybear$/i, '');
+      const productTitle = document.getElementById('holy-bear-product-title');
+      productTitle.textContent = t('about.productTitle').replace('{version}', version).replace(/\s{2,}/g, ' ').trim();
+      document.getElementById('holy-bear-version').textContent = currentTag || '—';
+      const latestTag = typeof s.latest === 'string' ? s.latest : '';
+      document.getElementById('holy-bear-latest-version').textContent = latestTag || t('update.never');
+      document.getElementById('holy-bear-last-check').textContent = s.lastCheckUtc
+        ? new Date(s.lastCheckUtc * 1000).toLocaleString(currentLocale) : t('update.never');
       const toggle = document.getElementById('toggle-holy-bear-auto-update');
       toggle.classList.toggle('on', !!s.automatic);
       toggle.setAttribute('aria-checked', s.automatic ? 'true' : 'false');
       button.disabled = !!s.busy;
-      const states = ['never', 'checking', 'current', 'available', 'offline', 'apiUnavailable', 'invalid'];
+      button.setAttribute('aria-busy', s.busy ? 'true' : 'false');
+      const states = ['never', 'checking', 'current', 'available', 'offline', 'rateLimited',
+        'notFound', 'serverUnavailable', 'apiUnavailable', 'invalid'];
       const key = states.includes(s.status) ? s.status : 'never';
-      const version = String(s.latest || '').replace(/^v/, '').replace(/-holybear$/, '');
-      document.getElementById('holy-bear-update-status').textContent = t('update.' + key).replace('{version}', version);
+      const status = document.getElementById('holy-bear-update-status');
+      status.textContent = t('update.' + key).replace('{version}', latestTag.replace(/^v/, '').replace(/-holybear$/i, ''));
+      status.hidden = key === 'never';
       const link = document.getElementById('holy-bear-release-link');
-      link.hidden = !s.url;
-      if (s.url) link.href = s.url;
+      const validTag = /^v\d+\.\d+\.\d+(?:\.\d+)?-holybear$/.test(latestTag);
+      const expectedUrl = validTag ? 'https://github.com/HolyBearTW/nitlink/releases/tag/' + latestTag : '';
+      const showRelease = s.hasNewer === true && key === 'available' && typeof s.url === 'string' && s.url === expectedUrl;
+      link.hidden = !showRelease;
+      if (showRelease) link.href = expectedUrl;
+      else link.removeAttribute('href');
       document.getElementById('holy-bear-update-badge').hidden = !s.unread;
     };
+    const aboutDetails = document.querySelector('.about-details');
+    const aboutDetailsSummary = document.getElementById('about-details-summary');
+    aboutDetails?.addEventListener('toggle', () => {
+      aboutDetailsSummary?.setAttribute('aria-expanded', aboutDetails.open ? 'true' : 'false');
+    });
     const updateButton = document.getElementById('holy-bear-check-update');
     if (updateButton) updateButton.addEventListener('click', () => {
       updateButton.disabled = true;
-      document.getElementById('holy-bear-update-status').textContent = t('update.checking');
+      const status = document.getElementById('holy-bear-update-status');
+      status.textContent = t('update.checking');
+      status.hidden = false;
+      updateButton.setAttribute('aria-busy', 'true');
       post('checkHolyBearUpdate');
     });
     renderHolyBearUpdate();
@@ -235,6 +260,8 @@
         const toggleEl = actionEl.querySelector('.toggle') || actionEl;
         const willBeOn = !toggleEl.classList.contains('on');
         toggleEl.classList.toggle('on', willBeOn);
+        if (toggleEl.getAttribute('role') === 'switch')
+          toggleEl.setAttribute('aria-checked', willBeOn ? 'true' : 'false');
         post(action, willBeOn);
         return;
       }
