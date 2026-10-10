@@ -95,7 +95,8 @@ The build job runs a public-key-only GPG preflight before requesting signing
 approval. Native Windows GnuPG uses native paths; Git for Windows' MSYS GPG
 uses `cygpath` absolute POSIX paths for the temporary keyring, payloads and
 signatures. Its matching `gpgconf` receives the same converted keyring path.
-This prevents MSYS from interpreting `C:\...` or `C:/...` as relative paths.
+This prevents MSYS from interpreting drive-letter paths with either separator
+style as relative paths.
 The private import still uses stdin; signing uses loopback pinentry and
 `--passphrase-fd 0` through Python, without PowerShell handling secret text.
 
