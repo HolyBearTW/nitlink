@@ -91,6 +91,20 @@ in a second temporary keyring containing **only the pinned public key**. It
 kills the temporary GPG agent and removes key material even when signing fails.
 Missing secrets, a bad signature, or a hash mismatch stops publication.
 
+The build job runs a public-key-only GPG preflight before requesting signing
+approval. Native Windows GnuPG uses native paths; Git for Windows' MSYS GPG
+uses `cygpath` absolute POSIX paths for the temporary keyring, payloads and
+signatures. Its matching `gpgconf` receives the same converted keyring path.
+This prevents MSYS from interpreting `C:\...` or `C:/...` as relative paths.
+The private import still uses stdin; signing uses loopback pinentry and
+`--passphrase-fd 0` through Python, without PowerShell handling secret text.
+
+Failures identify public/secret import, public/secret fingerprint checks,
+subkey unlock/detached signing, or verification. Diagnostics expose only the
+stage, exit code, allowlisted GPG status names and numeric error codes. Raw
+GPG stderr, key UIDs, private input, passphrases and environment dumps are
+never printed. A stage failure is not proof that the passphrase is wrong.
+
 Only a matching formal HolyBear version tag push in this repository, or an explicit
 manual validation request on `holybear/integrated`, invokes signing. Source
 must belong to `holybear/integrated`. Normal branch/manual runs build previews

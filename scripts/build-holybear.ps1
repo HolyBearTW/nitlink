@@ -6,6 +6,8 @@ New-Item -ItemType Directory -Path $build -Force | Out-Null
 $summaryPath = Join-Path $build 'test-summary.json'
 if (Test-Path -LiteralPath $summaryPath) { Remove-Item -LiteralPath $summaryPath }
 Initialize-HolyBearToolchain
+& python (Join-Path $PSScriptRoot 'test-release-signing.py')
+if ($LASTEXITCODE -ne 0) { throw 'Public-key-only release signing preflight failed.' }
 & node (Join-Path $PSScriptRoot 'validate-locales.js')
 if ($LASTEXITCODE -ne 0) { throw 'Localization validation failed.' }
 & cmake -S $HolyBearRoot -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DNITLINK_TEST_WEBVIEW_RUNTIME=ON
