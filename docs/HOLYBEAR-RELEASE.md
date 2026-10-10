@@ -1,6 +1,6 @@
 # HolyBear Edition releases
 
-This is the independent `holy-bear/integrated` branch in `HolyBearTW/nitlink`.
+This is the independent `holybear/integrated` branch in `HolyBearTW/nitlink`.
 It preserves the validated main + #31 + #23 + selected CN_115 v0.1.2 source
 snapshot. It does not merge the entire audio fork or duplicate #25's manual
 HDMI identity implementation. No upstream PR branch is changed by this flow.
@@ -19,7 +19,7 @@ From PowerShell 7 on a Windows x64 development machine with Visual Studio
 ./scripts/build-holybear.ps1
 ```
 
-Commit the reviewed source and push only `holy-bear/integrated`. Its Actions
+Commit the reviewed source and push only `holybear/integrated`. Its Actions
 run builds/tests/packages and uploads review artifacts, without publishing a
 Release. After reviewing that run, create a new matching tag and push it:
 
@@ -33,7 +33,10 @@ Tags matching `v*-holybear*` trigger a fresh build from the tag's commit and
 automatic **official Latest Release** publication (`prerelease=false`). Future
 versions, including four numeric components, need corresponding source version
 updates; a mismatched tag or a commit outside the integration branch is rejected.
-workflow_dispatch is build-only. Do not overwrite an existing tag or Release.
+Workflow Dispatch is restricted to `holybear/integrated`: it is build-only by
+default, or signs/verifies review artifacts when `signing_validation=true`.
+Neither manual mode creates tags, Releases or public Release attachments.
+Do not overwrite an existing tag or Release.
 
 ## Publication checks
 
@@ -75,9 +78,11 @@ GPG detached signatures over the final ZIP, Setup and outer SHA256SUMS.txt.
 See [signing key, Secrets and verification](HOLYBEAR-RELEASE-SIGNING.md). No
 private material enters artifacts; missing Secrets/signature/hash failures block
 publication. Normal branch previews are unsigned and cannot be published.
-For a real Environment signing test without a Release, use the documented new
-`v<VERSION>-signing-check-<digits>` validation tag or explicit manual validation
-mode. It produces signed test artifacts while the publication step stays skipped.
+For a real Environment signing test without a Release, use the documented
+Workflow Dispatch on `holybear/integrated` with `signing_validation=true`.
+It produces signed Actions artifacts while the publication step stays skipped.
+Validation tags are not supported. Remove duplicate Repository GPG Secrets
+before this test so missing Environment Secrets cannot resolve from another scope.
 
 Only the Environment-protected signing/publication stage has contents:write; it uses GITHUB_TOKEN and is
 restricted to HolyBearTW/nitlink. It verifies downloaded CI artifacts, refuses

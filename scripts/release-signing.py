@@ -142,11 +142,9 @@ def main():
                 os.environ.get("HOLYBEAR_SIGNING_ENVIRONMENT") == "release",
                 "Signing requires the protected HolyBear release Environment.")
         event, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF", "")
-        validation_tag = re.fullmatch(re.escape("refs/tags/" + args.tag) + r"-signing-check-[0-9]+", ref)
         if args.validation_only:
-            require((event == "push" and validation_tag) or
-                    (event == "workflow_dispatch" and (ref == "refs/heads/holy-bear/integrated" or validation_tag or ref == "refs/tags/" + args.tag)),
-                    "Signing validation requires an explicit trusted branch/tag invocation.")
+            require(event == "workflow_dispatch" and ref == "refs/heads/holybear/integrated",
+                    "Signing validation requires Workflow Dispatch on holybear/integrated; tags are forbidden.")
         else:
             require(event == "push" and ref == "refs/tags/" + args.tag,
                     "Release signing is restricted to the matching formal tag push.")

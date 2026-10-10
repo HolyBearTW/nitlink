@@ -91,9 +91,9 @@ in a second temporary keyring containing **only the pinned public key**. It
 kills the temporary GPG agent and removes key material even when signing fails.
 Missing secrets, a bad signature, or a hash mismatch stops publication.
 
-Only trusted HolyBear version/validation tags in this repository, or an explicit
-manual validation request on the integration branch, invoke signing. Source
-must belong to `holy-bear/integrated`. Normal branch/manual runs build previews
+Only a matching formal HolyBear version tag push in this repository, or an explicit
+manual validation request on `holybear/integrated`, invokes signing. Source
+must belong to `holybear/integrated`. Normal branch/manual runs build previews
 without secrets. External pull requests never receive signing secrets.
 The `sign` job declares `environment: release` and contains signing, verification
 and the optional publication step. Combining them means only one protected job
@@ -106,46 +106,39 @@ Releases and attachments are never overwritten automatically.
 
 ## Manual Environment signing check without a Release
 
-The current `release` Environment permits `v*-holybear*` **tags**, not arbitrary
-branches. Use a new, signed **validation tag** from the reviewed integration
-commit, such as `v1.2.4-holybear-signing-check-20261011010000`. The final digits
-must be unique. Do not create the formal version tag as a test and do not
-overwrite any existing tag.
+Configure the `release` Environment to allow the **branch** `holybear/integrated`
+and **tags** `v*-holybear*`, with the maintainer's required reviewers. Do not
+remove or bypass protection rules. Before the first signing check, remove the
+three duplicate Repository-level GPG Secrets and confirm all three names exist
+in the Environment. Missing Environment Secrets must stop signing.
 
 ```powershell
-git switch holy-bear/integrated
-$checkTag = 'v1.2.4-holybear-signing-check-' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss')
-git tag -s -u 'B96A785DE4C5083A0DFF15EA8925D54ECCF3EADF!' $checkTag -m 'HolyBear Environment signing validation only; no Release'
-git verify-tag $checkTag
-git push holy-bear $checkTag
+gh secret list --repo HolyBearTW/nitlink --env release
+gh workflow run holy-bear-release.yml --repo HolyBearTW/nitlink `
+  --ref holybear/integrated -f signing_validation=true
 ```
 
-This is a deliberate manual validation invocation that respects the existing
-tag-only Environment policy. It builds/tests/packages, then actually unlocks
+This manual invocation builds/tests/packages, then actually unlocks
 the approved subkey, signs the three files and verifies them with only the public
 key. It uploads `holy-bear-signed` plus `SIGNING-VERIFICATION.txt`. The publication
-step is **skipped**, and the script rejects this tag as a formal release source.
-`v1.2.4-holybear` remains untouched. The signed files are validation artifacts,
+step is **skipped**, and the script rejects manual runs as formal release sources.
+No tag or Release is created. The signed files are Actions validation artifacts,
 not an official release; a later formal tag produces fresh files and signatures.
 
-An explicit `workflow_dispatch` input `signing_validation=true` provides the
-same no-publication mode. GitHub's dispatch/UI availability and Environment
-branch/tag permissions still apply; the workflow does not add the integration
-branch to allowed deployment sources or modify the default branch. The separate
-validation-tag path works while the workflow exists only on this feature branch.
+Workflow Dispatch is accepted only on `holybear/integrated`; tags and other
+branches are rejected, including former validation tags. With
+`signing_validation=false` (the default), it only builds/tests/packages and never
+accesses signing Secrets. GitHub's dispatch/UI availability and Environment
+branch/tag permissions still apply. If GitHub rejects dispatch because the
+workflow is not present on the default branch, report that limitation; do not
+modify main or create a validation tag to work around it.
 
 Environment-level same-name Secrets take precedence over Repository Secrets.
 GitHub does not expose a separate Environment-only secret-expression namespace:
 if an Environment secret is removed while the duplicate Repository name remains,
 the platform can resolve that Repository value. No fallback is coded here.
-Before validation, independently confirm all three names exist in `release`:
-
-```powershell
-gh secret list --repo HolyBearTW/nitlink --env release
-```
-
-After successful **actual** Environment signing, the maintainer should remove
-the three Repository-level duplicates before the formal release. This eliminates
+The maintainer must remove the three Repository-level duplicates **before** the
+first actual Environment signing check. This eliminates
 GitHub's implicit same-name fallback; do not treat `environment: release` alone
 as proof that duplicate names cannot resolve from another scope. No private key,
 passphrase, or sensitive input is included in the verification report.

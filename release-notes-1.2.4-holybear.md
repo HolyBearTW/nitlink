@@ -12,7 +12,7 @@ Based on upstream NitLink 1.2.3. Not an official nitlink-dev release.
 - Manual HDMI identity and Discord functionality shared with #25 is included once.
 - Portable ZIP and a branded Windows x64 Setup installer, with English/Traditional Chinese/Simplified Chinese installer and uninstall pages, Windows UI language detection and a manual language selector.
 - Optional native HTTPS update checks in F1 → About → Software Updates, exclusively for HolyBearTW/nitlink's formal Releases. Automatic checks start disabled; enabled checks are limited to once per 24 hours. No automatic download or installation.
-- ASCII-armored GPG detached signatures for the final ZIP, Setup and SHA256SUMS.txt, verified before publication and after upload. See [verification instructions and full key fingerprints](https://github.com/HolyBearTW/nitlink/blob/holy-bear/integrated/docs/HOLYBEAR-RELEASE-SIGNING.md).
+- ASCII-armored GPG detached signatures for the final ZIP, Setup and SHA256SUMS.txt, verified before publication and after upload. See [verification instructions and full key fingerprints](https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/docs/HOLYBEAR-RELEASE-SIGNING.md).
 
 HUD Present FPS counts successful DXGI submissions, not game FPS or physical display updates. Content FPS is a FrameDiffer estimate. Capture FPS reports observed capture delivery, separate from the negotiated MF rate and Windows monitor refresh.
 
