@@ -171,7 +171,7 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 
 ## Download
 
-Get `NitLink-<version>-win64.zip` from the [Releases page](https://github.com/nitlink-dev/nitlink/releases/latest), extract it anywhere, and run `NitLink.exe`. Settings are saved next to the executable.
+Get `NitLink-<version>-HolyBear-Win64.zip` or `NitLink-<version>-HolyBear-Setup-x64.exe` from the [HolyBear Releases page](https://github.com/HolyBearTW/nitlink/releases/latest). Verify the matching GPG signatures, then extract the complete ZIP and run `NitLink.exe`, or install with Setup. Settings are saved in the application's working directory and retained on installer upgrades/uninstall.
 
 Official builds are published only on that page. Anything else carrying the NitLink name is a third-party build.
 

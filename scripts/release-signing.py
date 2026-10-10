@@ -78,10 +78,11 @@ def validate_key(home, config, secret=False):
         elif fields[0] == "fpr" and pending:
             fingerprint = fields[9]
             fingerprints.append(fingerprint)
-            if fingerprint == config["signing_subkey_fingerprint"]:
-                require(pending[0] in ("sub", "ssb") and "s" in pending[11] and
-                        pending[1] not in ("r", "e", "d", "i") and
-                        (not pending[6] or int(pending[6]) > time.time()), "Signing subkey is unavailable, expired or revoked.")
+            if fingerprint in (config["primary_fingerprint"], config["signing_subkey_fingerprint"]):
+                require(pending[1] not in ("r", "e", "d", "i") and
+                        (not pending[6] or int(pending[6]) > time.time()), "Pinned key is unavailable, expired or revoked.")
+                if fingerprint == config["signing_subkey_fingerprint"]:
+                    require(pending[0] in ("sub", "ssb") and "s" in pending[11], "Pinned subkey cannot sign.")
             if secret and len(pending) > 14 and pending[14] == "+":
                 usable.append(fingerprint)
             pending = None
