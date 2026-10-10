@@ -75,7 +75,17 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 NitLink Contributors"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
 !define MUI_FINISHPAGE_TITLE "$(FinishTitle)"
 !define MUI_FINISHPAGE_TEXT "$(FinishText)"
+; Themed Windows checkboxes can ignore foreground colors; use a light finish
+; content area so the optional launch label remains readable at every DPI.
+!undef MUI_BGCOLOR
+!define MUI_BGCOLOR "F4F6FA"
+!undef MUI_TEXTCOLOR
+!define MUI_TEXTCOLOR "101827"
 !insertmacro MUI_PAGE_FINISH
+!undef MUI_BGCOLOR
+!define MUI_BGCOLOR "101827"
+!undef MUI_TEXTCOLOR
+!define MUI_TEXTCOLOR "EDF2FA"
 !define MUI_WELCOMEPAGE_TITLE "$(UninstallWelcomeTitle)"
 !define MUI_WELCOMEPAGE_TEXT "$(UninstallWelcome)"
 !insertmacro MUI_UNPAGE_WELCOME
