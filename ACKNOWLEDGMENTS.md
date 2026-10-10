@@ -1,5 +1,11 @@
 # Acknowledgments
 
+HolyBear Edition includes CN_115's low-latency audio and Simplified Chinese
+work from [CN115/nitlink-lowlatency v0.1.2](https://github.com/CN115/nitlink-lowlatency/tree/v0.1.2),
+under the original MIT license. Exact source commits and original authors are
+recorded in `docs/cn115/SOURCE.txt` and `docs/cn115/FEATURE_COMMITS.tsv`.
+HolyBearTW maintains this unofficial integration and release workflow.
+
 This file credits external work that informed NitLink's development but
 is not bundled, statically linked, or otherwise redistributed in the
 NitLink binary, and the people who contributed code directly. Bundled

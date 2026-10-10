@@ -1,5 +1,11 @@
 # Third-Party Software Used in NitLink
 
+HolyBear Edition additionally incorporates CN_115's MIT-licensed audio and
+Simplified Chinese source from `CN115/nitlink-lowlatency` v0.1.2. Original
+commit authorship and MIT notice are preserved in `docs/cn115` and `LICENSE`.
+Bundled Microsoft VC++ runtime DLLs are proprietary and retain Microsoft's
+terms; see `licenses/MSVC-RUNTIME.txt`. They are not relicensed under MIT.
+
 This file lists all third-party software bundled or linked by NitLink,
 with their original copyright and license terms preserved.
 
@@ -195,6 +201,7 @@ attribution requirements:
 - HID Class API + Setup API (`hid`, `setupapi`): for the vendor HID
   Output Report path used by `elgato_hid_4ks.cpp` (4K S tonemap toggle)
 - WASAPI / Core Audio (`avrt`)
+- WinHTTP (`winhttp`) and Windows Runtime JSON (`windowsapp`): optional HolyBear update checks
 - DWM (`dwmapi`), Windows Imaging Component (`windowscodecs`),
   shell helpers (`shlwapi`, `shcore`), COM (`ole32`, `oleaut32`,
   `propsys`, `uuid`), and `winmm`.
@@ -212,3 +219,12 @@ attribution requirements:
   binaries are not covered by NitLink's MIT license.
 - **Used for:** C++ standard-library and runtime support. Windows supplies
   the Universal C Runtime; the Edge WebView2 runtime is still separate.
+
+## NSIS installer
+
+- **Source:** https://nsis.sourceforge.io/ and the pinned NSIS 3.12 compiler.
+- **Copyright:** NSIS Contributors; preserved upstream notices in `licenses/NSIS.txt`.
+- **License:** NSIS components' zlib, bzip2 and Common Public License terms with
+  the stated LZMA exception. The generated installer contains NSIS runtime code;
+  the compiler is not distributed in the application package.
+- **Used for:** HolyBear Edition's branded multilingual Windows installer.

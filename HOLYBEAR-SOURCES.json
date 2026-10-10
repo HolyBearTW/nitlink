@@ -1,0 +1,24 @@
+{
+  "upstream": {
+    "repository": "nitlink-dev/nitlink",
+    "version": "1.2.3",
+    "commit": "d522bdc7011b2d1e86fe8709d1f6f1667a3d4634"
+  },
+  "pr31": {
+    "url": "https://github.com/nitlink-dev/nitlink/pull/31",
+    "commit": "01e822dffd48ff8dff80ba12c55522bb04ea19e9"
+  },
+  "pr23": {
+    "url": "https://github.com/nitlink-dev/nitlink/pull/23",
+    "commit": "b38129ec5fc13efd1c4258ae63407ed4a1a8db42"
+  },
+  "audio": {
+    "repository": "CN115/nitlink-lowlatency",
+    "author": "CN_115",
+    "tag": "v0.1.2",
+    "commit": "240f1b0a91620bdf287eb57863136624a6b87b14",
+    "license": "MIT"
+  },
+  "integration": "HolyBearTW",
+  "note": "Selected source changes; manual HDMI identity and Discord functionality shared with PR #25 are included once."
+}

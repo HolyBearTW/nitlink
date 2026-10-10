@@ -29,7 +29,7 @@ const Table& EnglishTable()
         {L"overlay.gpu", L"GPU"},
         {L"overlay.waitingForSource", L"Waiting for source signal…"},
         {L"overlay.initializingCapture", L"Initializing capture device…"},
-        {L"overlay.switchingHdr", L"Switching HDR…"},
+        {L"overlay.resyncingSignal", L"Resynchronizing signal…"},
         {L"overlay.inputSignalLost", L"Input signal lost"},
         {L"overlay.waitingForHdmi", L"Waiting for HDMI source…"},
         {L"overlay.checkHdmi", L"Make sure your source is powered on and the HDMI cable is seated at both ends."},
@@ -120,7 +120,7 @@ const Table& TraditionalChineseTable()
         {L"overlay.gpu", L"GPU"},
         {L"overlay.waitingForSource", L"正在等待來源訊號…"},
         {L"overlay.initializingCapture", L"正在初始化擷取裝置…"},
-        {L"overlay.switchingHdr", L"正在切換 HDR…"},
+        {L"overlay.resyncingSignal", L"正在重新同步訊號…"},
         {L"overlay.inputSignalLost", L"輸入訊號遺失"},
         {L"overlay.waitingForHdmi", L"正在等待 HDMI 訊號來源…"},
         {L"overlay.checkHdmi", L"請確認訊號來源已開啟，且 HDMI 線材兩端都已連接。"},
@@ -191,6 +191,97 @@ const Table& TraditionalChineseTable()
     return table;
 }
 
+const Table& SimplifiedChineseTable()
+{
+    static const Table table = {
+        {L"overlay.presentRate", L"呈现帧率"},
+        {L"overlay.captureFps", L"采集 FPS"},
+        {L"overlay.contentFps", L"内容 FPS（估计）"},
+        {L"overlay.resyncingSignal", L"正在重新同步信号…"},
+        {L"error.com", L"COM 运行时初始化失败。"},
+        {L"error.mediaFoundation", L"Media Foundation 初始化失败。"},
+        {L"error.application", L"NitLink 初始化失败。\n请确认已连接采集卡。"},
+        {L"dialog.chooseNoSignalImage", L"选择无信号图片"},
+        {L"dialog.imagesFilter", L"图片（*.png；*.jpg；*.jpeg；*.bmp）"},
+        {L"dialog.allFilesFilter", L"所有文件（*.*）"},
+        {L"overlay.noSignal", L"无信号"},
+        {L"overlay.frameRate", L"帧率"},
+        {L"overlay.appIngest", L"程序接收"},
+        {L"overlay.fps", L"FPS"},
+        {L"overlay.ms", L"毫秒"},
+        {L"overlay.gpu", L"GPU"},
+        {L"overlay.waitingForSource", L"正在等待来源信号…"},
+        {L"overlay.initializingCapture", L"正在初始化采集设备…"},
+        {L"overlay.inputSignalLost", L"输入信号丢失"},
+        {L"overlay.waitingForHdmi", L"正在等待 HDMI 信号来源…"},
+        {L"overlay.checkHdmi", L"请确认信号来源已打开，且 HDMI 线材两端都已连接。"},
+        {L"overlay.badgeColor", L"色彩"},
+        {L"value.sourceFrameRate", L"来源帧率"},
+        {L"value.captureRate", L"采集帧率"},
+        {L"value.displayRefresh", L"显示器刷新率"},
+        {L"value.auto", L"自动"},
+        {L"value.stretch", L"拉伸"},
+        {L"value.right", L"右侧"},
+        {L"value.left", L"左侧"},
+        {L"toast.noAudio", L"没有音频：Windows 麦克风访问权已关闭。请前往「设置 > 隐私和安全性 > 麦克风」。"},
+        {L"toast.windowsHdrDisabled", L"Windows HDR 尚未启用。请按 Win+Alt+B 后再试一次。"},
+        {L"toast.vsyncOn", L"垂直同步：开启（Alt+V）"},
+        {L"toast.vsyncOff", L"垂直同步：关闭（Alt+V）"},
+        {L"toast.gc553proCaptureSwitch", L"HDR 来源已检测，正在切换采集模式…"},
+        {L"toast.presentPacing", L"画面呈现节奏"},
+        {L"toast.aspectRatio", L"宽高比"},
+        {L"toast.colorRangeAuto", L"色彩范围：由 Media Foundation 自动判定（Alt+R）"},
+        {L"toast.colorRangeFull", L"色彩范围：强制完整范围（Alt+R）"},
+        {L"toast.colorRangeLimited", L"色彩范围：强制有限范围（Alt+R）"},
+        {L"toast.screenshotSaved", L"截图已保存："},
+        {L"toast.captureFormatUnavailable", L"无法使用指定的采集格式，已恢复为自动。"},
+        {L"toast.noSignalImageLoaded", L"自定义无信号图片已加载"},
+        {L"toast.noSignalImageLoadFailed", L"无法加载自定义无信号图片"},
+        {L"toast.configRecoveryRequired", L"写入及还原均失败，目前的配置文件未被使用，并已停用保存。请从 {backup} 还原设置，再重命名或删除该复原文件，然后重新启动。"},
+        {L"toast.configRecoveryCopy", L"存在设置复原备份：{backup}。请先检查内容，再重命名或删除该文件。"},
+        {L"toast.configFolderNotWritable", L"无法在 {path} 创建设置。请检查文件夹权限及快捷方式的“起始位置”。"},
+        {L"toast.configLoadFailed", L"无法加载设置，变更将不会保存。原始 nitlink.json 已保留。请修正或重命名该文件后重新启动。"},
+        {L"toast.configLoadFailedBackup", L"无法加载设置，变更将不会保存。备份：{backup}。请修正或重命名 nitlink.json 后重新启动。"},
+        {L"toast.configSaveFailed", L"无法保存设置。请检查文件夹权限，以及 nitlink.json 是否为只读或被锁定。"},
+        {L"toast.settingsProfile", L"无法使用设置：无法打开 WebView2 配置文件文件夹。"},
+        {L"toast.settingsRuntime", L"无法使用设置。请安装或更新 Microsoft Edge WebView2 运行时。"},
+        {L"toast.settingsStartFailed", L"无法启动设置。请更新 WebView2 并重新启动 NitLink。"},
+        {L"toast.settingsFiles", L"设置文件丢失、空白或无法读取。请重新安装完整的 NitLink 文件夹。"},
+        {L"toast.settingsSecurity", L"无法使用设置。请更新 WebView2 以启用必要的安全功能。"},
+        {L"toast.settingsMemory", L"内存不足，无法加载设置。请重新启动 NitLink。"},
+        {L"toast.settingsResources", L"无法安全地加载设置资源。请重新安装 NitLink。"},
+        {L"toast.settingsNavigation", L"无法加载设置页面。请重新安装完整的 NitLink 文件夹。"},
+        {L"toast.settingsProcessFailed", L"设置浏览器已停止。请重新启动 NitLink 以恢复设置。"},
+        {L"toast.settingsTimeout", L"设置未能完成加载。请更新 WebView2 或重新安装 NitLink，然后重新启动。"},
+        {L"toast.settingsRetry", L"正在重新启动设置，采集画面可继续播放。"},
+        {L"toast.settingsStarting", L"设置将于加载完成后打开。"},
+        {L"toast.imageInvalidPath", L"请选择具有完整本机路径的图片。"},
+        {L"toast.imageNetworkLocation", L"不支持网络图片，请先将图片复制到本机磁盘。"},
+        {L"toast.imageFileUnavailable", L"找不到图片或无法读取，请重新选择。"},
+        {L"toast.imageTooLarge", L"图片过大：上限为 512 MiB，每边不超过 16384 像素。"},
+        {L"toast.imageUnsupportedFormat", L"不支持此图片内容，请使用 PNG、JPEG 或 BMP 文件。"},
+        {L"toast.imageOutOfMemory", L"内存不足，无法加载图片。请选择较小的图片。"},
+        {L"toast.p010SelectionFallback", L"所选采集分辨率／帧率没有相符的 P010 模式；改用原生 P010 {width}×{height} @ {fps} FPS。"},
+        {L"toast.p010Unavailable", L"未协商到兼容的 P010 模式；目前使用 {format} 采集，HDR 输出已停用。"},
+        {L"toast.manualFormatHdrRequiresP010", L"目前采集格式手动设置为 {format}；HDR 需要 P010。请改用「自动」或 P010 以启用 HDR。"},
+        {L"diagnostic.levelsNoRange", L"信号层级：此路径没有 YUV 范围（请使用 HDR / P010 采集测试）"},
+        {L"diagnostic.levelsY", L"Y"},
+        {L"diagnostic.levelsSignal", L"信号"},
+        {L"diagnostic.levelsDecode", L"解码"},
+        {L"diagnostic.levelsCb", L"Cb"},
+        {L"diagnostic.levelsCr", L"Cr"},
+        {L"diagnostic.bits8", L"8 比特"},
+        {L"value.full", L"完整"},
+        {L"value.limited", L"有限"},
+        {L"value.needBlack", L"？需要黑阶"},
+        {L"unit.ms", L"毫秒"},
+        {L"unit.fps", L"FPS"},
+        {L"title.hdr", L"HDR"},
+        {L"title.sdr", L"SDR"},
+    };
+    return table;
+}
+
 } // namespace
 
 Localization& Localization::Instance()
@@ -207,6 +298,7 @@ Localization::Localization()
 LanguagePreference Localization::ParsePreference(const std::string& value)
 {
     if (value == "en-US") return LanguagePreference::English;
+    if (value == "zh-CN") return LanguagePreference::SimplifiedChinese;
     if (value == "zh-TW") return LanguagePreference::TraditionalChinese;
     return LanguagePreference::System;
 }
@@ -224,16 +316,22 @@ void Localization::SetPreference(LanguagePreference preference)
         m_preferenceName = "en-US";
         m_localeName = L"en-US";
         break;
+    case LanguagePreference::SimplifiedChinese:
+        m_preferenceName = "zh-CN";
+        m_localeName = L"zh-CN";
+        break;
     case LanguagePreference::TraditionalChinese:
         m_preferenceName = "zh-TW";
         m_localeName = L"zh-TW";
         break;
     case LanguagePreference::System:
-    default:
+    default: {
         m_preferenceName = "system";
-        m_localeName = IsTraditionalChineseLocale(DetectSystemLocale())
-            ? L"zh-TW" : L"en-US";
+        const auto locale = DetectSystemLocale();
+        m_localeName = IsSimplifiedChineseLocale(locale) ? L"zh-CN"
+            : IsTraditionalChineseLocale(locale) ? L"zh-TW" : L"en-US";
         break;
+    }
     }
 }
 
@@ -254,11 +352,17 @@ bool Localization::IsTraditionalChineseLocale(const std::wstring& locale)
     return locale == L"zh-TW" || locale == L"zh-Hant-TW";
 }
 
+bool Localization::IsSimplifiedChineseLocale(const std::wstring& locale)
+{
+    return locale == L"zh-CN" || locale == L"zh-SG" || locale == L"zh-Hans" ||
+        locale.starts_with(L"zh-Hans-");
+}
+
 std::wstring Localization::Get(const wchar_t* key) const
 {
     if (!key || !*key) return L"";
 
-    const Table& selected = m_localeName == L"zh-TW"
+    const Table& selected = m_localeName == L"zh-CN" ? SimplifiedChineseTable() : m_localeName == L"zh-TW"
         ? TraditionalChineseTable() : EnglishTable();
     auto it = selected.find(key);
     if (it != selected.end() && !it->second.empty()) return it->second;
@@ -287,7 +391,8 @@ std::wstring Localization::Format(
 
 const wchar_t* Localization::UiFontFamily(const wchar_t* fallback) const
 {
-    return m_localeName == L"zh-TW" ? L"Microsoft JhengHei UI" : fallback;
+    return m_localeName == L"zh-CN" ? L"Microsoft YaHei UI"
+        : m_localeName == L"zh-TW" ? L"Microsoft JhengHei UI" : fallback;
 }
 
 } // namespace NitLink

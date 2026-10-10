@@ -1,0 +1,49 @@
+a6de217021b8af745c5a3e6c1d04c103fc371e43	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+4871608507e30977d4677db311987e7e02426824	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+f7826488a7591f69bcc28e44b1d703b9552ff3a2	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+be808b8e9dc3c24e1b7b21b92ecede47f768cb6c	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+77e2cadc4664b94beecc5028ac53a3f32bb48a96	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+1266abbd47badcb236e3ef089eba9b30b5c40a0d	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+9f453069bf655feece3f3afa4f528849f73435a8	CN_115 <68493388+CN115@users.noreply.github.com>	Implement configurable audio latency and adaptive clock correction
+b5bff903064ae98408b81c3bdc27556910292884	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+92cc4c54e991ab9903e8d29ba8cf28aa3890c1dd	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+2f7e26ae05adb09a61f7a5e01165cb7fce3eb52c	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+d163b008a4843407a50c9b51ba35a1ad14a14321	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+9bd7fd51d00ea8b0655529bd272ad62e30c054ee	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+ab2eb30bb68695eddc0c8049b442db3199679ae3	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+2871ae34ba45ab3383bee6575bbda36f564c084b	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+269afdbf1a38b3a55eb31cdd2bb20d59768e7b50	CN_115 <68493388+CN115@users.noreply.github.com>	Connect audio latency settings, diagnostics and regression tests
+f68c20e05cc20c97a5bb05c6a09cce63b784a1f2	CN_115 <68493388+CN115@users.noreply.github.com>	Polish audio controls and avoid reassigning low-period event handle
+6a1470a295892ee97320b3e5793770a381dee85e	CN_115 <68493388+CN115@users.noreply.github.com>	Polish audio controls and avoid reassigning low-period event handle
+be4fc835e5dde6ede12983bda911fe09f90e3b69	CN_115 <68493388+CN115@users.noreply.github.com>	Polish audio controls and avoid reassigning low-period event handle
+679b0749e12b37790c2e0c915071a70eeea0f7ed	CN_115 <68493388+CN115@users.noreply.github.com>	Polish audio controls and avoid reassigning low-period event handle
+9e6944606b8bcdfd63269dd761f3d9fb078d579e	CN_115 <68493388+CN115@users.noreply.github.com>	Polish audio controls and avoid reassigning low-period event handle
+300f570474340b55db7ad7c2e22691c2343415ee	CN_115 <68493388+CN115@users.noreply.github.com>	Exercise PCM16 adaptive resampling across ring wrap
+da3f37e44feb218282ff61f2d048acddcb50aceb	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+5fbc06aff95e3545437d5e5e9bf02f6e21286e9e	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+7ff25462dbe7c7cf8fd5d4e1a05f95a49ae26d1b	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+33b0810f0f912850d44e2fecc44d235de349a8d5	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+dd83b4dd63d5fcf1ac53bf050deaa248d2ee3cde	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+5658f9944aa9574802e8a1952d4b633bbbbbc626	CN_115 <68493388+CN115@users.noreply.github.com>	Use native playback formats and sinc conversion for low-period shared audio
+82ea1fd18ca1ad7c7a2a93f5ad439f8e138fe1b3	CN_115 <68493388+CN115@users.noreply.github.com>	Expose actual periods, fallback reasons and coherent queue diagnostics in audio lab 2
+1889c197d5efe8c66032b7dcb0f9c7bd7c794928	CN_115 <68493388+CN115@users.noreply.github.com>	Expose actual periods, fallback reasons and coherent queue diagnostics in audio lab 2
+8db75d95d268ebc9bd6693750ca705ea13506d1f	CN_115 <68493388+CN115@users.noreply.github.com>	Expose actual periods, fallback reasons and coherent queue diagnostics in audio lab 2
+e7cf877d8f5cd3091fc7b5628848858e20b1210a	CN_115 <68493388+CN115@users.noreply.github.com>	Expose actual periods, fallback reasons and coherent queue diagnostics in audio lab 2
+bef09944e66540bac3e853b5c489bfab6317bb5b	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/audio/audio_router.h
+b457b957050758852351d565f4c270088ac853ad	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/audio/audio_router.cpp
+1d9ef5bf2807e40ed37613d90cf1cd79e75981ca	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/app/config.h
+1d6db6cc71c9c1be4c24720f1543cbb8c73416a3	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/app/config.cpp
+02f9b201e8dc7e849d62a5d81bdd4ea789e040bc	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/app/settings_message.cpp
+7a356260f20833e09f2d10db994f59863b665231	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: src/app/application.cpp
+0127d8f0ba62d1bb0e6ee90ad21820a101f998ab	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: tests/media_security_tests.cpp
+ef6c74818b57f19d0e820c0f614a43af07f5da7e	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: tests/config_tests.cpp
+2949853bdf430c0035ff2d2dfb6c8057ba616c45	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: tests/settings_security_tests.cpp
+d6d9a6b2871d18d68b0dcd31019ca1fb5db8d619	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: assets/menu/menu.js
+8f7c50b63b23496785e770f917a136be72608d3d	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: nitlink-menu.html
+46cb1fe56f8c32c34fb8657dca91a69c2a170561	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: locales/en-US.js
+7bfa31e727381de420bd2f2cc8b304a2c83d1d34	CN_115 <68493388+CN115@users.noreply.github.com>	Add optional minimum-period exclusive audio: locales/zh-TW.js
+f515f7a788dcd66092907013754f6fdc9a9a0110	CN_115 <68493388+CN115@users.noreply.github.com>	Release v0.1.0: release exclusive audio on focus loss and shutdown
+832ce77a679b0cff3c4be66b6f2018d580f00798	CN_115 <68493388+CN115@users.noreply.github.com>	Add Simplified Chinese interface and package CN115 v0.1.1
+96ec766dbcf5e66917590f8f1327718c9eeb8b3c	CN_115 <68493388+CN115@users.noreply.github.com>	Estimate audio clock drift and reload on sustained faults without raising FIFO targets
+a66ff521b713f0efcad33eb0c3e49445ef5dd8e1	CN_115 <68493388+CN115@users.noreply.github.com>	Fix drift-induced underruns with packet-window feedback and low-water anti-windup
+240f1b0a91620bdf287eb57863136624a6b87b14	CN_115 <68493388+CN115@users.noreply.github.com>	Release v0.1.2 with concise audio settings and opt-in diagnostics

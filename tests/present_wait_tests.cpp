@@ -47,8 +47,43 @@ struct DX11RendererTestAccess {
     {
         return renderer.m_presentCapDeadline != std::chrono::steady_clock::time_point{};
     }
+    static auto Deadline(const DX11Renderer& renderer)
+    {
+        return renderer.m_presentCapDeadline;
+    }
+    static void AttachSwapChain(DX11Renderer& renderer, IDXGISwapChain3* chain)
+    {
+        renderer.m_swapChain = chain;
+    }
+    static void CompletedUpload(DX11Renderer& renderer, std::uint64_t serial)
+    {
+        renderer.ForgetResyncFrame(CaptureFrameHoldReason::TextureOverwritten);
+        renderer.m_captureWidth = renderer.m_captureHeight = 8;
+        renderer.m_captureUploadSerial = serial;
+        renderer.m_hasFrame = true;
+        renderer.m_captureFrameHold.ObserveCompletedUpload(serial);
+    }
+    static void PreparedDraw(DX11Renderer& renderer, bool live, bool postInput, bool composited)
+    {
+        renderer.m_captureDrawnThisFrame = renderer.HasCaptureFrame();
+        renderer.m_liveCaptureDrawnThisFrame = live;
+        renderer.m_drawnCaptureUploadSerial = renderer.m_captureUploadSerial;
+        renderer.m_drawnCaptureSemantics = renderer.CurrentCaptureFrameSemantics();
+        renderer.m_drawnCaptureSemantics.postInput = postInput;
+        renderer.m_upscaledCaptureCompositedThisFrame = composited;
+    }
+    static CaptureFrameHoldStatus Receipt(const DX11Renderer& renderer)
+    {
+        // This fixture supplies completed upload/draw preconditions, not a
+        // complete shader pipeline. Resource/color compatibility is covered
+        // separately by signal_resync_presentation.
+        return renderer.m_captureFrameHold.Inspect(
+            true, renderer.m_captureUploadSerial, renderer.CurrentCaptureFrameSemantics());
+    }
 };
 }
+
+#include "present_resync_integration_fixture.h"
 
 namespace {
 void Require(bool condition, const char* message)
@@ -125,6 +160,7 @@ int main()
         renderer.BeginFrame(false);
         Require(renderer.ConsumePhaseTimes().iterations == 0,
                 "source/capture pacing does not acquire a second refresh wait");
+        NitLink::RunPresentResyncIntegration(renderer);
         std::cout << "PASS offscreen WARP cap, Low Latency, VSync, Off and marker wait paths\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

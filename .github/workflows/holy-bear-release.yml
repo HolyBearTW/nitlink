@@ -1,0 +1,133 @@
+name: HolyBear Windows Release
+
+on:
+  push:
+    branches: [holy-bear/integrated]
+    tags: ['v*-holybear*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: holy-bear-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'HolyBearTW/nitlink'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Ensure WebView2 Runtime on the CI runner
+        shell: pwsh
+        run: |
+          $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $keys = @("HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$client", "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$client")
+          $installed = $keys | ForEach-Object { (Get-ItemProperty -LiteralPath $_ -Name pv -ErrorAction SilentlyContinue).pv } | Where-Object { $_ -and $_ -ne '0.0.0.0' }
+          if (-not $installed) {
+            $setup = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $setup
+            $signature = Get-AuthenticodeSignature -LiteralPath $setup
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'Untrusted WebView2 installer' }
+            $process = Start-Process -FilePath $setup -ArgumentList '/silent','/install' -WindowStyle Hidden -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "WebView2 installation failed: $($process.ExitCode)" }
+          }
+      - name: Build x64 Release and run complete CTest
+        shell: pwsh
+        run: ./scripts/build-holybear.ps1
+      - name: Package and verify fresh portable ZIP and branded Setup
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF.StartsWith('refs/tags/')) {
+            ./scripts/package-holybear.ps1 -Tag $env:GITHUB_REF_NAME -RequireTag
+          } else {
+            ./scripts/package-holybear.ps1
+          }
+      - name: Verify install, upgrade and uninstall on the disposable CI runner
+        shell: pwsh
+        run: ./scripts/test-installer.ps1 -Assets build/holy-bear-dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: holy-bear-portable
+          path: |
+            build/holy-bear-dist/*.zip
+            build/holy-bear-dist/*Setup-x64.exe
+            build/holy-bear-dist/SHA256SUMS.txt
+            build/holy-bear-dist/RELEASE-NOTES.md
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: holy-bear-validation
+          path: |
+            build/holy-bear/ctest-results.xml
+            build/holy-bear/ctest-output.log
+            build/holy-bear/test-summary.json
+          if-no-files-found: warn
+
+  sign:
+    if: github.repository == 'HolyBearTW/nitlink' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a matching tag from the reviewed integration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "v$(cat VERSION)"
+          test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/holy-bear/integrated
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: holy-bear-portable
+          path: release-assets
+      - name: Sign final Windows artifacts and verify using the pinned public key
+        env:
+          HOLYBEAR_GPG_PRIVATE_KEY: ${{ secrets.HOLYBEAR_GPG_PRIVATE_KEY }}
+          HOLYBEAR_GPG_PASSPHRASE: ${{ secrets.HOLYBEAR_GPG_PASSPHRASE }}
+          HOLYBEAR_GPG_FINGERPRINT: ${{ secrets.HOLYBEAR_GPG_FINGERPRINT }}
+        run: python3 scripts/release-signing.py sign --assets release-assets --tag "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: holy-bear-signed
+          path: |
+            release-assets/*.zip
+            release-assets/*Setup-x64.exe
+            release-assets/*.asc
+            release-assets/SHA256SUMS.txt
+            release-assets/RELEASE-NOTES.md
+          if-no-files-found: error
+
+  publish:
+    if: github.repository == 'HolyBearTW/nitlink' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [build, sign]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: holy-bear-signed
+          path: release-assets
+      - name: Verify uploaded draft assets and publish official Latest Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/publish-holybear.ps1 -Tag $env:GITHUB_REF_NAME -Assets release-assets

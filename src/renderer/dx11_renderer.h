@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <chrono>
+#include "capture_frame_hold.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -28,10 +29,16 @@ public:
     // Apply the cap or frame-latency wait WITHOUT starting the frame, so the
     // Low-Latency loop can wait first, THEN read the freshest capture frame.
     void WaitForFrameReady();
-    void DrawCaptureFrame();
+    bool DrawCaptureFrame(bool heldForSignalResync = false);
     // Returns true only when Present returned S_OK. This reports submission,
     // not the number of frames scanned out by the monitor.
     bool EndFrame();
+    CaptureFrameHoldStatus GetResyncFrameStatus() const;
+    void ForgetResyncFrame(CaptureFrameHoldReason reason);
+    bool CaptureDrawReachedBackbuffer() const {
+        return m_captureDrawnThisFrame &&
+            (!m_drawnCaptureSemantics.postInput || m_upscaledCaptureCompositedThisFrame);
+    }
 
     // Latched true after EndFrame's Present (or a per-frame capture-texture
     // Map) reports the graphics device was removed or reset (TDR, driver
@@ -46,7 +53,7 @@ public:
 
     // Invalidate presentation state from the previous capture session without
     // destroying the renderer resources. The next accepted frame restores it.
-    void InvalidateCaptureFrame() { m_hasFrame = false; }
+    void InvalidateCaptureFrame();
     bool HasCaptureFrame() const { return m_hasFrame; }
 
     bool SaveScreenshot(const std::wstring& path);
@@ -313,7 +320,8 @@ private:
     bool CreateCaptureResourcesP010(uint32_t width, uint32_t height);
     bool CreateFullscreenQuad();
     bool CreateGpuTimingQueries();
-    void UpdateAspectTransform();
+    bool UpdateAspectTransform();
+    CaptureFrameSemantics CurrentCaptureFrameSemantics() const;
 
     // Inspect an HRESULT from a swap-chain or device call. When it is a DXGI
     // device-removed or device-reset code, log the specific
@@ -430,6 +438,15 @@ private:
     uint32_t m_captureWidth  = 0;
     uint32_t m_captureHeight = 0;
     bool     m_hasFrame      = false;
+    std::uint64_t m_captureUploadSerial = 0;
+    CaptureFrameHold m_captureFrameHold;
+    CaptureFrameSemantics m_drawnCaptureSemantics;
+    std::uint64_t m_drawnCaptureUploadSerial = 0;
+    bool m_captureDrawnThisFrame = false;
+    bool m_heldCaptureDrawnThisFrame = false;
+    bool m_liveCaptureDrawnThisFrame = false;
+    bool m_upscaledCaptureCompositedThisFrame = false;
+    bool m_lastPresentSucceeded = false;
     // m_captureFormat tracks the format of the currently-ALLOCATED GPU
     // resources. Set by CreateCaptureResources(_P010). Drives the upload
     // branches in UpdateCaptureTexture and the shader-binding switch in

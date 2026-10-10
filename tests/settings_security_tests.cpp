@@ -18,6 +18,23 @@ void Expect(bool value, const char* label) {
 
 int main() {
     using NitLink::ParseSettingsMessage;
+    for (auto action : {L"setAudioFifoMs", L"setAudioRenderMs"}) {
+        const auto prefix = L"{\"action\":\"" + std::wstring(action) + L"\",\"value\":";
+        for (auto valid : {L"3", L"12", L"100"})
+            Expect(ParseSettingsMessage(prefix + valid + L"}").has_value(), "audio buffer valid integer");
+        for (auto invalid : {L"2", L"101", L"3.5", L"true", L"\"12\"", L"null", L"1e99"})
+            Expect(!ParseSettingsMessage(prefix + invalid + L"}"), "invalid audio buffer rejected");
+    }
+    const auto driftOn = ParseSettingsMessage(L"{\"action\":\"setAudioDrift\",\"value\":true}");
+    const auto driftOff = ParseSettingsMessage(L"{\"action\":\"setAudioDrift\",\"value\":false}");
+    Expect(driftOn && driftOn->number == 1 && driftOff && driftOff->number == 0, "drift boolean preserved");
+    Expect(!ParseSettingsMessage(L"{\"action\":\"setAudioDrift\",\"value\":1}"), "drift rejects numeric toggle");
+
+    const auto exclusiveOn = ParseSettingsMessage(L"{\"action\":\"setAudioExclusive\",\"value\":true}");
+    const auto exclusiveOff = ParseSettingsMessage(L"{\"action\":\"setAudioExclusive\",\"value\":false}");
+    Expect(exclusiveOn && exclusiveOn->number==1 && exclusiveOff && exclusiveOff->number==0,"exclusive boolean round trip");
+    Expect(!ParseSettingsMessage(L"{\"action\":\"setAudioExclusive\",\"value\":1}"),"exclusive numeric toggle rejected");
+
     for (int kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
          kind <= COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED; ++kind)
         Expect(NitLink::SettingsProcessNeedsRestart(static_cast<COREWEBVIEW2_PROCESS_FAILED_KIND>(kind)) ==
@@ -35,9 +52,19 @@ int main() {
         const auto english = localization.Get(key);
         localization.SetPreference("zh-TW");
         const auto chinese = localization.Get(key);
-        Expect(english != key && chinese != key && english != chinese,
-               "both native locale tables define each settings/config warning");
+        localization.SetPreference("zh-CN");
+        const auto simplified = localization.Get(key);
+        Expect(english != key && chinese != key && simplified != key &&
+               english != chinese && english != simplified,
+               "all native locale tables define each settings/config warning");
     }
+    localization.SetPreference("zh-CN");
+    Expect(localization.PreferenceName() == "zh-CN" && localization.LocaleName() == L"zh-CN" &&
+           std::wstring(localization.UiFontFamily()) == L"Microsoft YaHei UI",
+           "Simplified Chinese selects native locale and font");
+    Expect(localization.Format(L"toast.p010SelectionFallback",
+           {{L"width", L"1920"}, {L"height", L"1080"}, {L"fps", L"60"}}).find(L"1920×1080 @ 60") != std::wstring::npos,
+           "Simplified Chinese native placeholders are substituted");
     localization.SetPreference("system");
     using namespace NitLink::WebViewPolicy;
     for (auto action : {L"ready", L"cycleNoSignalMode", L"chooseNoSignalImage",
@@ -92,6 +119,7 @@ int main() {
     Expect(device && device->text == L"Elgato \"USB\" \\ 測試 \xD83D\xDE00", "escaped Unicode device name");
     for (auto valid : {
         LR"({"action":"setLanguage","value":"system"})", LR"({"action":"setLanguage","value":"en-US"})",
+        LR"({"action":"setLanguage","value":"zh-CN"})",
         LR"({"action":"setLanguage","value":"zh-TW"})", LR"({"action":"setNoSignalMode","value":"image"})",
         LR"({"action":"setNoSignalMode","value":"default"})", LR"({"action":"setNoSignalFit","value":"contain"})",
         LR"({"action":"setNoSignalFit","value":"cover"})", LR"({"action":"setNoSignalFit","value":"stretch"})",
@@ -226,6 +254,13 @@ int main() {
         Expect(!CanReceiveMessage(MenuUri, bad), "untrusted current document");
     }
     for (const auto& resource : Resources) Expect(FindResource(resource.uri) == &resource, "packaged resource");
+    Expect(ParseSettingsMessage(LR"({"action":"checkHolyBearUpdate"})").has_value(), "manual update check schema");
+    Expect(ParseSettingsMessage(LR"({"action":"setHolyBearAutoUpdateCheck","value":false})").has_value(), "opt-out schema");
+    Expect(!ParseSettingsMessage(LR"({"action":"setHolyBearAutoUpdateCheck","value":"true"})"), "update option requires boolean");
+    Expect(!ParseSettingsMessage(LR"({"action":"checkHolyBearUpdate","value":"https://evil"})"), "caller cannot supply URL");
+    Expect(CanOpenExternal(MenuUri, L"https://github.com/CN115", true), "contributor profile link");
+    Expect(CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", true), "validated HolyBear release link");
+    Expect(!CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", false), "no automatic release popup");
     for (auto bad : {L"https://nitlink.invalid/nitlink.json", L"https://nitlink.invalid/src/main.cpp",
          L"https://nitlink.invalid/locales/../../nitlink.json", L"https://fonts.googleapis.com/",
          L"https://nitlink.invalid/assets/menu/menu.js?x", L"file:///C:/secret.txt"})

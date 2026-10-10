@@ -1,0 +1,14 @@
+Microsoft Visual C++ Runtime redistribution notice
+
+Bundled release runtime DLLs are copyright Microsoft Corporation, proprietary,
+and are not covered by NitLink's MIT license. They are supplied unmodified from
+the x64 Microsoft.VC143.CRT directory of the licensed Visual Studio 2022
+installation used to build this package. Debug/non-redistributable files are
+not included. The package validator checks Microsoft's Authenticode signatures.
+
+Redistribution is subject to the applicable Microsoft Software License Terms:
+https://visualstudio.microsoft.com/license-terms/
+Visual Studio 2022 Distributable Code list:
+https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution
+Microsoft deployment/redistribution guidance:
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files

@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Path)
+param([Parameter(Mandatory = $true)][string]$Path, [switch]$HolyBear)
 $ErrorActionPreference = 'Stop'
 $packageRoot = (Resolve-Path -LiteralPath $Path).ProviderPath.TrimEnd('\')
 if ((Get-Item -LiteralPath $packageRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -12,6 +12,16 @@ $required = @(
     'LICENSE', 'LICENSES.md', 'ACKNOWLEDGMENTS.md'
 )
 $runtimeDlls = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll')
+$runtimeDlls += @('msvcp140_atomic_wait.dll', 'msvcp140_codecvt_ids.dll', 'vcruntime140_threads.dll', 'concrt140.dll', 'vccorlib140.dll')
+if ($HolyBear) {
+    $required += @('locales/zh-CN.js', 'README.txt', 'RELEASE-NOTES.md', 'BUILD.txt',
+        'licenses/NSIS.txt', 'licenses/HOLYBEAR-RELEASE-PUBLIC-KEY.asc',
+        'docs/HOLYBEAR-RELEASE-SIGNING.md', 'docs/HOLYBEAR-UPDATES.md',
+        'HOLYBEAR-SOURCES.json', 'licenses/MSVC-RUNTIME.txt', 'docs/4ks-hdr-tonemap.md',
+        'docs/hdmi-source-metadata.md', 'docs/cn115/SOURCE.txt', 'docs/cn115/FEATURE_COMMITS.tsv',
+        'docs/cn115/AUDIO_FORK.txt', 'docs/cn115/AUDIO_TESTING.txt',
+        'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+}
 $allowed = $required + $runtimeDlls + @('README.txt', 'RELEASE-NOTES.md', 'docs/4ks-hdr-tonemap.md', 'SHA256SUMS.txt')
 $pending = [Collections.Generic.Stack[string]]::new()
 $pending.Push($packageRoot)

@@ -8,26 +8,56 @@
       const locales = (window.navigator && window.navigator.languages && window.navigator.languages.length)
         ? window.navigator.languages
         : [window.navigator && window.navigator.language];
-      return locales.some(locale => typeof locale === 'string' &&
-        ['zh-tw', 'zh-hant-tw'].includes(locale.toLowerCase()))
-        ? 'zh-TW' : 'en-US';
+      for (const locale of locales) {
+        if (typeof locale !== 'string') continue;
+        const tag = locale.toLowerCase();
+        if (['zh-cn', 'zh-sg', 'zh-hans'].includes(tag) || tag.startsWith('zh-hans-')) return 'zh-CN';
+        if (['zh-tw', 'zh-hant-tw'].includes(tag)) return 'zh-TW';
+      }
+      return 'en-US';
     };
     const standaloneLanguageKey = 'nitlink.languagePreference';
     const standalonePreference = (() => {
       if (hasWebViewHost()) return 'system';
       try {
         const saved = window.localStorage.getItem(standaloneLanguageKey);
-        return ['system', 'en-US', 'zh-TW'].includes(saved) ? saved : 'system';
+        return ['system', 'en-US', 'zh-TW', 'zh-CN'].includes(saved) ? saved : 'system';
       } catch (_) {
         return 'system';
       }
     })();
     let currentLocale = 'en-US';
+    let holyBearUpdateState = {};
+    let renderHolyBearUpdate = () => {};
     const t = key => {
       const selected = localeResources[currentLocale] || {};
       const value = selected[key] || englishLocale[key];
       return (typeof value === 'string' && value.length > 0) ? value : key;
     };
+    // Translate display-only endpoint labels; raw driver diagnostics stay available in logs.
+    const endpointLabels = [
+      ["exclusive suspended: window inactive, hidden, minimized or regaining focus", "audio.endpoint.0"],
+      ["Compatibility shared (Windows conversion)", "audio.endpoint.1"],
+      ["Native shared low-period", "audio.endpoint.2"],
+      ["Waiting for playback endpoint", "audio.endpoint.3"],
+      ["Exclusive event", "audio.endpoint.4"],
+      ["driver alignment applied", "audio.endpoint.5"],
+      ["driver stream latency", "audio.endpoint.6"],
+      ["exclusive fallback:", "audio.endpoint.7"],
+      ["exclusive min", "audio.endpoint.8"],
+      ["native min", "audio.endpoint.9"],
+      ["actual block", "audio.endpoint.10"],
+      ["requested", "audio.endpoint.11"],
+      ["default", "audio.endpoint.12"],
+      ["actual", "audio.endpoint.13"],
+      ["capture", "audio.endpoint.14"],
+      ["stream", "audio.endpoint.15"],
+      ["unknown", "audio.endpoint.16"],
+      ["fallback:", "audio.endpoint.17"],
+      ["frames", "audio.endpoint.18"]
+    ];
+    const localizeEndpointInfo = info => endpointLabels.reduce(
+      (text, [phrase, key]) => text.split(phrase).join(t(key)), String(info || ""));
     const applyTranslations = locale => {
       currentLocale = localeResources[locale] ? locale : 'en-US';
       document.documentElement.lang = currentLocale;
@@ -50,9 +80,10 @@
       const h1 = document.querySelector('.topbar h1');
       if (h1 && titleKey) h1.textContent = t(titleKey);
       const language = document.getElementById('language-select');
-      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW') {
+      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW' && language.value !== 'zh-CN') {
         language.value = 'system';
       }
+      renderHolyBearUpdate();
     };
     const localizeValue = value => ({
       Auto: 'value.auto', Stretch: 'value.stretch',
@@ -64,8 +95,7 @@
     // A real NitLink host will immediately push its effective locale. When
     // this file is opened directly for static testing, use the browser-local
     // preference instead so the language selector still has visible effect.
-    const standaloneLocale = standalonePreference === 'zh-TW' ? 'zh-TW'
-      : standalonePreference === 'en-US' ? 'en-US' : detectStandaloneLocale();
+    const standaloneLocale = standalonePreference === 'system' ? detectStandaloneLocale() : standalonePreference;
     applyTranslations(standaloneLocale);
 
     // Rail navigation. Every pane stays in the DOM so applyState can keep
@@ -85,6 +115,7 @@
           if (pane) { if (active) pane.dataset.active = 'true'; else pane.removeAttribute('data-active'); }
         });
         if (h1 && titles[tab.dataset.tab]) h1.textContent = t(titles[tab.dataset.tab]);
+        if (tab.dataset.tab === 'pane-about') post('markHolyBearUpdateSeen');
       }));
     })();
 
@@ -95,19 +126,106 @@
       }
     };
 
+    // The WebView never fetches network resources. Native HTTPS checks are opt-in,
+    // and this display receives only validated version/status fields.
+    renderHolyBearUpdate = () => {
+      const s = holyBearUpdateState;
+      const button = document.getElementById('holy-bear-check-update');
+      if (!button) return;
+      document.getElementById('holy-bear-latest-version').textContent = s.latest || t('update.unknown');
+      document.getElementById('holy-bear-last-check').textContent = s.lastCheckUtc ? new Date(s.lastCheckUtc * 1000).toLocaleString(currentLocale) : t('update.never');
+      const toggle = document.getElementById('toggle-holy-bear-auto-update');
+      toggle.classList.toggle('on', !!s.automatic);
+      toggle.setAttribute('aria-checked', s.automatic ? 'true' : 'false');
+      button.disabled = !!s.busy;
+      const states = ['never', 'checking', 'current', 'available', 'offline', 'apiUnavailable', 'invalid'];
+      const key = states.includes(s.status) ? s.status : 'never';
+      const version = String(s.latest || '').replace(/^v/, '').replace(/-holybear$/, '');
+      document.getElementById('holy-bear-update-status').textContent = t('update.' + key).replace('{version}', version);
+      const link = document.getElementById('holy-bear-release-link');
+      link.hidden = !s.url;
+      if (s.url) link.href = s.url;
+      document.getElementById('holy-bear-update-badge').hidden = !s.unread;
+    };
+    const updateButton = document.getElementById('holy-bear-check-update');
+    if (updateButton) updateButton.addEventListener('click', () => {
+      updateButton.disabled = true;
+      document.getElementById('holy-bear-update-status').textContent = t('update.checking');
+      post('checkHolyBearUpdate');
+    });
+    renderHolyBearUpdate();
+
     const languageSelect = document.getElementById('language-select');
     if (languageSelect) {
       if (!hasWebViewHost()) languageSelect.value = standalonePreference;
       languageSelect.addEventListener('change', () => {
         const preference = languageSelect.value;
-        applyTranslations(preference === 'zh-TW' ? 'zh-TW'
-          : preference === 'en-US' ? 'en-US' : detectStandaloneLocale());
+        applyTranslations(preference === 'system' ? detectStandaloneLocale() : preference);
         if (!hasWebViewHost()) {
           try { window.localStorage.setItem(standaloneLanguageKey, preference); } catch (_) {}
         }
         post('setLanguage', preference);
       });
     }
+
+    for (const [id, action] of [['audio-fifo','setAudioFifoMs'], ['audio-render','setAudioRenderMs']]) {
+      document.getElementById(id)?.addEventListener('change', e => {
+        const n = Number(e.target.value);
+        if (!Number.isInteger(n) || n < 3 || n > 100) { e.target.reportValidity(); return; }
+        post(action, n);
+      });
+    }
+    document.getElementById('audio-exclusive')?.addEventListener('change', e => post('setAudioExclusive', e.target.checked));
+    document.getElementById('audio-drift')?.addEventListener('change', e => post('setAudioDrift', e.target.checked));
+    document.getElementById('audio-refresh')?.addEventListener('click', () => post('ready'));
+
+    // Diagnostics are a presentation preference, off at every application start.
+    // Hiding the panel never changes audio processing or cumulative counters.
+    document.getElementById('audio-debug')?.addEventListener('change', e => {
+      document.getElementById('audio-diagnostics').hidden = !e.target.checked;
+      e.target.setAttribute('aria-expanded', String(e.target.checked));
+    });
+
+    // Small help buttons support pointer hover, keyboard focus and touch/click.
+    // A fixed tooltip stays inside the viewport even in the narrow side panel.
+    (() => {
+      const tip = document.getElementById('audio-tooltip');
+      let anchor = null, hideTimer;
+      const hide = () => { clearTimeout(hideTimer); tip.hidden = true; anchor = null; };
+      const hideSoon = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hide, 150); };
+      const show = button => {
+        clearTimeout(hideTimer);
+        anchor = button;
+        tip.textContent = t(button.dataset.audioHelp);
+        tip.hidden = false;
+        const rect = button.getBoundingClientRect();
+        const left = Math.max(12, Math.min(rect.left, window.innerWidth-tip.offsetWidth-12));
+        const below = rect.bottom+8;
+        const top = below+tip.offsetHeight <= window.innerHeight-12 ? below : Math.max(12,rect.top-tip.offsetHeight-8);
+        tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+      };
+      document.querySelectorAll('[data-audio-help]').forEach(button => {
+        button.addEventListener('mouseenter', () => show(button));
+        button.addEventListener('mouseleave', e => {
+          if (document.activeElement !== button && e.relatedTarget !== tip) hideSoon();
+        });
+        button.addEventListener('focus', () => show(button));
+        button.addEventListener('blur', hide);
+        button.addEventListener('click', () => show(button));
+      });
+      tip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+      tip.addEventListener('mouseleave', () => {
+        if (document.activeElement !== anchor) hideSoon();
+      });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+      document.addEventListener('click', e => {
+        if (anchor && e.target !== anchor && !tip.contains(e.target)) hide();
+      });
+      document.addEventListener('scroll', () => {
+        if (anchor && document.activeElement === anchor) show(anchor); else hide();
+      }, true);
+      window.addEventListener('resize', hide);
+    })();
 
     document.addEventListener('click', e => {
       let actionEl = e.target.closest('[data-action]');
@@ -179,6 +297,7 @@
       const trigger = document.getElementById('source-trigger');
       const nameEl = document.getElementById('meta-source');
       const pop = document.getElementById('source-popover');
+      const hdmiPicker = document.getElementById('hdmi-source-picker');
       if (!trigger || !nameEl || !pop) return;
 
       let lastDevices = [];
@@ -387,7 +506,9 @@
       };
 
       const renderPopover = () => {
-        pop.innerHTML = '';
+        // Keep the identity picker mounted with its listeners, selection and
+        // custom draft when device/format state refreshes the original menu.
+        pop.replaceChildren();
         sourceSelects = {};
 
         // Device list: only when there is more than one to pick from.
@@ -428,6 +549,7 @@
         fmtSectLabel.className = 'source-popover-section-label';
         fmtSectLabel.textContent = t('source.manualFormat');
         pop.appendChild(fmtSectLabel);
+        pop.appendChild(hdmiPicker);
 
         const resolutions = uniqueResolutions();
         const currentResValue = lastOverride.width
@@ -556,6 +678,9 @@
         e.stopPropagation();
         togglePop();
       });
+      // The original popover is inside its trigger. Input/editor clicks must
+      // not bubble into that trigger and toggle the containing source menu.
+      pop.addEventListener('click', e => e.stopPropagation());
       document.addEventListener('click', e => {
         if (!pop.contains(e.target) && !trigger.contains(e.target)) closePop();
       });
@@ -575,8 +700,8 @@
       // Re-render is suppressed when focus is inside the popover.
       // PushSettingsState fires every ~1s on the C++ side while the
       // settings menu is visible. Without this guard, the periodic
-      // re-render destroys the popover's children (pop.innerHTML = ''
-      // inside renderPopover) right when a user has the native <select>
+      // re-render replaces the capture-format children right when a user
+      // has the native <select>
       // dropdown open, which closes their dropdown mid-pick. The next
       // un-focused state push will catch the latest data.
       window._updateSource = (devices, active, availableFormats, override) => {
@@ -616,6 +741,123 @@
           else refreshSourceSelects();
         }
       };
+    })();
+
+    // HDMI identity uses its own picker and never requests device enumeration
+    // or capture-format changes. Selection is confirmed by the native state.
+    (() => {
+      const picker = document.getElementById('hdmi-source-picker');
+      const trigger = document.getElementById('hdmi-source-trigger');
+      const nameEl = document.getElementById('meta-hdmi-source');
+      const customRow = document.getElementById('hdmi-source-custom-row');
+      const edit = document.getElementById('hdmi-source-custom-edit');
+      const editor = document.getElementById('hdmi-source-custom-editor');
+      const input = document.getElementById('hdmi-source-custom-input');
+      const error = document.getElementById('hdmi-source-custom-error');
+      let choices = [];
+      let options = [];
+      let selected = 'auto';
+      let effective = '';
+      let custom = '';
+      let choicesKey = '';
+      const choiceLabel = choice => choice.value === 'auto' ? t('value.auto')
+        : choice.value === 'other' ? t('hdmiSource.otherOption') : choice.label;
+      const closeEditor = (restoreFocus = false) => {
+        editor.hidden = true;
+        if (restoreFocus) trigger.focus();
+      };
+      const renderOptions = () => {
+        trigger.replaceChildren();
+        options = choices.map(choice => {
+          const { value } = choice;
+          const option = document.createElement('option');
+          option.value = value;
+          trigger.appendChild(option);
+          return { option, choice };
+        });
+      };
+      const openEditor = () => {
+        editor.hidden = false;
+        error.hidden = true;
+        input.value = custom;
+        input.focus();
+        input.select();
+      };
+      // Use the same HTML select and shared CSS as resolution/FPS/format.
+      trigger.addEventListener('click', event => event.stopPropagation());
+      trigger.addEventListener('change', event => {
+        event.stopPropagation();
+        const value = trigger.value;
+        if (!choices.some(choice => choice.value === value)) {
+          trigger.value = selected;
+          return;
+        }
+        post('setManualHdmiSource', value);
+        if (value === 'other') openEditor();
+        else closeEditor(true);
+      });
+      edit.addEventListener('click', openEditor);
+      picker.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !editor.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeEditor(true);
+        }
+      });
+      document.getElementById('source-trigger').addEventListener('click', () => closeEditor());
+      document.addEventListener('click', event => {
+        if (!picker.contains(event.target)) closeEditor();
+      });
+      const saveCustom = () => {
+        const name = input.value.trim();
+        if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/u.test(input.value) ||
+            Array.from(name).length > 64) {
+          error.hidden = false;
+          input.focus();
+          return;
+        }
+        post('setManualHdmiSourceCustom', name);
+        closeEditor(true);
+      };
+      document.getElementById('hdmi-source-custom-save').addEventListener('click', saveCustom);
+      document.getElementById('hdmi-source-custom-cancel').addEventListener('click', () => closeEditor(true));
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveCustom();
+        }
+      });
+      window._updateManualHdmiSource = (manual, sourceLabel, customName, nativeChoices) => {
+        // Fixed labels come from the same native mapping as title and Discord.
+        if (Array.isArray(nativeChoices)) {
+          const valid = nativeChoices.filter(choice => choice &&
+            typeof choice.value === 'string' && typeof choice.label === 'string');
+          const key = JSON.stringify(valid);
+          if (key !== choicesKey) {
+            choicesKey = key;
+            choices = valid;
+            renderOptions();
+          }
+        }
+        trigger.disabled = options.length === 0;
+        if (typeof manual === 'string')
+          selected = choices.some(choice => choice.value === manual) ? manual : 'auto';
+        if (typeof sourceLabel === 'string') effective = sourceLabel;
+        if (typeof customName === 'string') custom = customName;
+        options.forEach(({ option, choice }) => {
+          const label = choiceLabel(choice);
+          if (option.textContent !== label) option.textContent = label;
+        });
+        trigger.value = selected;
+        customRow.hidden = selected !== 'other';
+        nameEl.textContent = selected === 'auto' ? t('value.auto')
+          : selected === 'other' && !custom ? t('hdmiSource.other')
+          : effective;
+        trigger.title = effective
+          ? `${nameEl.textContent} · ${effective}`
+          : t('meta.hdmiSourceInfo');
+      };
+      window._updateManualHdmiSource('auto', '');
     })();
 
     // Transient toast notification. Pushed from C++ via state.notification
@@ -676,6 +918,7 @@
     };
 
     const applyState = s => {
+      if (s.holyBearUpdate) { holyBearUpdateState = s.holyBearUpdate; renderHolyBearUpdate(); }
       if (!s) return;
       if (s.locale) applyTranslations(s.locale);
       if (languageSelect && s.languagePreference) languageSelect.value = s.languagePreference;
@@ -695,6 +938,33 @@
           s.presentPacing === 'captured' ? t('value.captureRate')      : t('value.displayRefresh'));
       }
       setToggle('toggle-mute', s.audioMuted);
+      for (const [id, key] of [['audio-fifo','audioFifoMs'], ['audio-render','audioRenderMs']]) {
+        const input = document.getElementById(id);
+        if (input && document.activeElement !== input && Number.isFinite(s[key])) input.value = s[key];
+      }
+      const exclusiveInput = document.getElementById('audio-exclusive');
+      if (exclusiveInput && typeof s.audioExclusive === 'boolean') exclusiveInput.checked = s.audioExclusive;
+      const renderInput = document.getElementById('audio-render');
+      if (renderInput) renderInput.disabled = s.audioExclusiveActive === true;
+      const driftInput = document.getElementById('audio-drift');
+      if (driftInput && typeof s.audioDrift === 'boolean') driftInput.checked = s.audioDrift;
+      setText('audio-status', s.audioStreaming
+        ? `${t('audio.running')} · ${t(s.audioExclusiveActive ? 'audio.exclusiveMode' : 'audio.sharedMode')}`
+        : t('audio.waiting'));
+      const health = document.getElementById('audio-health');
+      if (health && typeof s.audioFillMs === 'number') {
+        const ms = value => Number.isFinite(value) ? value.toFixed(2) : '--';
+        health.textContent = `${s.audioStreaming ? t('audio.running') : t('audio.waiting')} · ${s.audioAdaptive ? 'Sinc SRC' : t('audio.fallback')} · ${s.audioDrift ? t('audio.driftOn') : t('audio.off')}\n` +
+          (s.audioExclusiveActive
+            ? `${t('audio.exclusiveAuto')} · ${t('audio.block')} ${ms(s.audioEffectiveMs)} ms\nFIFO ${ms(s.audioFillMs)} ms (${t('audio.afterPump')})\n`
+            : `${t('audio.requested')} ${ms(s.audioRenderMs)} ms → ${t('audio.effective')} ${ms(s.audioEffectiveMs)} ms\nFIFO ${ms(s.audioFillMs)} ms + ${t('audio.queued')} ${ms(s.audioQueueMs)} ms (${t('audio.afterPump')})\n`) +
+          `FIFO ${t('audio.average')} ${ms(s.audioAverageMs)} ms [${ms(s.audioMinMs)}–${ms(s.audioMaxMs)}]\n` +
+          `${t('audio.period')} ${ms(s.audioPeriodUs / 1000)} ms · ${t('audio.correction')} ${s.audioPpm} ppm\n` +
+          `${t('audio.clockEstimate')} ${s.audioClockValid ? s.audioEstimatedPpm + ' ppm' : t('audio.clockLearning')}\n` +
+          `${t('audio.underrunEvents')} ${s.audioUnderrunEvents ?? 0} · ${t('audio.reloads')} ${s.audioReloads ?? 0}\n` +
+          `${t('audio.underruns')} ${s.audioUnderruns} · ${t('audio.dropped')} ${s.audioOverruns} · ${t('audio.resyncs')} ${s.audioResyncs}\n` +
+          localizeEndpointInfo(s.audioEndpointInfo);
+      }
 
       if (typeof s.volume === 'number') {
         const slider = document.getElementById('slider-volume');
@@ -757,6 +1027,8 @@
           s.captureFormatOverride
         );
       }
+      window._updateManualHdmiSource(
+        s.manualHdmiSource, s.effectiveHdmiSource, s.manualHdmiSourceCustom, s.manualHdmiSourceOptions);
 
       // One-shot user-facing notice from the C++ pipeline. Most state
       // pushes carry an empty string here; non-empty means the C++ side

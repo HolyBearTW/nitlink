@@ -292,6 +292,8 @@ bool Config::Load(const std::string& path)
     const bool exists = std::filesystem::exists(path, ec);
     if (ec) return failed();
     if (!exists) {
+        manualHdmiSource = "auto";
+        manualHdmiSourceCustom.clear();
         m_loadFailed = false;
         m_loadIssue = LoadIssue::None;
         if (Save(path)) return true;
@@ -315,6 +317,9 @@ bool Config::Load(const std::string& path)
         else if (++lineSize > kMaxConfigLine) return failed();
     }
     std::istringstream file(contents);
+    // Older files also restore Auto when this Config instance is reused.
+    manualHdmiSource = "auto";
+    manualHdmiSourceCustom.clear();
 
     // Pre-loop accumulators for capture-format override parsing. Two
     // schemas are accepted: the legacy flat keys from rc2 (one anonymous
@@ -370,14 +375,26 @@ bool Config::Load(const std::string& path)
         if (key == "window_width")    windowWidth  = ParseU32(val, windowWidth, 320, 16384);
         if (key == "window_height")   windowHeight = ParseU32(val, windowHeight, 240, 16384);
         if (key == "language") {
-            if (val == "system" || val == "en-US" || val == "zh-TW") language = val;
+            if (val == "system" || val == "en-US" || val == "zh-TW" || val == "zh-CN") language = val;
         }
+        if (key == "manual_hdmi_source")
+            manualHdmiSource = NormalizeManualHdmiSource(val);
+        if (key == "manual_hdmi_source_custom")
+            manualHdmiSourceCustom = NormalizeManualHdmiSourceCustom(val).value_or("");
         if (key == "pip_width")       pipWidth     = ParseU32(val, pipWidth, 80, 16384);
         if (key == "pip_height")      pipHeight    = ParseU32(val, pipHeight, 45, 16384);
         if (key == "pip_opacity")     pipOpacity   = ParseFloatClamped(val, pipOpacity, 0.0f, 1.0f);
         if (key == "pip_x")           pipX         = ParseI32(val, pipX, -100000, 100000);
         if (key == "pip_y")           pipY         = ParseI32(val, pipY, -100000, 100000);
         if (key == "audio_volume")    audioVolume  = ParseFloatClamped(val, audioVolume, 0.0f, 1.0f);
+        if (key == "holybear_auto_update_check") holyBearAutoUpdateCheck = ParseBool(val);
+        if (key == "holybear_update_last_check_utc") holyBearUpdateLastCheckUtc = ParseU32(val, 0, 0, 4102444800u);
+        if (key == "holybear_update_latest_tag" && val.size() <= 40) holyBearUpdateLatestTag = val;
+        if (key == "holybear_update_seen_tag" && val.size() <= 40) holyBearUpdateSeenTag = val;
+        if (key == "audio_fifo_ms")   audioFifoMs = ParseI32(val, audioFifoMs, 3, 100);
+        if (key == "audio_render_ms") audioRenderMs = ParseI32(val, audioRenderMs, 3, 100);
+        if (key == "audio_drift")     audioDrift = ParseBool(val);
+        if (key == "audio_exclusive") audioExclusive = ParseBool(val);
         if (key == "audio_muted")     audioMuted   = ParseBool(val);
         if (key == "color_expansion") colorExpansion = ParseBool(val);
         if (key == "nis_enabled")     nisEnabled   = ParseBool(val);
@@ -551,6 +568,8 @@ bool Config::Save(const std::string& path)
         preferredUtf8.size() > 4096 || !IsConfigText(preferredUtf8) ||
         !IsGameId(currentGameId) || !IsConfigText(noSignalImage) ||
         !IsConfigText(language) || !IsConfigText(aspectRatio) ||
+        !IsConfigText(holyBearUpdateLatestTag) || holyBearUpdateLatestTag.size() > 40 ||
+        !IsConfigText(holyBearUpdateSeenTag) || holyBearUpdateSeenTag.size() > 40 ||
         !IsConfigText(noSignalMode) || !IsConfigText(noSignalFit) || !IsConfigText(panelSide) ||
         gameSettings.size() > 1024 || captureFormatOverrides.size() > 128 ||
         !std::isfinite(audioVolume) || !std::isfinite(pipOpacity) || !std::isfinite(nisSharpness))
@@ -567,8 +586,13 @@ bool Config::Save(const std::string& path)
     file << "# NitLink Configuration\n";
     file << "# https://github.com/nitlink-dev/nitlink\n\n";
 
-    file << "# Interface language: system | en-US | zh-TW\n";
+    file << "# Interface language: system | en-US | zh-TW | zh-CN\n";
     file << "language = " << language << "\n\n";
+    file << "# HolyBear: optional GitHub release check; never downloads/installs updates\n";
+    file << "holybear_auto_update_check = " << (holyBearAutoUpdateCheck ? "true" : "false") << "\n";
+    file << "holybear_update_last_check_utc = " << holyBearUpdateLastCheckUtc << "\n";
+    file << "holybear_update_latest_tag = " << holyBearUpdateLatestTag << "\n";
+    file << "holybear_update_seen_tag = " << holyBearUpdateSeenTag << "\n\n";
 
     file << "# Window\n";
     file << "window_width = "  << windowWidth  << "\n";
@@ -581,7 +605,11 @@ bool Config::Save(const std::string& path)
     file << "pip_x = "       << pipX       << "\n";
     file << "pip_y = "       << pipY       << "\n\n";
 
-    file << "# Audio\n";
+    file << "# Audio (buffer targets in ms; device period may raise render minimum)\n";
+    file << "audio_fifo_ms = " << std::clamp(audioFifoMs, 3, 100) << "\n";
+    file << "audio_render_ms = " << std::clamp(audioRenderMs, 3, 100) << "\n";
+    file << "audio_drift = " << (audioDrift ? "true" : "false") << "\n";
+    file << "audio_exclusive = " << (audioExclusive ? "true" : "false") << "\n";
     file << "audio_volume = " << audioVolume << "\n";
     file << "audio_muted = "  << (audioMuted ? "true" : "false") << "\n\n";
 
@@ -590,6 +618,13 @@ bool Config::Save(const std::string& path)
     file << "# Empty falls back to the first Elgato device when present, otherwise to\n";
     file << "# the first device Media Foundation enumerates.\n";
     file << "preferred_device = " << preferredUtf8 << "\n\n";
+
+    file << "# HDMI IN source identity only; does not change capture or HDR policy.\n";
+    file << "# auto | ps5 | ps4 | switch2 | switch | xbox_series | xbox_one | pc | other\n";
+    file << "manual_hdmi_source = " << NormalizeManualHdmiSource(manualHdmiSource) << "\n";
+    file << "# Custom name for Other, at most 64 Unicode characters, no control characters.\n";
+    file << "manual_hdmi_source_custom = "
+         << NormalizeManualHdmiSourceCustom(manualHdmiSourceCustom).value_or("") << "\n\n";
 
     file << "# Capture format overrides (per device, F1 Source picker)\n";
     file << "# Schema: capture_override.<N>.<field> = <value>\n";

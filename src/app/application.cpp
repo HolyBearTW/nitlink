@@ -3,6 +3,8 @@
 #include "capture_device_names.h"
 #include "WebViewSettings.h"
 #include "settings_message.h"
+#include "hdmi_source_display.h"
+#include "resync_frame_presentation.h"
 #include "webview_policy.h"
 #include "game_database.h"
 #include "localization.h"
@@ -460,6 +462,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_window->SetPreventSleep(m_config->preventSleep);
     m_window->SetCloseCallback([this] {
         if (m_webviewSettings) m_webviewSettings->DispatchPendingMessages(/*closing=*/true);
+        // Release WASAPI before destroying the window or waiting on unrelated workers.
+        if (m_audioRouter) m_audioRouter->Shutdown();
+        m_running=false;
     });
 
     auto [actualW, actualH] = m_window->GetClientSize();
@@ -684,13 +689,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
         }
 
-        // Note: title bar update is deferred until AFTER CaptureDevice::Open
-        // below. UpdateWindowTitle reads the actual negotiated subtype to
-        // decide between [HDR] and [SDR], so it has to wait for format
-        // negotiation. See the UpdateWindowTitle call further down.
+        // Publish source identity/timing/EOTF together after Open below.
+        // Title range is source metadata, independent of output preference.
     } else if (m_isGC553Pro) {
         Gc553ProHdrReader reader(chosen.name);
         const auto probe = reader.Read();
+        m_gc553ProSourceTiming = reader.ReadTiming();
+        m_gc553ProSourceVrr = reader.ReadVrr();
         m_gc553ProSourceState = probe.state;
         m_hdrDetectionAvailable = probe.state != Gc553ProSourceHdrState::Unknown;
         m_sourceIsHDR10 = probe.state == Gc553ProSourceHdrState::Hdr10Pq;
@@ -1008,11 +1013,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
     }
 
-    // Now safe to update the title: source identifier and HDR detection
-    // were settled by the 4K S vendor HID block above, AND the actual
-    // capture format is known (post-Open). UpdateWindowTitle reads
-    // GetOutputFormat().subtype to distinguish [HDR] (P010 negotiated)
-    // from [SDR] (NV12 negotiated, e.g. 4K override fallback).
+    // Publish initial confirmed source metadata, including an already-HDR
+    // 0x65 response. No later source transition or output toggle is required;
+    // an unknown detector adds neither HDR nor SDR.
     UpdateWindowTitle();
 
     m_frameBuffer = std::make_unique<FrameBuffer>(format.width, format.height, format.stride);
@@ -1089,6 +1092,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_lastMotionTime = m_lastGoodFrameTime;
     m_lastContentTime = m_lastGoodFrameTime;
     m_captureFrameValidForSession = false;
+    m_hadStableCapturePresentation = false;
     m_gc553ProPlaceholderTransitionGuardConsumed = false;
     m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
@@ -1110,6 +1114,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     m_audioRouter = std::make_unique<AudioRouter>();
+    m_audioRouter->SetOwnerWindow(m_window->GetHWND());
+    m_audioRouter->SetLatency(m_config->audioFifoMs, m_config->audioRenderMs, m_config->audioDrift);
+    m_audioRouter->SetExclusive(m_config->audioExclusive);
     // Route audio from the selected capture card to the default playback device.
     //
     // Pass the selected video device's full name as the audio endpoint hint
@@ -1201,9 +1208,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
         if (action == L"setLanguage" && m_config) {
             const std::wstring requested = message->text;
-            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW") {
+            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW" || requested == L"zh-CN") {
                 m_config->language = requested == L"en-US" ? "en-US"
-                    : requested == L"zh-TW" ? "zh-TW" : "system";
+                    : requested == L"zh-TW" ? "zh-TW"
+                    : requested == L"zh-CN" ? "zh-CN" : "system";
                 Localization::Instance().SetPreference(m_config->language);
                 if (m_overlay && !m_overlay->RefreshTextFormats()) {
                     AppLog(L"setLanguage: failed to refresh overlay text formats");
@@ -1212,6 +1220,45 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 UpdateWindowTitle();
                 PushSettingsState();
             }
+            return;
+        }
+        if (action == L"checkHolyBearUpdate") { CheckHolyBearUpdate(false); return; }
+        if (action == L"setHolyBearAutoUpdateCheck" && m_config) {
+            m_config->holyBearAutoUpdateCheck = message->number != 0;
+            if (!m_config->holyBearAutoUpdateCheck && m_updateChecker) {
+                m_updateChecker->Cancel();
+                if (m_updateStatus == HolyBear::UpdateStatus::Checking) m_updateStatus = HolyBear::UpdateStatus::Never;
+            }
+            m_config->Save("nitlink.json");
+            if (m_config->holyBearAutoUpdateCheck) CheckHolyBearUpdate(true);
+            PushSettingsState();
+            return;
+        }
+        if (action == L"markHolyBearUpdateSeen" && m_config) {
+            if (m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag) {
+                m_config->holyBearUpdateSeenTag = m_config->holyBearUpdateLatestTag;
+                m_config->Save("nitlink.json");
+            }
+            PushSettingsState();
+            return;
+        }
+        if (action == L"setManualHdmiSource" && m_config) {
+            // Validate before narrowing; identity updates never touch capture,
+            // renderer, automatic detector state, or HDR policy.
+            if (!IsValidManualHdmiSource(std::wstring_view(message->text))) return;
+            std::string requested;
+            for (wchar_t c : message->text) requested.push_back(static_cast<char>(c));
+            if (!m_config->SetManualHdmiSource(requested)) return;
+            m_config->Save("nitlink.json");
+            UpdateWindowTitle();
+            PushSettingsState();
+            return;
+        }
+        if (action == L"setManualHdmiSourceCustom" && m_config) {
+            if (!m_config->SetManualHdmiSourceCustom(std::wstring_view(message->text))) return;
+            m_config->Save("nitlink.json");
+            UpdateWindowTitle();
+            PushSettingsState();
             return;
         }
         if (action == L"setNoSignalMode" && m_config) {
@@ -1264,7 +1311,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
         if (action == L"toggleHDR" && m_config) {
             m_config->hdrEnabled = !m_config->hdrEnabled;
-            // Render loop's HDR-sync block picks this up next iteration.
+            // Render loop applies this and publishes the confirmed title /
+            // Discord range next iteration, including a failed HDR rollback.
             m_config->Save("nitlink.json");
             return;
         }
@@ -1311,6 +1359,17 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             m_config->preventSleep = !m_config->preventSleep;
             m_window->SetPreventSleep(m_config->preventSleep);
             m_config->Save("nitlink.json");
+            return;
+        }
+        if ((action == L"setAudioFifoMs" || action == L"setAudioRenderMs" || action == L"setAudioDrift" || action == L"setAudioExclusive") && m_config && m_audioRouter) {
+            if (action == L"setAudioFifoMs") m_config->audioFifoMs = static_cast<int>(message->number);
+            if (action == L"setAudioRenderMs") m_config->audioRenderMs = static_cast<int>(message->number);
+            if (action == L"setAudioDrift") m_config->audioDrift = message->number != 0;
+            if (action == L"setAudioExclusive") m_config->audioExclusive = message->number != 0;
+            m_audioRouter->SetLatency(m_config->audioFifoMs, m_config->audioRenderMs, m_config->audioDrift);
+            m_audioRouter->SetExclusive(m_config->audioExclusive);
+            m_config->Save("nitlink.json");
+            PushSettingsState();
             return;
         }
         if (action == L"setVolume" && m_config && m_audioRouter) {
@@ -1491,15 +1550,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_discord = std::make_unique<DiscordRPC>();
     if (m_discord->Connect("1505211372286246944")) {
         AppLog(L"Initialize: Discord RPC connected");
-        // Set initial "idle" presence. This will be overwritten the moment
-        // the user selects a game from the settings menu.
-        m_discord->SetActivity(
-            L"In NitLink",
-            L"PS5 Capture Viewer",
-            std::chrono::system_clock::now(),
-            "nitlink-logo",
-            L"NitLink"
-        );
+        UpdateDiscordForCurrentGame();
     } else {
         AppLog(L"Initialize: Discord RPC unavailable (Discord not running or RPC disabled)");
     }
@@ -1664,14 +1715,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 m_config->hdrEnabled = !m_config->hdrEnabled;
                 AppLog(m_config->hdrEnabled ? L"HDR ON (ALT+H)" : L"HDR OFF (ALT+H)");
             }
-            // Refresh the window title so the [HDR]/[SDR] suffix
-            // tracks the user's preference. On the 4K S, Reconcile
-            // also fires a format swap which calls UpdateWindowTitle
-            // again post-Open; on the 4K Pro, capture stays P010 and
-            // Reconcile is a no-op, so this is the only place the
-            // title gets updated on Alt+H. UpdateWindowTitle is cheap
-            // and idempotent (SetWindowTextW with the same string is
-            // a no-op), so calling here on both paths is safe.
+            // The source EOTF label is independent of this output toggle.
+            // Re-publishing unchanged source metadata is a cached no-op.
             UpdateWindowTitle();
             // No source-state re-probe here: the probe's 1.5s MCU
             // re-parse wait would block this main-thread hotkey handler
@@ -1792,7 +1837,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // is a real change vs. the init state, not a redundant copy of it.
     if (m_isGC553Pro) {
         m_hdrPoller = std::make_unique<HDRSourcePoller>();
-        m_hdrPoller->StartGc553Pro(m_currentDeviceInfo.name, m_gc553ProSourceState);
+        m_hdrPoller->StartGc553Pro(m_currentDeviceInfo.name, m_gc553ProSourceState,
+                                 m_gc553ProSourceVrr);
     } else if (m_hdrDetectionAvailable && !m_is4KS && !m_is4KX) {
         m_hdrPoller = std::make_unique<HDRSourcePoller>();
         m_hdrPoller->Start(m_currentDeviceInfo.name, m_sourceIsHDR10, m_hdrDetectionAvailable);
@@ -1804,6 +1850,8 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 
 
     m_running = true;
+    m_updateChecker = std::make_unique<HolyBear::UpdateChecker>();
+    CheckHolyBearUpdate(true);
     return true;
 }
 
@@ -1821,6 +1869,7 @@ void Application::Run()
 
     MSG msg{};
     while (m_running) {
+        ConsumeHolyBearUpdate();
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 m_running = false;
@@ -1884,6 +1933,19 @@ void Application::Run()
         // when no update is pending.
         if (m_hdrPoller) {
             if (m_isGC553Pro) {
+                // Source timing has a separate publication channel. This
+                // branch only refreshes labels, never capture/HDR policy.
+                HdmiSourceTiming timing;
+                if (m_hdrPoller->AcceptGc553ProTimingUpdate(&timing)) {
+                    m_gc553ProSourceTiming = timing;
+                    UpdateWindowTitle();
+                    if (m_settingsVisible) PushSettingsState();
+                }
+                HdmiSourceVrrState sourceVrr{};
+                if (m_hdrPoller->AcceptGc553ProVrrUpdate(&sourceVrr)) {
+                    ApplyHdmiSourceVrrMetadata(m_gc553ProSourceVrr, sourceVrr,
+                        [this] { UpdateWindowTitle(); });
+                }
                 Gc553ProSourceHdrState newState{};
                 if (m_hdrPoller->AcceptGc553ProUpdate(&newState)) {
                     m_gc553ProSourceState = KeepLastGc553ProSourceState(
@@ -1972,6 +2034,15 @@ void Application::Run()
             } else {
                 AppLog(target ? L"HDR: enabled" : L"HDR: disabled");
             }
+        }
+
+        // A source transition can keep the same capture format, so reconcile
+        // may return without publishing a title. Refresh confirmed source
+        // EOTF independently of output on/off. The steady-state check is
+        // enum-only: no allocation, detector read, enumeration or RPC update.
+        if (GetConfirmedHdmiRange() != m_lastHdmiDisplayRange) {
+            UpdateWindowTitle();
+            if (m_settingsVisible) PushSettingsState();
         }
 
         // LOW-LATENCY (present-on-arrival): wait for the swap chain HERE, at the
@@ -2394,12 +2465,27 @@ void Application::Run()
         const bool rendererHasFrame = m_renderer && m_renderer->HasCaptureFrame();
         const bool captureReady = CapturePresentationReady(
             m_captureFrameValidForSession, rendererHasFrame);
+        const auto frameGapMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - m_lastGoodFrameTime).count();
+        // The tested GC553Pro MF path can lose usable frames before source
+        // metadata settles. Other devices/backends are not opted into this
+        // fallback: a scheduling/USB stall is not proof of an HDMI transition.
+        // A known format reopen uses the same presentation immediately,
+        // without delaying the existing recovery or waiting for 250 ms.
+        const bool frameGapFallbackEligible = m_isGC553Pro && m_captureDevice &&
+            !m_captureDevice->IsUsingDirectShow();
+        const bool signalResync = ShouldShowSignalResync(
+            frameGapFallbackEligible, m_hadStableCapturePresentation,
+            noSignalPresentation, frameGapMs, m_captureTransitionActive);
         const NitLink::PresentationState presentationState =
             NitLink::DecidePresentation(
                 noSignalPresentation,
                 showNoSignalNow,
                 captureReady,
-                m_captureTransitionActive);
+                m_captureTransitionActive,
+                signalResync);
+        if (presentationState == PresentationState::Capture)
+            m_hadStableCapturePresentation = true;
         // Keep the diagnostic transition-only: it reports the state change,
         // the current renderer/app readiness split, the latest classification,
         // and the branch the render section will select. This is deliberately
@@ -2826,14 +2912,15 @@ void Application::Run()
                 static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count()));
 
-        const auto drawWaitingStatus = [this]() {
+        const auto drawCaptureStatus = [this, presentationState](
+            ResyncFrameMode frameMode = ResyncFrameMode::Fallback) {
             if (!m_overlay || !m_renderer) return;
             const bool captureStarted =
                 m_captureDevice && m_captureDevice->IsCapturing();
             m_overlay->DrawStatusMessage(
                 m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
-                captureStarted ? L"overlay.waitingForSource"
-                               : L"overlay.initializingCapture");
+                CaptureStatusLocalizationKey(presentationState, captureStarted),
+                ResyncStatusBackgroundOpacity(frameMode, m_renderer->CaptureDrawReachedBackbuffer()));
             if (m_overlay->IsUsingOffscreen()) {
                 m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
             }
@@ -2850,8 +2937,10 @@ void Application::Run()
             m_renderer->SetPostInputEnabled(false);
 
             m_renderer->BeginFrame(waitForSwapChain);
-            if (presentationState == PresentationState::Capture) {
-                m_renderer->DrawCaptureFrame();
+            const auto cache = m_renderer->GetResyncFrameStatus();
+            const auto frameMode = DecideResyncFrameMode(presentationState, cache);
+            if (frameMode != ResyncFrameMode::Fallback) {
+                m_renderer->DrawCaptureFrame(frameMode == ResyncFrameMode::Cached);
             }
 
             // HDR color-fidelity diagnostic overlay (Ctrl+F4). Draws known
@@ -2884,17 +2973,9 @@ void Application::Run()
             // showNoSignalNow, so this only affects the HUD stats path.
             const bool signalActive = m_frameBuffer && m_frameBuffer->IsSignalActive();
 
-            if (presentationState == PresentationState::Transition && m_overlay) {
-                if (m_gc553ProP010ReopenPresentation) {
-                    drawWaitingStatus();
-                } else {
-                    m_overlay->DrawStatusMessage(
-                        m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
-                        L"overlay.switchingHdr");
-                    if (m_overlay->IsUsingOffscreen()) {
-                        m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
-                    }
-                }
+            if (presentationState == PresentationState::SignalResync ||
+                presentationState == PresentationState::Transition) {
+                drawCaptureStatus(frameMode);
             } else if (presentationState == PresentationState::NoSignal && m_overlay) {
                 m_overlay->DrawNoSignal(m_renderer->GetWindowWidth(),
                                         m_renderer->GetWindowHeight());
@@ -2902,7 +2983,7 @@ void Application::Run()
                     m_renderer->CompositeUI(m_overlay->GetOffscreenSRV());
                 }
             } else if (presentationState == PresentationState::WaitingForCapture) {
-                drawWaitingStatus();
+                drawCaptureStatus();
             }
             // PiP gate: the HUD panel is a fixed 280x156 px overlay, which
             // dominates a 480x270 PiP window and looks broken. Suppress it
@@ -2970,11 +3051,15 @@ void Application::Run()
         m_renderer->SetPostInputEnabled(nisActive);
 
         m_renderer->BeginFrame(waitForSwapChain);
-        if (presentationState == PresentationState::Capture) {
-            m_renderer->DrawCaptureFrame();
+        const auto cache = m_renderer->GetResyncFrameStatus();
+        const auto frameMode = DecideResyncFrameMode(presentationState, cache);
+        bool captureDrawn = false;
+        if (frameMode != ResyncFrameMode::Fallback) {
+            captureDrawn = m_renderer->DrawCaptureFrame(frameMode == ResyncFrameMode::Cached);
         }
 
-        if (presentationState == PresentationState::Capture &&
+        if ((presentationState == PresentationState::Capture ||
+             (frameMode == ResyncFrameMode::Cached && captureDrawn)) &&
             nisActive && m_renderer->GetCaptureOutputSRV()) {
             const uint32_t inW  = m_renderer->GetCaptureOutputWidth();
             const uint32_t inH  = m_renderer->GetCaptureOutputHeight();
@@ -3046,19 +3131,14 @@ void Application::Run()
         //
         // Null guard: see HDR branch above. Same rationale.
         const bool signalActive = m_frameBuffer && m_frameBuffer->IsSignalActive();
-        if (presentationState == PresentationState::Transition && m_overlay) {
-            if (m_gc553ProP010ReopenPresentation) {
-                drawWaitingStatus();
-            } else {
-                m_overlay->DrawStatusMessage(
-                    m_renderer->GetWindowWidth(), m_renderer->GetWindowHeight(),
-                    L"overlay.switchingHdr");
-            }
+        if (presentationState == PresentationState::SignalResync ||
+            presentationState == PresentationState::Transition) {
+            drawCaptureStatus(frameMode);
         } else if (presentationState == PresentationState::NoSignal && m_overlay) {
             m_overlay->DrawNoSignal(m_renderer->GetWindowWidth(),
                                     m_renderer->GetWindowHeight());
         } else if (presentationState == PresentationState::WaitingForCapture) {
-            drawWaitingStatus();
+            drawCaptureStatus();
         }
         // Draw overlay if enabled (only when a real signal is present).
         // PiP gate: same rationale as the HDR branch: the 280x156 HUD
@@ -3112,7 +3192,12 @@ void Application::Shutdown()
     m_running = false;
     if (m_webviewSettings) m_webviewSettings->DispatchPendingMessages(/*closing=*/true);
     if (m_window) m_window->SetVideoAvailable(false);
+    if (m_audioRouter) {
+        m_audioRouter->Shutdown();
+        m_audioRouter.reset();
+    }
     m_4kxPoller.Stop();
+    m_updateChecker.reset();
 
     // Stop the HDR source poller FIRST. Its worker thread can be mid-call
     // to ReadElgatoHDRSource, which opens a DirectShow graph against the
@@ -3132,10 +3217,6 @@ void Application::Shutdown()
         m_discord.reset();
     }
 
-    if (m_audioRouter) {
-        m_audioRouter->Shutdown();
-        m_audioRouter.reset();
-    }
 
     // Stop capture FIRST and explicitly close the device. The Elgato driver
     // can hold the device handle indefinitely if the process exits without
@@ -3414,7 +3495,7 @@ bool Application::ShouldShowNoSignal()
     // format-reconcile windows). Once elapsed crosses this threshold,
     // the transition logs once and the latch holds until elapsed drops
     // back below the threshold or grace expires.
-    constexpr auto kReacquireDebounce = milliseconds(250);
+    constexpr auto kReacquireDebounce = milliseconds(kCaptureReacquireDebounceMs);
 
     const auto now     = Clock::now();
     const bool placeholderConfirmed = m_placeholderDetector
@@ -4041,12 +4122,8 @@ bool Application::ReconcileCaptureFormat(bool force)
         }
     }
 
-    // Title bar may need updating: if the source HDR state changed (the
-    // earlier force-reopen re-probe already set m_sourceIsHDR10) OR if
-    // the negotiated capture format changed (the [HDR]/[SDR] suffix is
-    // derived from format.subtype). Always call here; UpdateWindowTitle
-    // is cheap (no HID ops) and idempotent (SetWindowTextW with the
-    // same string is a no-op).
+    // Publish source EOTF refreshed by the force-reopen probe. Capture subtype
+    // and renderer output preference do not change the source range label.
     UpdateWindowTitle();
 
     m_frameBuffer = std::make_unique<FrameBuffer>(format.width, format.height, format.stride);
@@ -4499,6 +4576,7 @@ bool Application::RecoverFromDeviceLost()
     // differ all hold D3D11 objects created from the renderer's device, so they
     // must release before the device they were built on.
     m_captureFrameValidForSession = false;
+    m_hadStableCapturePresentation = false;
     m_gc553ProPlaceholderTransitionGuardConsumed = false;
     m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
@@ -4652,6 +4730,8 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     const DeviceInfo previousDevice = m_currentDeviceInfo;
     const bool previousSourceIsHDR10 = m_sourceIsHDR10;
     const auto previousGc553ProSourceState = m_gc553ProSourceState;
+    const auto previousGc553ProTiming = m_gc553ProSourceTiming;
+    const auto previousGc553ProVrr = m_gc553ProSourceVrr;
     const bool previousGc553ProAutoP010Rejected = m_gc553ProAutoP010Rejected;
     const bool previousHdrDetectionAvailable = m_hdrDetectionAvailable;
     const std::wstring previousPreferredDevice = m_config->preferredDevice;
@@ -4660,6 +4740,10 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     const bool previousHdrEnabled = m_config->hdrEnabled;
     const auto previousSourceMode = m_source4KProMode;
     const auto previousHdmiSource = m_detectedHdmiSource;
+    const bool previousStableCapturePresentation = m_hadStableCapturePresentation;
+    // Invalidate only hold bookkeeping; the existing switch/reconcile owns
+    // capture teardown, readiness, metadata, pacing and rollback behavior.
+    if (m_renderer) m_renderer->ForgetResyncFrame(CaptureFrameHoldReason::DeviceSwitch);
 
     // No update from an old device may be applied to the new session.
     if (m_hdrPoller) { m_hdrPoller->Stop(); m_hdrPoller.reset(); }
@@ -4667,7 +4751,8 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     const auto restartHdrPoller = [this] {
         if (m_isGC553Pro) {
             m_hdrPoller = std::make_unique<HDRSourcePoller>();
-            m_hdrPoller->StartGc553Pro(m_currentDeviceInfo.name, m_gc553ProSourceState);
+            m_hdrPoller->StartGc553Pro(m_currentDeviceInfo.name, m_gc553ProSourceState,
+                                     m_gc553ProSourceVrr);
         } else if (m_hdrDetectionAvailable && !m_is4KS && !m_is4KX) {
             m_hdrPoller = std::make_unique<HDRSourcePoller>();
             m_hdrPoller->Start(m_currentDeviceInfo.name, m_sourceIsHDR10, m_hdrDetectionAvailable);
@@ -4698,6 +4783,9 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         AppLog(L"SwitchCaptureDevice: GC553Pro selected; probing source HDR via XU mailbox");
     }
     m_source4KProMode = {};
+    m_gc553ProSourceTiming = {};
+    m_gc553ProSourceVrr = HdmiSourceVrrState::Unknown;
+    m_hadStableCapturePresentation = false;
     m_detectedHdmiSource.clear();
     m_prevSourceNoSignal = true;
     m_4kxForceReconcile = false;
@@ -4715,6 +4803,8 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     if (m_isGC553Pro) {
         Gc553ProHdrReader reader(newDevice.name);
         const auto probe = reader.Read();
+        m_gc553ProSourceTiming = reader.ReadTiming();
+        m_gc553ProSourceVrr = reader.ReadVrr();
         m_gc553ProSourceState = probe.state;
         m_hdrDetectionAvailable = probe.state != Gc553ProSourceHdrState::Unknown;
         m_sourceIsHDR10 = probe.state == Gc553ProSourceHdrState::Hdr10Pq;
@@ -4755,6 +4845,8 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         m_currentDeviceInfo = previousDevice;
         m_sourceIsHDR10 = previousSourceIsHDR10;
         m_gc553ProSourceState = previousGc553ProSourceState;
+        m_gc553ProSourceTiming = previousGc553ProTiming;
+        m_gc553ProSourceVrr = previousGc553ProVrr;
         m_gc553ProAutoP010Rejected = previousGc553ProAutoP010Rejected;
         m_hdrDetectionAvailable = previousHdrDetectionAvailable;
         m_config->preferredDevice = previousPreferredDevice;
@@ -4764,6 +4856,7 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
         m_isGC553Pro = previousIsGC553Pro;
         m_source4KProMode = previousSourceMode;
         m_detectedHdmiSource = previousHdmiSource;
+        m_hadStableCapturePresentation = previousStableCapturePresentation;
         if (!ReconcileCaptureFormat(/*force=*/ true)) {
             AppLog(L"SwitchCaptureDevice: rollback reconcile also failed; capture pipeline is down");
         }
@@ -4808,6 +4901,36 @@ const wchar_t* FormatGuidToString(const GUID& g)
     return L"Unknown";
 }
 
+void Application::CheckHolyBearUpdate(bool automatic)
+{
+    if (!m_config || !m_updateChecker || m_updateChecker->Busy()) return;
+    const auto utc = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const uint64_t now = utc > 0 ? static_cast<uint64_t>(utc) : 0;
+    if (automatic && !HolyBear::AutoCheckDue(m_config->holyBearAutoUpdateCheck,
+            m_updateChecker->Busy(), now, m_config->holyBearUpdateLastCheckUtc)) return;
+    if (!m_updateChecker->Start()) return;
+    m_config->holyBearUpdateLastCheckUtc = now;
+    m_config->Save("nitlink.json");
+    m_updateStatus = HolyBear::UpdateStatus::Checking;
+    PushSettingsState();
+}
+
+void Application::ConsumeHolyBearUpdate()
+{
+    if (!m_updateChecker) return;
+    const auto result = m_updateChecker->TakeResult();
+    if (!result || result->status == HolyBear::UpdateStatus::Cancelled) return;
+    m_updateStatus = result->status;
+    if (!result->tag.empty()) {
+        m_config->holyBearUpdateLatestTag.clear();
+        for (auto c : result->tag) m_config->holyBearUpdateLatestTag.push_back(static_cast<char>(c));
+        m_config->Save("nitlink.json");
+    }
+    // No toast, modal, file download or automatic launch; F1 owns notification UI.
+    PushSettingsState();
+}
+
 void Application::PushSettingsState(bool refreshCaptureDevices)
 {
     if (!m_webviewSettings || !m_config) return;
@@ -4834,6 +4957,33 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
     const std::wstring languagePreference(m_config->language.begin(), m_config->language.end());
     js << L"\"languagePreference\":\"" << languagePreference << L"\",";
     js << L"\"locale\":\"" << Localization::Instance().LocaleName() << L"\",";
+    const std::wstring latest(m_config->holyBearUpdateLatestTag.begin(), m_config->holyBearUpdateLatestTag.end());
+    const auto latestVersion = HolyBear::ParseVersion(latest);
+    const bool newer = latestVersion && *latestVersion > *HolyBear::ParseVersion(HolyBear::Version);
+    const auto status = m_updateStatus == HolyBear::UpdateStatus::Never && latestVersion
+        ? (newer ? HolyBear::UpdateStatus::Available : HolyBear::UpdateStatus::Current) : m_updateStatus;
+    js << L"\"holyBearUpdate\":{\"current\":\"" << HolyBear::Version
+       << L"\",\"latest\":\"" << (latestVersion ? latest : L"")
+       << L"\",\"lastCheckUtc\":" << m_config->holyBearUpdateLastCheckUtc
+       << L",\"automatic\":" << (m_config->holyBearAutoUpdateCheck ? L"true" : L"false")
+       << L",\"busy\":" << (m_updateChecker && m_updateChecker->Busy() ? L"true" : L"false")
+       << L",\"status\":\"" << HolyBear::StatusKey(status)
+       << L"\",\"unread\":" << (newer && m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag ? L"true" : L"false")
+       << L",\"url\":\"" << (newer ? std::wstring(HolyBear::ReleasePrefix) + latest : L"") << L"\"},";
+    js << L"\"manualHdmiSource\":\""
+       << Utf8ToWide(std::string(NormalizeManualHdmiSource(m_config->manualHdmiSource))) << L"\",";
+    js << L"\"manualHdmiSourceCustom\":\""
+       << JsonEscapeWide(Utf8ToWide(m_config->manualHdmiSourceCustom)) << L"\",";
+    js << L"\"effectiveHdmiSource\":\""
+       << JsonEscapeWide(GetEffectiveHdmiSourceLabel()) << L"\",";
+    js << L"\"manualHdmiSourceOptions\":[";
+    for (size_t i = 0; i < kManualHdmiSources.size(); ++i) {
+        if (i) js << L",";
+        const auto& [value, label] = kManualHdmiSources[i];
+        js << L"{\"value\":\"" << std::wstring(value.begin(), value.end())
+           << L"\",\"label\":\"" << JsonEscapeWide(std::wstring(label)) << L"\"}";
+    }
+    js << L"],";
     js << L"\"hdrEnabled\":"        << (m_config->hdrEnabled        ? L"true" : L"false") << L",";
     js << L"\"hdrAutoDetectAvailable\":" << (m_hdrDetectionAvailable ? L"true" : L"false") << L",";
     // GC553Pro source detection remains a supported device capability while
@@ -4852,6 +5002,32 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
     js << L"\"preventSleep\":"      << (m_config->preventSleep      ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
+    js << L"\"audioFifoMs\":" << m_config->audioFifoMs << L",";
+    js << L"\"audioRenderMs\":" << m_config->audioRenderMs << L",";
+    js << L"\"audioDrift\":" << (m_config->audioDrift ? L"true" : L"false") << L",";
+    js << L"\"audioExclusive\":" << (m_config->audioExclusive ? L"true" : L"false") << L",";
+    if (m_audioRouter) {
+        js << L"\"audioExclusiveActive\":" << (m_audioRouter->ExclusiveActive() ? L"true" : L"false") << L",";
+        const uint64_t audioQueues=m_audioRouter->QueueSnapshotUs();
+        js << L"\"audioFillMs\":" << (audioQueues >> 32) / 1000.0 << L",";
+        js << L"\"audioQueueMs\":" << static_cast<uint32_t>(audioQueues) / 1000.0 << L",";
+        js << L"\"audioEffectiveMs\":" << m_audioRouter->EffectiveQueueUs() / 1000.0 << L",";
+        js << L"\"audioAverageMs\":" << m_audioRouter->FifoAverageUs() / 1000.0 << L",";
+        js << L"\"audioMinMs\":" << m_audioRouter->FifoMinUs() / 1000.0 << L",";
+        js << L"\"audioMaxMs\":" << m_audioRouter->FifoMaxUs() / 1000.0 << L",";
+        js << L"\"audioEndpointInfo\":\"" << JsonEscapeWide(m_audioRouter->EndpointInfo()) << L"\",";
+        js << L"\"audioPeriodUs\":" << m_audioRouter->RenderPeriodUs() << L",";
+        js << L"\"audioPpm\":" << m_audioRouter->DriftPpm() << L",";
+        js << L"\"audioEstimatedPpm\":" << m_audioRouter->EstimatedDriftPpm() << L",";
+        js << L"\"audioClockValid\":" << (m_audioRouter->ClockEstimateValid() ? L"true" : L"false") << L",";
+        js << L"\"audioUnderrunEvents\":" << m_audioRouter->UnderrunEvents() << L",";
+        js << L"\"audioReloads\":" << m_audioRouter->AutomaticReloads() << L",";
+        js << L"\"audioUnderruns\":" << m_audioRouter->Underruns() << L",";
+        js << L"\"audioOverruns\":" << m_audioRouter->Overruns() << L",";
+        js << L"\"audioResyncs\":" << m_audioRouter->Resyncs() << L",";
+        js << L"\"audioAdaptive\":" << (m_audioRouter->AdaptiveSupported() ? L"true" : L"false") << L",";
+        js << L"\"audioStreaming\":" << (m_audioRouter->IsStreaming() ? L"true" : L"false") << L",";
+    }
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"pipOpacity\":"        << m_config->pipOpacity         << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";
@@ -5087,16 +5263,22 @@ void Application::ApplyGameSettings(const std::string& gameId)
     }
 }
 
-void Application::UpdateDiscordForCurrentGame()
+void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
 {
     if (!m_discord || !m_config) return;
 
+    if (!preserveStartTime || m_discordActivityStart.time_since_epoch().count() == 0)
+        m_discordActivityStart = std::chrono::system_clock::now();
+    const auto sourceLabel = GetEffectiveHdmiSourceLabel();
+    const auto signalLabel = GetLiveHdmiSignalLabel();
+    const auto rangeLabel = GetConfirmedHdmiRangeLabel();
     if (m_config->currentGameId.empty()) {
-        // No game: back to idle presence
+        // Viewer: source in details, actual signal in state. Discord supplies
+        // the application name; do not repeat it as "In NitLink".
         m_discord->SetActivity(
-            L"In NitLink",
-            L"PS5 Capture Viewer",
-            std::chrono::system_clock::now(),
+            sourceLabel,
+            ComposeHdmiPresenceSignal(signalLabel, rangeLabel, GetHdmiSourceVrrState()),
+            m_discordActivityStart,
             "nitlink-logo",
             L"NitLink"
         );
@@ -5120,8 +5302,8 @@ void Application::UpdateDiscordForCurrentGame()
     // back to no image: the text still shows fine.
     m_discord->SetActivity(
         title,                                      // "Spider-Man 2"
-        L"Playing on PS5",                          // state line under title
-        std::chrono::system_clock::now(),           // restart elapsed timer
+        ComposeHdmiPresenceState(sourceLabel, signalLabel, rangeLabel, GetHdmiSourceVrrState()),
+        m_discordActivityStart,
         m_config->currentGameId,                    // large image asset key
         title                                       // tooltip when hovering image
     );
@@ -5154,8 +5336,7 @@ void Application::TakeScreenshot()
     // reads as nitlink-PS5_<timestamp> instead of timestamps alone.
     std::wstring safeTitle = L"nitlink";
     {
-        const std::wstring& source = !m_detectedHdmiSource.empty()
-            ? m_detectedHdmiSource : m_source4KProMode.sourceName;
+        const std::wstring source = GetEffectiveHdmiSourceLabel();
         std::wstring slug;
         for (wchar_t c : source) {
             const bool keep = (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') ||
@@ -5200,95 +5381,67 @@ void Application::UpdateTaskbarIcon(const std::wstring& iconPath)
     m_window->SetIcon(iconPath);
 }
 
-// Compose the title bar string from current state.
-//
-//   No source detected, no HDR    -> "NitLink"
-//   detection
-//   Source detected, no HDR       -> "NitLink - PlayStation 5"
-//   detection
-//   Source detected, HDR          -> "NitLink - PlayStation 5 [HDR]"
-//   detection, capture is P010    (real HDR pipeline)
-//   Source detected, HDR          -> "NitLink - PlayStation 5 [SDR]"
-//   detection, capture is NV12    (4K S 4K-override fallback: source
-//                                  may be HDR but card delivers SDR)
-//
-// The "[HDR]" / "[SDR]" suffix reflects the ACTUAL capture format (the
-// negotiated MF subtype), not the upstream source HDR state. Source can
-// be HDR while capture is NV12 (4K S manual override at 3840x2160 forces
-// NV12 because P010 is only published at 1080p/720p): in that case the
-// user sees an SDR-tonemapped picture, so "[SDR]" is the honest label.
-// Showing "[HDR]" when capture is actually NV12 would be misleading;
-// the user pressing Alt+H expecting HDR would see the renderer mode
-// flip but the picture stay SDR-shaped.
-//
-// Suffix is only added when m_hdrDetectionAvailable is true (i.e. the
-// 4K Pro property GUID or the 4K S vendor HID probe returned a
-// definite answer). Without detection, the suffix is omitted to avoid
-// the misleading implication that "[SDR]" means "confirmed SDR" when
-// it actually means "detection unavailable".
+// Identity, HDMI source timing and source EOTF are composed independently.
+// HDR/SDR describes the confirmed HDMI INPUT, including the initial probe;
+// output off or NV12 capture must not relabel an HDR source as SDR.
+// An unavailable/unknown detector contributes no HDR/SDR suffix.
 void Application::UpdateWindowTitle()
 {
     if (!m_window) return;
 
-    std::wstring title = L"NitLink";
-
-    // Source identifier segment. Currently populated on the 4K S path
-    // (Detect4KSHdmiSource decodes the HDMI Source Product Descriptor
-    // InfoFrame). Empty on the 4K Pro until a source-identifier
-    // mechanism is found on that device.
-    if (!m_detectedHdmiSource.empty()) {
-        title += L" - ";
-        title += m_detectedHdmiSource;
-    } else if (!m_source4KProMode.sourceName.empty()) {
-        // 4K X: source product string decoded from the XU SPD InfoFrame
-        // (Detect4KXSourceMode), e.g. "PS5". Same slot as the 4K S identifier.
-        title += L" - ";
-        title += m_source4KProMode.sourceName;
-    }
-
-    // Source resolution + fps segment. Currently populated on the 4K
-    // Pro path (Detect4KProSourceMode reads the Elgato custom property
-    // set's props 210 + 208 post-Open). Skipped on the 4K S because
-    // the source identifier above already gives the user the device
-    // context they need.
-    if (m_source4KProMode.detected) {
-        std::wstringstream ss;
-        ss << L" - " << m_source4KProMode.width << L"x"
-           << m_source4KProMode.height << L" @ "
-           << m_source4KProMode.fps << L"Hz";
-        title += ss.str();
-    }
-
-    // HDR/SDR suffix. Reflects the EFFECTIVE display mode (what the
-    // user actually sees on screen): [HDR] when the source is sending
-    // HDR signal AND the user has HDR rendering enabled. Both gates
-    // matter:
-    //   source HDR + hdrEnabled    -> renderer outputs HDR10 PQ          -> [HDR]
-    //   source HDR + !hdrEnabled   -> shader tonemaps HDR to SDR          -> [SDR]
-    //   source SDR + hdrEnabled    -> SDR data through HDR pipeline       -> [SDR]
-    //   source SDR + !hdrEnabled   -> SDR everything                      -> [SDR]
-    //
-    // On the 4K S, hdrEnabled drives the capture format swap (P010 vs
-    // NV12) via the wantP010 formula, so this also matches the actual
-    // capture format. On the 4K Pro, capture stays P010 whenever
-    // source is HDR (the shader handles tonemap when hdrEnabled is
-    // false), so the title only flips when the user toggles Alt+H,
-    // matching what they perceive.
-    //
-    // Suffix only appears when direct HDR detection is available, to
-    // avoid the misleading implication that an absent suffix means SDR.
-    if (m_hdrDetectionAvailable &&
-        (!m_isGC553Pro ||
-         m_gc553ProSourceState == Gc553ProSourceHdrState::Sdr ||
-         m_gc553ProSourceState == Gc553ProSourceHdrState::Hdr10Pq)) {
-        const bool effectiveHDR = m_sourceIsHDR10 &&
-                                  m_config && m_config->hdrEnabled;
-        title += L" [";
-        title += effectiveHDR ? Tr(L"title.hdr") : Tr(L"title.sdr");
-        title += L"]";
-    }
-
+    m_lastHdmiDisplayRange = GetConfirmedHdmiRange();
+    const auto title = ComposeHdmiWindowTitle(
+        GetEffectiveHdmiSourceLabel(), GetLiveHdmiSignalLabel(), GetConfirmedHdmiRangeLabel(),
+        GetHdmiSourceVrrState());
+    if (title == m_lastHdmiDisplayTitle) return;
+    m_lastHdmiDisplayTitle = title;
     m_window->SetTitle(title);
+    UpdateDiscordForCurrentGame(/*preserveStartTime=*/ true);
+}
+
+std::wstring Application::GetLiveHdmiSignalLabel() const
+{
+    // GC553Pro must use the HDMI IN 0x37 reply. A negotiated MF output mode
+    // is not an HDMI source timing and is deliberately never a fallback.
+    if (m_isGC553Pro) return FormatHdmiSourceTiming(m_gc553ProSourceTiming);
+    if (!m_source4KProMode.detected) return {};
+    return FormatHdmiSourceTiming({
+        m_source4KProMode.width, m_source4KProMode.height,
+        m_source4KProMode.fps * 100, true});
+}
+
+HdmiConfirmedRange Application::GetConfirmedHdmiRange() const
+{
+    // Title/Discord describe the confirmed HDMI INPUT signal. HDR10 output
+    // preference and capture subtype must never override a valid source EOTF,
+    // including the initial probe before the first background transition.
+    const bool knownSourceState = !m_isGC553Pro ||
+        m_gc553ProSourceState == Gc553ProSourceHdrState::Sdr ||
+        m_gc553ProSourceState == Gc553ProSourceHdrState::Hdr10Pq;
+    return ConfirmedHdmiSourceRange(
+        m_hdrDetectionAvailable, knownSourceState,
+        m_isGC553Pro ? m_gc553ProSourceState == Gc553ProSourceHdrState::Hdr10Pq : m_sourceIsHDR10);
+}
+
+HdmiSourceVrrState Application::GetHdmiSourceVrrState() const
+{
+    return m_isGC553Pro ? m_gc553ProSourceVrr : HdmiSourceVrrState::Unknown;
+}
+
+std::wstring Application::GetConfirmedHdmiRangeLabel() const
+{
+    const auto range = GetConfirmedHdmiRange();
+    if (range == HdmiConfirmedRange::Hdr) return Tr(L"title.hdr");
+    if (range == HdmiConfirmedRange::Sdr) return Tr(L"title.sdr");
+    return {};
+}
+
+std::wstring Application::GetEffectiveHdmiSourceLabel() const
+{
+    return std::wstring(NitLink::GetEffectiveHdmiSourceLabel(
+        m_config ? std::string_view(m_config->manualHdmiSource) : "auto",
+        m_detectedHdmiSource, m_source4KProMode.sourceName,
+        m_config ? Utf8ToWide(m_config->manualHdmiSourceCustom) : std::wstring{}));
 }
 
 } // namespace NitLink

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NitLink VERSION 1.2.3 LANGUAGES CXX)
+project(NitLink VERSION 1.2.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,8 @@ set(NITLINK_SOURCES
     src/app/application.h
     src/app/config.cpp
     src/app/config.h
+    src/app/hdmi_source.h
+    src/app/hdmi_source_display.h
     src/app/localization.cpp
     src/app/localization.h
     src/app/game_database.cpp
@@ -37,6 +39,9 @@ set(NITLINK_SOURCES
     src/app/settings_message.cpp
     src/app/settings_message.h
     src/app/webview_policy.h
+    src/app/holybear_version.h
+    src/app/update_checker.cpp
+    src/app/update_checker.h
     src/capture/capture_device.cpp
     src/capture/capture_device.h
     src/capture/dshow_capture.cpp
@@ -47,6 +52,9 @@ set(NITLINK_SOURCES
     src/capture/elgato_hdr_control.h
     src/capture/gc553pro_hdr_source.cpp
     src/capture/gc553pro_hdr_source.h
+    src/capture/hdmi_raw_timing.h
+    src/capture/hdmi_source_vrr.h
+    src/capture/gc553pro_vtem.h
     src/capture/elgato_hid_4ks.cpp
     src/capture/elgato_hid_4ks.h
     src/capture/frame_buffer.cpp
@@ -112,6 +120,8 @@ target_link_libraries(NitLink PRIVATE
     propsys
     dwmapi
     windowscodecs
+    winhttp
+    windowsapp
     # hid + setupapi: Windows HID Class API for the Elgato 4K S vendor
     # collection on USB interface 7 (src/capture/elgato_hid_4ks.cpp).
     # 4K S does not expose its HDR tonemap toggle through IKsPropertySet
@@ -135,6 +145,10 @@ install(DIRECTORY assets/menu DESTINATION bin/assets)
 install(FILES third_party/nis/NIS_Scaler.h third_party/nis/LICENSE.txt
         DESTINATION bin/third_party/nis)
 install(FILES LICENSE LICENSES.md ACKNOWLEDGMENTS.md DESTINATION bin)
+install(FILES docs/hdmi-source-metadata.md DESTINATION bin/docs)
+install(FILES docs/cn115/SOURCE.txt docs/cn115/FEATURE_COMMITS.tsv
+              docs/cn115/AUDIO_FORK.txt docs/cn115/AUDIO_TESTING.txt
+        DESTINATION bin/docs/cn115)
 
 # nis_upscaler.cpp compiles NIS_Main.hlsl at runtime via D3DCompile, which
 # #includes "NIS_Scaler.h" from disk. Copy it next to the .exe so include
@@ -165,11 +179,34 @@ add_custom_target(NitLinkRuntimeResources
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/locales/zh-TW.js
         $<TARGET_FILE_DIR:NitLink>/locales/zh-TW.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/locales/zh-CN.js
+        $<TARGET_FILE_DIR:NitLink>/locales/zh-CN.js
 )
 add_dependencies(NitLink NitLinkRuntimeResources)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(NitLinkHolyBearUpdateTests tests/holybear_update_tests.cpp src/app/update_checker.cpp)
+    target_include_directories(NitLinkHolyBearUpdateTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkHolyBearUpdateTests PRIVATE winhttp windowsapp)
+    add_test(NAME holybear_update_checker COMMAND NitLinkHolyBearUpdateTests)
+    add_executable(NitLinkAudioConversionTests tests/audio_conversion_tests.cpp)
+    target_include_directories(NitLinkAudioConversionTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_native_conversion COMMAND NitLinkAudioConversionTests)
+
+    add_executable(NitLinkAudioClockRecoveryTests tests/audio_clock_recovery_tests.cpp)
+    target_include_directories(NitLinkAudioClockRecoveryTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_clock_recovery COMMAND NitLinkAudioClockRecoveryTests)
+
+    add_executable(NitLinkAudioPacketDriftTests tests/audio_packet_drift_tests.cpp)
+    target_include_directories(NitLinkAudioPacketDriftTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_packet_drift COMMAND NitLinkAudioPacketDriftTests)
+
+    add_executable(NitLinkAudioDriftTests tests/audio_drift_tests.cpp)
+    target_include_directories(NitLinkAudioDriftTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_clock_drift COMMAND NitLinkAudioDriftTests)
+
     add_executable(NitLinkNativeSecurityTests tests/native_security_tests.cpp
         src/app/config.cpp src/capture/frame_buffer.cpp src/overlay/no_signal_image.cpp)
     target_include_directories(NitLinkNativeSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -305,6 +342,13 @@ if(BUILD_TESTING)
     )
     add_test(NAME presentation_state COMMAND NitLinkPresentationStateTests)
 
+    add_executable(NitLinkSignalResyncTests tests/signal_resync_presentation_tests.cpp
+        src/capture/frame_buffer.cpp src/capture/placeholder_detector.cpp
+        src/capture/gc553pro_hdr_source.cpp src/app/localization.cpp)
+    target_include_directories(NitLinkSignalResyncTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkSignalResyncTests PRIVATE ole32 oleaut32 strmiids)
+    add_test(NAME signal_resync_presentation COMMAND NitLinkSignalResyncTests)
+
     add_executable(NitLinkP010NegotiationTests
         tests/p010_negotiation_tests.cpp
         src/capture/capture_device.cpp
@@ -411,4 +455,25 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkGc553ProHdrTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(NitLinkGc553ProHdrTests PRIVATE ole32 oleaut32 strmiids)
     add_test(NAME gc553pro_hdr_source COMMAND NitLinkGc553ProHdrTests)
+
+    add_executable(NitLinkManualHdmiSourceTests tests/manual_hdmi_source_tests.cpp
+        src/app/config.cpp src/app/settings_message.cpp src/app/game_database.cpp)
+    target_include_directories(NitLinkManualHdmiSourceTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME manual_hdmi_source COMMAND NitLinkManualHdmiSourceTests)
+
+    add_executable(NitLinkGc553ProRawTimingTests tests/gc553pro_raw_timing_tests.cpp)
+    target_include_directories(NitLinkGc553ProRawTimingTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME gc553pro_raw_timing COMMAND NitLinkGc553ProRawTimingTests)
+
+    add_executable(NitLinkGc553ProSourceVrrTests tests/gc553pro_source_vrr_tests.cpp)
+    target_include_directories(NitLinkGc553ProSourceVrrTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME gc553pro_source_vrr COMMAND NitLinkGc553ProSourceVrrTests)
+
+    add_executable(NitLinkGc553ProSourceMetadataTests tests/gc553pro_source_metadata_poller_tests.cpp
+        src/capture/hdr_source_poller.cpp src/capture/gc553pro_hdr_source.cpp
+        src/capture/elgato_hdr_control.cpp)
+    target_include_directories(NitLinkGc553ProSourceMetadataTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkGc553ProSourceMetadataTests PRIVATE ole32 oleaut32 strmiids)
+    add_test(NAME gc553pro_source_metadata_poller COMMAND NitLinkGc553ProSourceMetadataTests)
+    set_tests_properties(gc553pro_source_metadata_poller PROPERTIES TIMEOUT 30)
 endif()

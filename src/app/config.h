@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hdmi_source.h"
+
 #include <map>
 #include <string>
 #include <cstdint>
@@ -53,9 +55,15 @@ enum PresentPacing {
 };
 
 struct Config {
-    // UI language preference: system, en-US, or zh-TW. The effective locale
+    // UI language preference: system, en-US, zh-TW, or zh-CN. The effective locale
     // is resolved by Localization; unsupported system locales use en-US.
     std::string  language = "system";
+    // Optional HolyBear GitHub checks. Attempts (including failures) count
+    // toward the 24-hour interval. These fields share the atomic Config save.
+    bool holyBearAutoUpdateCheck = false;
+    uint64_t holyBearUpdateLastCheckUtc = 0;
+    std::string holyBearUpdateLatestTag;
+    std::string holyBearUpdateSeenTag;
 
     // Window
     uint32_t windowWidth  = 1920;
@@ -78,9 +86,35 @@ struct Config {
     std::wstring audioOutputDevice = L""; // Empty = system default
     float        audioVolume       = 1.0f;
     bool         audioMuted        = false;
+    int          audioFifoMs       = 12;
+    int          audioRenderMs     = 10;
+    bool         audioDrift        = true;
+    bool         audioExclusive    = false;
 
     // Capture
     std::wstring preferredDevice = L""; // Empty = first available
+
+    // Global identity of the device connected to HDMI IN, independent of
+    // the capture card, per-device format overrides, and HDR signal state.
+    std::string manualHdmiSource = "auto";
+    std::string manualHdmiSourceCustom;
+    bool SetManualHdmiSource(std::string_view value) {
+        if (!IsValidManualHdmiSource(value)) return false;
+        manualHdmiSource = value;
+        return true;
+    }
+    bool SetManualHdmiSourceCustom(std::string_view value) {
+        const auto normalized = NormalizeManualHdmiSourceCustom(value);
+        if (!normalized) return false;
+        manualHdmiSourceCustom = *normalized;
+        return true;
+    }
+    bool SetManualHdmiSourceCustom(std::wstring_view value) {
+        const auto normalized = NormalizeManualHdmiSourceCustom(value);
+        if (!normalized) return false;
+        manualHdmiSourceCustom = *normalized;
+        return true;
+    }
 
     // Manual capture format overrides, keyed by capture device name.
     // Each card remembers its own pick (4K Pro at 4K, 4K S at 1080p+240,

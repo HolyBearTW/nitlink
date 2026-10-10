@@ -1,3 +1,9 @@
+> **NitLink 1.2.4 HolyBear Edition** (`1.2.4-holybear`) is an unofficial community integration build based on upstream NitLink 1.2.3. It is not an official nitlink-dev release.
+>
+> Includes selected [PR #31](https://github.com/nitlink-dev/nitlink/pull/31) FPS/Present Cap fixes and [PR #23](https://github.com/nitlink-dev/nitlink/pull/23) HDMI metadata/VRR/signal resync work, plus [CN_115's v0.1.2 audio and Simplified Chinese contributions](https://github.com/CN115/nitlink-lowlatency/tree/v0.1.2). The manual HDMI identity/Discord functionality shared with #25 is included once.
+>
+> Download the Portable ZIP or branded three-language Setup from [HolyBear Edition official Releases](https://github.com/HolyBearTW/nitlink/releases/latest). Verify the [GPG signatures](docs/HOLYBEAR-RELEASE-SIGNING.md) before using them. F1 About provides [optional native update checks](docs/HOLYBEAR-UPDATES.md), off by default, exclusively for this fork's formal Releases. See [release notes](release-notes-1.2.4-holybear.md), [source provenance](HOLYBEAR-SOURCES.json), and [release workflow instructions](docs/HOLYBEAR-RELEASE.md). Upstream hardware/performance claims below do not validate this combined build; live audio drift, exclusive switching, HDR/No Signal transitions and latency still need hardware validation.
+
 <p align="center">
   <img src="docs/images/readme-hero.png" alt="NitLink" width="900">
 </p>
@@ -9,8 +15,8 @@ A capture card viewer for Windows. It makes your console feel like part of your 
 Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Link 4K (USB).
 
 <p align="center">
-  <a href="https://github.com/nitlink-dev/nitlink/releases/latest"><img src="https://img.shields.io/github/v/release/nitlink-dev/nitlink?label=release&color=70A4DB" alt="Latest release"></a>
-  <a href="https://github.com/nitlink-dev/nitlink/releases"><img src="https://img.shields.io/github/downloads/nitlink-dev/nitlink/total?label=downloads&color=70A4DB" alt="Downloads"></a>
+  <a href="https://github.com/HolyBearTW/nitlink/releases/latest"><img src="https://img.shields.io/github/v/release/HolyBearTW/nitlink?label=HolyBear%20release&color=70A4DB" alt="Latest HolyBear release"></a>
+  <a href="https://github.com/HolyBearTW/nitlink/releases"><img src="https://img.shields.io/github/downloads/HolyBearTW/nitlink/total?label=downloads&color=70A4DB" alt="HolyBear Downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/nitlink-dev/nitlink?color=70A4DB" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6" alt="Windows 10 / 11">
 </p>

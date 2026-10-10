@@ -1,0 +1,26 @@
+CN_115 source attribution — HolyBear Edition
+
+Original author/display name: CN_115
+GitHub profile: https://github.com/CN115
+Source: https://github.com/CN115/nitlink-lowlatency
+Target tag: v0.1.2
+Target commit: 240f1b0a91620bdf287eb57863136624a6b87b14
+Shared upstream base: d522bdc7011b2d1e86fe8709d1f6f1667a3d4634
+License: MIT. Original LICENSE, LICENSES.md and acknowledgments are retained.
+FEATURE_COMMITS.tsv records the original feature commits and author identities.
+
+HolyBear Edition includes the selected audio implementation/helpers/tests,
+audio configuration and settings/menu dependencies, English/Traditional Chinese
+audio strings and Simplified Chinese resources from that tag. The original
+core audio source and four standalone audio tests remain unchanged.
+
+Integration also preserves PR #31 FPS/capture negotiation/Present Cap fixes
+and PR #23 HDMI input metadata/VRR/signal resync. Manual identity/Discord work
+shared with #25 is included once. Additional zh-CN HDMI/FPS/resync strings and
+the new contributor/version display belong to this integration.
+
+Fork version-resource numbers, release packages, package scripts and CI
+changes were excluded. HolyBear Edition has its own version and release flow.
+HOLYBEAR-SOURCES.json and BUILD.txt identify the actual combined source version.
+AUDIO_FORK.txt and AUDIO_TESTING.txt are verbatim source documents; references
+to CN115 release packages describe the original fork's distribution.

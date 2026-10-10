@@ -18,12 +18,14 @@ int main()
     }
     NitLink::Config legacyLoaded;
     if (!legacyLoaded.Load(path.string())) return 1;
+    if (legacyLoaded.audioFifoMs != 12 || legacyLoaded.audioRenderMs != 10 || !legacyLoaded.audioDrift || legacyLoaded.audioExclusive) return 19;
     if (legacyLoaded.noSignalMode != "default" ||
         !legacyLoaded.noSignalImage.empty() ||
         legacyLoaded.noSignalFit != "contain" ||
         !legacyLoaded.noSignalDimImage) return 2;
 
     NitLink::Config defaults;
+    if (defaults.holyBearAutoUpdateCheck || defaults.holyBearUpdateLastCheckUtc) return 20;
     if (!defaults.Save(path.string())) return 3;
     NitLink::Config defaultLoaded;
     if (!defaultLoaded.Load(path.string())) return 4;
@@ -33,6 +35,11 @@ int main()
         !defaultLoaded.noSignalDimImage) return 5;
 
     NitLink::Config saved;
+    saved.holyBearAutoUpdateCheck = true;
+    saved.holyBearUpdateLastCheckUtc = 1791730000;
+    saved.holyBearUpdateLatestTag = "v1.2.4.2-holybear";
+    saved.holyBearUpdateSeenTag = "v1.2.4.1-holybear";
+    saved.audioFifoMs = 7; saved.audioRenderMs = 9; saved.audioDrift = false; saved.audioExclusive = true;
     saved.noSignalMode = "image";
     saved.noSignalImage =
         "C:\\Users\\測試者\\Pictures\\無訊號圖片.png";
@@ -42,6 +49,9 @@ int main()
 
     NitLink::Config loaded;
     if (!loaded.Load(path.string())) return 7;
+    if (!loaded.holyBearAutoUpdateCheck || loaded.holyBearUpdateLastCheckUtc != saved.holyBearUpdateLastCheckUtc ||
+        loaded.holyBearUpdateLatestTag != saved.holyBearUpdateLatestTag || loaded.holyBearUpdateSeenTag != saved.holyBearUpdateSeenTag) return 21;
+    if (loaded.audioFifoMs != 7 || loaded.audioRenderMs != 9 || loaded.audioDrift || !loaded.audioExclusive) return 18;
     if (loaded.noSignalMode != saved.noSignalMode ||
         loaded.noSignalImage != saved.noSignalImage ||
         loaded.noSignalFit != saved.noSignalFit ||

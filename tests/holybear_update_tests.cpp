@@ -1,0 +1,81 @@
+#include "app/update_checker.h"
+#include <windows.h>
+#include <winhttp.h>
+#include <chrono>
+#include <iostream>
+#include <thread>
+using namespace NitLink::HolyBear;
+int main(int argc, char** argv) {
+    std::cout << std::unitbuf;
+    // Explicit post-publication probe; CTest always uses offline mock responses.
+    if (argc == 2 && std::string_view(argv[1]) == "--live-release") {
+        UpdateChecker live;
+        if (!live.Start()) return 1;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (live.Busy() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        const auto result = live.TakeResult();
+        if (!result) return 1;
+        std::wcout << L"Live HolyBear Release: " << StatusKey(result->status) << L"; " << result->tag << L'\n';
+        return result->status == UpdateStatus::Current && result->tag == L"v" + std::wstring(Version) ? 0 : 1;
+    }
+    unsigned checks = 0, failures = 0;
+    auto check = [&](bool ok, const char* name) { ++checks; if (!ok) ++failures; std::cout << (ok ? "PASS " : "FAIL ") << name << '\n'; };
+    check(ParseVersion(L"v1.2.4-holybear") == ParseVersion(L"1.2.4.0-holybear"), "three/four part equality");
+    check(ParseVersion(L"v1.2.4.2-holybear") > ParseVersion(L"v1.2.4.1-holybear"), "numeric revision");
+    check(ParseVersion(L"v1.2.4.10-holybear") > ParseVersion(L"v1.2.4.2-holybear"), "numeric, not lexical order");
+    check(ParseVersion(L"v1.2.5-holybear") > ParseVersion(L"v1.2.4.2-holybear"), "patch exceeds revision");
+    for (auto bad : {L"1.2.4", L"v0.1.2", L"v1.2.4-holybear-beta", L"v1.2-holybear", L"v1.02.4-holybear",
+            L"v1.2.4.1.1-holybear", L"v65536.2.4-holybear", L"v1.2.4.-holybear", L"v1.2.4-holybear/evil"})
+        check(!ParseVersion(bad), "invalid/other edition version");
+    auto response = [](std::string tag) {
+        return HttpReply{200, 0, "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":false,\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/" + tag + "\",\"assets\":[],\"body\":null}"};
+    };
+    check(ClassifyReply(response("v1.2.4-holybear")).status == UpdateStatus::Current, "equal version");
+    check(ClassifyReply(response("v1.2.5-holybear")).status == UpdateStatus::Available, "newer version");
+    check(ClassifyReply(response("v1.2.3-holybear")).status == UpdateStatus::Current, "local newer version");
+    check(ClassifyReply(response("v1.2.4.2-holybear"), L"1.2.4.1-holybear").status == UpdateStatus::Available, "revision API release");
+    auto invalid = response("v1.2.5-holybear");
+    auto pos = invalid.body.find("\"prerelease\":false"); invalid.body.replace(pos, 18, "\"prerelease\":true");
+    check(ClassifyReply(invalid).status == UpdateStatus::Invalid, "prerelease rejected");
+    for (auto json : {"{", "{}", "{\"tag_name\":42}", "{\"tag_name\":\"v1.2.5-holybear\",\"draft\":false,\"prerelease\":\"false\"}"})
+        check(ClassifyReply({200, 0, json}).status == UpdateStatus::Invalid, "malformed or missing typed JSON fields");
+    invalid = response("v1.2.5-holybear"); pos = invalid.body.find("HolyBearTW"); invalid.body.replace(pos, 10, "nitlink-dev");
+    check(ClassifyReply(invalid).status == UpdateStatus::Invalid, "other repository rejected");
+    check(ClassifyReply({200, 0, std::string(MaxResponseBytes + 1, 'x')}).status == UpdateStatus::Invalid, "response size bound");
+    check(ClassifyReply({0, ERROR_WINHTTP_TIMEOUT, {}}).status == UpdateStatus::Offline, "timeout nonfatal");
+    check(ClassifyReply({0, ERROR_WINHTTP_CANNOT_CONNECT, {}}).status == UpdateStatus::Offline, "offline nonfatal");
+    for (auto code : {403u, 429u, 500u, 404u, 302u})
+        check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ApiUnavailable, "API failure nonfatal");
+    check(!AutoCheckDue(false, false, 200000, 0), "automatic default off");
+    check(AutoCheckDue(true, false, 200000, 0), "first enabled check");
+    check(!AutoCheckDue(true, true, 200000, 0), "busy request deduplication");
+    check(!AutoCheckDue(true, false, 186399, 100000), "under 24 hours");
+    check(AutoCheckDue(true, false, 186400, 100000), "exact 24 hours");
+    check(!AutoCheckDue(false, false, 300000, 100000), "disabled even when overdue");
+    check(!AutoCheckDue(true, false, 1, UINT64_MAX), "clock rollback and no unsigned underflow");
+    check(IsReleaseUrl(L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.2-holybear"), "validated release destination");
+    for (auto bad : {L"https://github.com/nitlink-dev/nitlink/releases/tag/v1.2.5-holybear", L"https://github.com/CN115/nitlink/releases/tag/v1.2.5-holybear",
+            L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear?redirect=evil", L"https://github.com@evil/nitlink", L"file:///run.exe"})
+        check(!IsReleaseUrl(bad), "unsafe release link rejected");
+    std::atomic<unsigned> requests{0}; std::atomic<bool> release{false};
+    UpdateChecker worker([&](std::stop_token stop) {
+        ++requests;
+        while (!release && !stop.stop_requested()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return response("v1.2.5-holybear");
+    });
+    check(worker.Start(), "background start");
+    check(!worker.Start(), "repeated manual request ignored while busy");
+    worker.Cancel();
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (worker.Busy() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto result = worker.TakeResult();
+    check(!worker.Busy() && result && result->status == UpdateStatus::Cancelled && requests == 1, "disable cancels in-flight result");
+    release = true; check(worker.Start(), "manual check remains usable after auto disabled");
+    while (worker.Busy() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    result = worker.TakeResult();
+    check(result && result->status == UpdateStatus::Available && requests == 2, "mock transport completion");
+    check(!worker.TakeResult(), "one completion, no repeated notification");
+    std::cout << checks - failures << '/' << checks << " HolyBear update checks passed (mock responses; no network)\n";
+    return failures ? 1 : 0;
+}

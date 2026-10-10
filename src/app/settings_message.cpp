@@ -14,6 +14,7 @@ struct Value {
     std::map<std::wstring, Value> fields;
     std::wstring text;
     double number = 0;
+    bool boolean = false;
 };
 
 // The wire schema needs objects, strings, numbers and booleans only. Rejecting
@@ -136,6 +137,7 @@ private:
             if (input.substr(pos, literal.size()) == literal) {
                 pos += literal.size();
                 v.kind = Value::Kind::Boolean;
+                v.boolean = literal == L"true";
                 return true;
             }
         }
@@ -180,12 +182,19 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
         L"clearNoSignalImage", L"cycleNoSignalFit", L"cycleNoSignalDimImage",
         L"cyclePresentPacing", L"cycleAspect", L"cyclePanelSide", L"cycleScaler",
         L"clearGame", L"saveGameSettings", L"getDeviceList", L"refreshDevices",
-        L"openScreenshotFolder"})) {
+        L"openScreenshotFolder", L"checkHolyBearUpdate", L"markHolyBearUpdateSeen"})) {
         if (value) return std::nullopt;
     } else if (OneOf(action, {L"toggleHDR", L"toggleColorExpansion", L"toggleNIS",
         L"toggleMute", L"toggleVSync", L"toggleLowLatency", L"togglePreventSleep"})) {
         // Existing controls send the next visual state; native toggles remain authoritative.
         if (value && value->kind != Value::Kind::Boolean) return std::nullopt;
+    } else if (action == L"setAudioFifoMs" || action == L"setAudioRenderMs") {
+        if (!value || value->kind != Value::Kind::Number || value->number < 3 ||
+            value->number > 100 || std::floor(value->number) != value->number) return std::nullopt;
+        result.number = value->number;
+    } else if (action == L"setAudioDrift" || action == L"setAudioExclusive" || action == L"setHolyBearAutoUpdateCheck") {
+        if (!value || value->kind != Value::Kind::Boolean) return std::nullopt;
+        result.number = value->boolean ? 1 : 0;
     } else if (action == L"setVolume" || action == L"setPiPOpacity") {
         if (!value || value->kind != Value::Kind::Number || value->number > 1 ||
             value->number < (action == L"setPiPOpacity" ? 0.1 : 0.0)) return std::nullopt;
@@ -211,11 +220,17 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
             if (f.fpsNumerator) f.fps = f.fpsNumerator / f.fpsDenominator;
         }
     } else {
-        if (!value || !Text(*value, action == L"setPreferredDevice" ? 1024 : 64))
+        if (!value || !Text(*value, action == L"setManualHdmiSourceCustom" ? 4096 :
+                                   action == L"setPreferredDevice" ? 1024 : 64))
             return std::nullopt;
         result.text = value->text;
         if (action == L"setLanguage") {
-            if (!OneOf(result.text, {L"system", L"en-US", L"zh-TW"})) return std::nullopt;
+            if (!OneOf(result.text, {L"system", L"en-US", L"zh-TW", L"zh-CN"})) return std::nullopt;
+        } else if (action == L"setManualHdmiSource") {
+            if (!IsValidManualHdmiSource(std::wstring_view(result.text))) return std::nullopt;
+        } else if (action == L"setManualHdmiSourceCustom") {
+            if (!NormalizeManualHdmiSourceCustom(std::wstring_view(result.text))) return std::nullopt;
+            result.text = TrimManualHdmiSourceCustom(result.text);
         } else if (action == L"setNoSignalMode") {
             if (!OneOf(result.text, {L"default", L"image"})) return std::nullopt;
         } else if (action == L"setNoSignalFit") {
