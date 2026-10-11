@@ -203,7 +203,34 @@
     }
     document.getElementById('audio-exclusive')?.addEventListener('change', e => post('setAudioExclusive', e.target.checked));
     document.getElementById('audio-drift')?.addEventListener('change', e => post('setAudioDrift', e.target.checked));
-    document.getElementById('audio-refresh')?.addEventListener('click', () => post('ready'));
+    const audioRefreshButton = document.getElementById('audio-refresh');
+    let audioRefreshPending = false, audioRefreshTimeout, audioRefreshFeedback;
+    let audioRefreshRequest = 0;
+    const setAudioRefreshFeedback = (key, busy) => {
+      if (!audioRefreshButton) return;
+      audioRefreshButton.dataset.i18n = key;
+      audioRefreshButton.textContent = t(key);
+      audioRefreshButton.disabled = busy;
+      audioRefreshButton.setAttribute('aria-busy', String(busy));
+    };
+    const finishAudioRefresh = success => {
+      if (!audioRefreshPending) return;
+      audioRefreshPending = false;
+      clearTimeout(audioRefreshTimeout);
+      setAudioRefreshFeedback(success ? 'audio.refreshed' : 'audio.refreshFailed', false);
+      audioRefreshFeedback = setTimeout(() => setAudioRefreshFeedback('audio.refresh', false), 1800);
+    };
+    audioRefreshButton?.addEventListener('click', () => {
+      if (audioRefreshPending) return;
+      clearTimeout(audioRefreshFeedback);
+      audioRefreshPending = true;
+      audioRefreshRequest = audioRefreshRequest === 0xffffffff ? 1 : audioRefreshRequest + 1;
+      setAudioRefreshFeedback('audio.refreshing', true);
+      if (!hasWebViewHost()) { finishAudioRefresh(false); return; }
+      audioRefreshTimeout = setTimeout(() => finishAudioRefresh(false), 5000);
+      try { post('refreshAudioDiagnostics', audioRefreshRequest); }
+      catch (_) { finishAudioRefresh(false); }
+    });
 
     // Diagnostics are a presentation preference, off at every application start.
     // Hiding the panel never changes audio processing or cumulative counters.
@@ -979,7 +1006,7 @@
         ? `${t('audio.running')} · ${t(s.audioExclusiveActive ? 'audio.exclusiveMode' : 'audio.sharedMode')}`
         : t('audio.waiting'));
       const health = document.getElementById('audio-health');
-      if (health && typeof s.audioFillMs === 'number') {
+      if (health && Number.isFinite(s.audioFillMs)) {
         const ms = value => Number.isFinite(value) ? value.toFixed(2) : '--';
         health.textContent = `${s.audioStreaming ? t('audio.running') : t('audio.waiting')} · ${s.audioAdaptive ? 'Sinc SRC' : t('audio.fallback')} · ${s.audioDrift ? t('audio.driftOn') : t('audio.off')}\n` +
           (s.audioExclusiveActive
@@ -991,6 +1018,8 @@
           `${t('audio.underrunEvents')} ${s.audioUnderrunEvents ?? 0} · ${t('audio.reloads')} ${s.audioReloads ?? 0}\n` +
           `${t('audio.underruns')} ${s.audioUnderruns} · ${t('audio.dropped')} ${s.audioOverruns} · ${t('audio.resyncs')} ${s.audioResyncs}\n` +
           localizeEndpointInfo(s.audioEndpointInfo);
+        // Ordinary broadcasts and late replies must not acknowledge this click.
+        if (s.audioRefreshRequest === audioRefreshRequest) finishAudioRefresh(true);
       }
 
       if (typeof s.volume === 'number') {

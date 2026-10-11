@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -501,6 +502,145 @@ void TestLayouts(WebViewSettings& host, HWND window, std::vector<std::wstring>& 
     }
 }
 
+void TestAudioRefresh(WebViewSettings& host, HWND window, std::vector<std::wstring>& messages) {
+    auto* view = WebViewSettingsTestAccess::View(host);
+    const auto firstMessage = messages.size();
+    // Synthetic diagnostics exercise the native WebView bridge, without opening
+    // a capture device or sound endpoint. Unchanged counters are valid fresh data.
+    const auto pushAudio = [&](uint32_t request, double fill) {
+        std::wstringstream state;
+        state << L"{\"state\":{\"audioFillMs\":" << fill <<
+            LR"(,"audioQueueMs":0,"audioRenderMs":10,"audioEffectiveMs":3,
+                "audioAverageMs":12,"audioMinMs":7,"audioMaxMs":17,
+                "audioPeriodUs":3000,"audioPpm":-21,"audioEstimatedPpm":-21,
+                "audioClockValid":true,"audioUnderrunEvents":0,"audioReloads":0,
+                "audioUnderruns":0,"audioOverruns":7,"audioResyncs":2,
+                "audioAdaptive":true,"audioStreaming":true,"audioDrift":true,
+                "audioExclusiveActive":true,"audioEndpointInfo":"test snapshot")";
+        if (request) state << L",\"audioRefreshRequest\":" << request;
+        state << L"}}";
+        Check(host.PostMessage(state.str()), "synthetic audio snapshot accepted by native bridge");
+        Check(PumpUntil([&] {
+            return Script(view, L"document.getElementById('audio-health').textContent.includes('" +
+                std::to_wstring(fill).substr(0, 5) + L" ms')") == L"true";
+        }), "received audio data renders before refresh feedback");
+    };
+    const auto requestFromClick = [&](size_t previous) {
+        Check(PumpUntil([&] { return messages.size() > previous; }), "refresh reaches native handler");
+        const auto request = NitLink::ParseSettingsMessage(messages.back());
+        Check(request && request->action == L"refreshAudioDiagnostics" && request->number > 0,
+            "refresh uses a validated request ID instead of page readiness");
+        Check(Script(view, LR"JS((() => {
+            const b = document.getElementById('audio-refresh');
+            return b.disabled && b.getAttribute('aria-busy') === 'true' &&
+                b.textContent === window.NitLinkLocales[document.documentElement.lang]['audio.refreshing'];
+        })())JS") == L"true", "click shows localized busy feedback without claiming success");
+        return static_cast<uint32_t>(request->number);
+    };
+    const auto busy = [&] {
+        return Script(view, L"document.getElementById('audio-refresh').disabled && "
+            L"document.getElementById('audio-refresh').dataset.i18n === 'audio.refreshing'") == L"true";
+    };
+    for (const auto size : {std::pair{1920, 1080}, std::pair{2560, 1440}}) {
+        for (const auto* side : {L"Full", L"Right", L"Left"}) {
+            const auto dock = std::wstring_view(side) == L"Full" ? WebViewSettings::Dock::Full
+                : std::wstring_view(side) == L"Left" ? WebViewSettings::Dock::Left : WebViewSettings::Dock::Right;
+            Resize(host, window, size.first, size.second, dock);
+            for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+                PushState(host, side, locale);
+                Script(view, LR"JS((() => {
+                    document.querySelector('.rail-item[data-tab="pane-audio"]').click();
+                    if (!document.getElementById('audio-debug').checked) document.getElementById('audio-debug').click();
+                    const b = document.getElementById('audio-refresh');
+                    b.blur(); b.scrollIntoView({block:'center'});
+                })())JS");
+                pushAudio(0, 11.11);
+                BrowserCommand(view, L"Input.dispatchMouseEvent", L"{\"type\":\"mouseMoved\",\"x\":0,\"y\":0}");
+                PumpUntil([] { return false; }, 150);
+                Script(view, L"window.__refreshNormal = getComputedStyle(document.getElementById('audio-refresh')).backgroundColor");
+                const auto pointer = [&](const wchar_t* type) {
+                    BrowserCommand(view, L"Input.dispatchMouseEvent", Script(view,
+                        L"(() => {const r=document.getElementById('audio-refresh').getBoundingClientRect();"
+                        L"return {type:'" + std::wstring(type) + L"',x:r.left+r.width/2,y:r.top+r.height/2,"
+                        L"button:'left',clickCount:1};})()"));
+                };
+                pointer(L"mouseMoved");
+                Check(PumpUntil([&] {
+                    return Script(view, L"getComputedStyle(document.getElementById('audio-refresh')).backgroundColor !== window.__refreshNormal") == L"true";
+                }), "real Chromium pointer hover highlights refresh in every layout and locale");
+                Script(view, L"window.__refreshHover = getComputedStyle(document.getElementById('audio-refresh')).backgroundColor");
+                pointer(L"mousePressed");
+                Check(PumpUntil([&] {
+                    return Script(view, L"document.getElementById('audio-refresh').matches(':active') && "
+                        L"getComputedStyle(document.getElementById('audio-refresh')).backgroundColor !== window.__refreshHover") == L"true";
+                }), "pressed refresh has visible feedback before the click is sent");
+                const auto count = messages.size();
+                pointer(L"mouseReleased");
+                const auto request = requestFromClick(count);
+                Script(view, L"document.getElementById('audio-refresh').click()");
+                Check(messages.size() == count + 1, "busy refresh prevents duplicate native requests");
+                pushAudio(0, 12.12);
+                Check(busy(), "ordinary audio broadcast cannot acknowledge refresh");
+                pushAudio(request + 1, 13.13);
+                Check(busy(), "unmatched audio response cannot acknowledge refresh");
+                host.PostMessage(L"{\"state\":{\"audioRefreshRequest\":" + std::to_wstring(request) + L"}}");
+                Script(view, L"true");
+                Check(busy(), "matching ID without audio data cannot claim success");
+                pushAudio(request, 12.34);
+                Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+                    const b=document.getElementById('audio-refresh');
+                    return !b.disabled && b.getAttribute('aria-busy') === 'false' &&
+                        b.textContent === window.NitLinkLocales[document.documentElement.lang]['audio.refreshed'] &&
+                        document.getElementById('audio-health').textContent.includes('12.34 ms');
+                })())JS") == L"true"; }), "only matching rendered audio data shows localized Updated feedback");
+                Check(Script(view, L"document.querySelector('#pane-audio').scrollWidth <= document.querySelector('#pane-audio').clientWidth && "
+                    L"document.documentElement.scrollWidth <= innerWidth") == L"true", "audio feedback does not overflow Full or Docked at 1080p and 1440p");
+                // A second fresh response may legitimately contain identical values.
+                Script(view, L"document.getElementById('audio-refresh').click()");
+                const auto unchanged = requestFromClick(count + 1);
+                pushAudio(unchanged, 12.34);
+                Check(PumpUntil([&] { return !busy(); }), "fresh unchanged counters still complete refresh");
+            }
+        }
+    }
+    Check(PumpUntil([&] { return Script(view, L"document.getElementById('audio-refresh').dataset.i18n === 'audio.refresh'") == L"true"; }, 3000),
+        "success feedback returns to the localized idle label");
+    Script(view, L"document.getElementById('audio-debug').focus()");
+    BrowserKey(view, L"Tab", L"Tab", VK_TAB);
+    Check(Script(view, L"document.activeElement === document.getElementById('audio-refresh') && "
+        L"getComputedStyle(document.getElementById('audio-refresh')).outlineWidth === '2px'") == L"true", "keyboard navigation retains refresh focus styling");
+    auto count = messages.size();
+    BrowserKey(view, L" ", L"Space", VK_SPACE);
+    const auto timedOut = requestFromClick(count);
+    Check(PumpUntil([&] { return Script(view, L"document.getElementById('audio-refresh').dataset.i18n === 'audio.refreshFailed' && "
+        L"!document.getElementById('audio-refresh').disabled") == L"true"; }, 6500), "missing response restores button without claiming an audio-engine failure");
+    pushAudio(timedOut, 14.14);
+    Check(Script(view, L"document.getElementById('audio-refresh').dataset.i18n !== 'audio.refreshed'") == L"true", "late timed-out response never shows Updated");
+    count = messages.size();
+    Script(view, L"document.getElementById('audio-refresh').click()");
+    const auto retry = requestFromClick(count);
+    pushAudio(timedOut, 15.15);
+    Check(busy(), "old response cannot acknowledge retry");
+    pushAudio(retry, 12.34);
+    Check(!busy(), "retry completes with its own fresh response");
+    for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        PushState(host, L"Left", locale);
+        Check(Script(view, LR"JS((() => {
+            const b=document.getElementById('audio-refresh'), original=chrome.webview.postMessage;
+            try {
+                chrome.webview.postMessage=undefined;
+                b.click();
+                return !b.disabled && b.getAttribute('aria-busy') === 'false' &&
+                    b.textContent === window.NitLinkLocales[document.documentElement.lang]['audio.refreshFailed'];
+            } finally { chrome.webview.postMessage=original; }
+        })())JS") == L"true", "unavailable bridge feedback is localized and does not claim success");
+    }
+    for (size_t i = firstMessage; i < messages.size(); ++i) {
+        const auto message = NitLink::ParseSettingsMessage(messages[i]);
+        Check(message && message->action == L"refreshAudioDiagnostics", "refresh changes no audio or capture setting");
+    }
+}
+
 void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& messages) {
     auto* view = WebViewSettingsTestAccess::View(host);
     Resize(host, window, 1920, 1080, WebViewSettings::Dock::Right);
@@ -737,6 +877,9 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
                   document.querySelector('#holy-bear-update-status').textContent === locale['update.available'].replace('{version}', '1.2.4.1-holybear') &&
                   document.querySelector('#holy-bear-release-link').href.endsWith('/v1.2.4.1-holybear');
           })())JS") == L"true", "Full and both Docked modes stack localized disclosures without clipping at 1080p and 1440p");
+          Check(Script(view, L"getComputedStyle(document.getElementById('about-contributors')).borderBottomWidth === '0px' && "
+              L"getComputedStyle(document.getElementById('about-technical')).borderBottomWidth === '1px'") == L"true",
+              "only the contributors trailing divider is removed in every layout and locale");
         }
         if (dock != WebViewSettings::Dock::Full) continue;
         Check(Script(view, LR"JS((() => {
@@ -800,6 +943,7 @@ int main(int argc, char** argv) {
         else {
             TestLayouts(host, window, messages);
             TestAbout(host, window, messages);
+            TestAudioRefresh(host, window, messages);
         }
         host.Shutdown();
     } catch (const std::exception& error) {

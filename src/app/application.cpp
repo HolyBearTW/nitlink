@@ -1160,6 +1160,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             AppLog(L"WebView2 JavaScript exception: " + message->text);
             return;
         }
+        if (action == L"refreshAudioDiagnostics") {
+            PushSettingsState(false, static_cast<uint32_t>(message->number));
+            return;
+        }
         if (action == L"ready") {
             // JS finished loading and asked for an initial state dump.
             AppLog(L"Initialize: WebView2 settings ready");
@@ -4925,7 +4929,7 @@ void Application::ConsumeHolyBearUpdate()
     PushSettingsState();
 }
 
-void Application::PushSettingsState(bool refreshCaptureDevices)
+void Application::PushSettingsState(bool refreshCaptureDevices, uint32_t audioRefreshRequest)
 {
     if (!m_webviewSettings || !m_config) return;
 
@@ -5006,6 +5010,8 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
     js << L"\"audioDrift\":" << (m_config->audioDrift ? L"true" : L"false") << L",";
     js << L"\"audioExclusive\":" << (m_config->audioExclusive ? L"true" : L"false") << L",";
     if (m_audioRouter) {
+        if (audioRefreshRequest != 0)
+            js << L"\"audioRefreshRequest\":" << audioRefreshRequest << L",";
         js << L"\"audioExclusiveActive\":" << (m_audioRouter->ExclusiveActive() ? L"true" : L"false") << L",";
         const uint64_t audioQueues=m_audioRouter->QueueSnapshotUs();
         js << L"\"audioFillMs\":" << (audioQueues >> 32) / 1000.0 << L",";

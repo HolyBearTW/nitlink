@@ -70,7 +70,7 @@ private:
     // toggles/sliders/labels reflect reality. Called on open, on hotkey-
     // driven state changes (Alt+H for HDR), and on the once-per-second
     // stats tick while the menu is visible.
-    void PushSettingsState(bool refreshCaptureDevices = false);
+    void PushSettingsState(bool refreshCaptureDevices = false, uint32_t audioRefreshRequest = 0);
     void CheckHolyBearUpdate(bool automatic);
     void ConsumeHolyBearUpdate();
     void SetPiPOpacity(float opacity);

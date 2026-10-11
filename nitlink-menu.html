@@ -39,8 +39,13 @@
     a { color: var(--accent-text); }
     a:hover { color: var(--accent); }
     ::selection { background: var(--accent-soft); }
-#pane-audio input[type="number"], #audio-refresh { color:var(--ink); background:#202020; border:1px solid var(--hair2); padding:6px 8px; font:inherit; }
+    #pane-audio input[type="number"], #audio-refresh { color:var(--ink); background:#202020; border:1px solid var(--hair2); padding:6px 8px; font:inherit; }
     #pane-audio input:focus-visible, #audio-refresh:focus-visible { outline:2px solid var(--accent); }
+    #audio-refresh { cursor:pointer; transition:background-color .12s ease, border-color .12s ease, color .12s ease; }
+    #audio-refresh:hover:not(:disabled), #audio-refresh:focus-visible { color:var(--accent-text); border-color:var(--accent); background:var(--accent-soft); }
+    #audio-refresh[data-i18n="audio.refreshed"] { color:var(--accent-text); border-color:var(--accent); }
+    #audio-refresh:active:not(:disabled) { background:var(--accent); color:var(--chrome); }
+    #audio-refresh:disabled { opacity:.6; cursor:wait; }
     #pane-audio input[type="checkbox"] { accent-color:var(--accent); width:18px; height:18px; }
     #pane-audio .audio-note { font-size:12px; line-height:1.6; white-space:pre-line; overflow-wrap:anywhere; padding:8px 16px; color:var(--ink2); }
     .audio-label { display:flex; align-items:center; gap:8px; }
@@ -217,6 +222,7 @@
     .about-links { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 22px; border-bottom: 1px solid var(--hair); }
     .about-links a, .about-source-links a { font-size: 12.5px; font-weight: 500; }
     .about-details { border-bottom: 1px solid var(--hair); }
+    #about-contributors { border-bottom: 0; }
     .about-details > summary { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 22px; color: var(--ink2); background: var(--band); font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; }
     .about-details > summary::-webkit-details-marker { display: none; }
     .about-details > summary::after { content: '▾'; color: var(--ink3); transition: transform .12s ease; }
@@ -709,7 +715,7 @@
           <div class="row"><div class="row-name audio-label"><label for="audio-debug" data-i18n="audio.debug"></label><button type="button" class="audio-help" data-audio-help="audio.debugHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-debug" type="checkbox" aria-controls="audio-diagnostics" aria-expanded="false"></div></div>
           <div class="row kv"><span class="row-name" data-i18n="audio.status"></span><span id="audio-status" class="row-value" data-i18n="audio.waiting"></span></div>
           <div id="audio-diagnostics" hidden>
-            <div class="row"><span class="row-name" data-i18n="audio.health"></span><button id="audio-refresh" type="button" data-i18n="audio.refresh"></button></div>
+            <div class="row"><span class="row-name" data-i18n="audio.health"></span><button id="audio-refresh" type="button" data-i18n="audio.refresh" aria-controls="audio-health" aria-busy="false" aria-live="polite"></button></div>
             <p id="audio-health" class="audio-note" role="status" aria-live="polite"></p>
           </div>
         </section>

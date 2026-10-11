@@ -191,6 +191,10 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
         L"toggleMute", L"toggleVSync", L"toggleLowLatency", L"togglePreventSleep"})) {
         // Existing controls send the next visual state; native toggles remain authoritative.
         if (value && value->kind != Value::Kind::Boolean) return std::nullopt;
+    } else if (action == L"refreshAudioDiagnostics") {
+        uint32_t request = 0;
+        if (!Uint(root, L"value", 0xffffffffu, request) || request == 0) return std::nullopt;
+        result.number = request;
     } else if (action == L"setAudioFifoMs" || action == L"setAudioRenderMs") {
         if (!value || value->kind != Value::Kind::Number || value->number < 3 ||
             value->number > 100 || std::floor(value->number) != value->number) return std::nullopt;

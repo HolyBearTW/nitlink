@@ -18,6 +18,18 @@ void Expect(bool value, const char* label) {
 
 int main() {
     using NitLink::ParseSettingsMessage;
+    for (const auto valid : {L"1", L"42", L"4294967295"}) {
+        const auto request = ParseSettingsMessage(
+            L"{\"action\":\"refreshAudioDiagnostics\",\"value\":" + std::wstring(valid) + L"}");
+        Expect(request && request->number == std::stod(valid), "bounded audio refresh request preserved");
+    }
+    for (const auto invalid : {L"0", L"-1", L"1.5", L"4294967296", L"true", L"\"1\"", L"null", L"{}"})
+        Expect(!ParseSettingsMessage(L"{\"action\":\"refreshAudioDiagnostics\",\"value\":" +
+            std::wstring(invalid) + L"}"), "invalid audio refresh request rejected");
+    Expect(!ParseSettingsMessage(LR"({"action":"refreshAudioDiagnostics"})"), "refresh requires a request ID");
+    Expect(!ParseSettingsMessage(LR"({"action":"refreshAudioDiagnostics","value":1,"extra":true})"),
+        "refresh rejects unknown fields");
+    Expect(!ParseSettingsMessage(LR"({"action":"ready","value":1})"), "ready schema remains unchanged");
     for (auto action : {L"setAudioFifoMs", L"setAudioRenderMs"}) {
         const auto prefix = L"{\"action\":\"" + std::wstring(action) + L"\",\"value\":";
         for (auto valid : {L"3", L"12", L"100"})
