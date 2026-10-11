@@ -18,7 +18,13 @@ public:
 
     bool ToggleAt(int clientX, int clientY) noexcept {
         if (!HitTest(clientX, clientY)) return false;
-        m_expanded = !m_expanded;
+        Toggle();
+        return true;
+    }
+
+    bool ToggleFromTab(bool hudVisible, bool pipMode, bool settingsVisible) noexcept {
+        if (!hudVisible || pipMode || settingsVisible) return false;
+        Toggle();
         return true;
     }
 
@@ -36,6 +42,7 @@ public:
     float FooterBottom() const noexcept { return m_expanded ? 194.0f : 152.0f; }
 
 private:
+    void Toggle() noexcept { m_expanded = !m_expanded; }
     bool m_expanded = false;
 };
 

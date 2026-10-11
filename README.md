@@ -252,6 +252,7 @@ Output at `out/build/x64-Release/NitLink.exe` (VS) or `build/Release/NitLink.exe
 | `Ctrl + Alt + Up / Down` | Decrease / increase PiP height by 20 px (hold `Shift` for 80 px) |
 | `Ctrl + S` | Save screenshot (SDR `.png` + true-HDR `.jxr`) to `Pictures/NitLink/` |
 | `Ctrl + F3` | Toggle HUD overlay (remembered between launches) |
+| `Tab` | Toggle auxiliary FPS rows while the HUD is visible and F1 settings are closed |
 
 HUD visibility follows `show_overlay` in `nitlink.json` (default: `false`). Toggling it with `Ctrl + F3` saves the choice immediately.
 

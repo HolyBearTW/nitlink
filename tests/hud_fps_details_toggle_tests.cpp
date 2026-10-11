@@ -36,5 +36,22 @@ int main() {
     Require(toggle.FooterRuleTop() == 128.0f && toggle.FooterTop() == 130.0f &&
             toggle.FooterBottom() == 152.0f,
             "collapsed footer moves below the primary graph");
+
+    Require(!toggle.ToggleFromTab(false, false, false) && !toggle.IsExpanded(),
+            "Tab leaves a hidden Ctrl+F3 HUD unchanged");
+    Require(!toggle.ToggleFromTab(true, true, false) && !toggle.IsExpanded(),
+            "Tab ignores the HUD suppressed by PiP");
+    Require(!toggle.ToggleFromTab(true, false, true) && !toggle.IsExpanded(),
+            "F1 keeps Tab for settings keyboard navigation");
+    Require(toggle.ToggleFromTab(true, false, false) && toggle.IsExpanded() &&
+            toggle.PanelHeight() == 202.0f,
+            "Tab expands the visible HUD exactly like the glyph");
+    Require(!toggle.ToggleFromTab(false, false, false) && toggle.IsExpanded(),
+            "hiding the HUD prevents Tab from changing its retained state");
+    Require(toggle.ToggleAt(98, 29) && !toggle.IsExpanded(),
+            "mouse and Tab share the same toggle state");
+    Require(toggle.ToggleFromTab(true, false, false) && toggle.IsExpanded() &&
+            toggle.ToggleFromTab(true, false, false) && !toggle.IsExpanded(),
+            "successive Tab presses alternate expanded and collapsed rows");
     return 0;
 }

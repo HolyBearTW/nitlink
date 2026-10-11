@@ -1673,6 +1673,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // Ctrl+F3 has no browser meaning so it routes cleanly back here.
     m_hotkeyManager->Register("toggle_overlay", {VK_CONTROL, VK_F3},
         [this]() { ToggleOverlay(); });
+    // Bare Tab uses the existing foreground, exact-modifier, nonrepeat path.
+    // Leave F1 keyboard navigation alone, and ignore hidden/PiP HUDs.
+    m_hotkeyManager->Register("toggle_fps_details", {VK_TAB}, [this]() {
+        if (m_overlay) m_overlay->HandleTab(m_showOverlay, m_isPiP, m_settingsVisible);
+    });
     m_hotkeyManager->Register("toggle_settings", {VK_F1},
         [this]() { ToggleSettings(); });
     // ALT+H toggles HDR instantly (works even when settings panel is hidden in HDR).

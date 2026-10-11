@@ -21,6 +21,7 @@ Required release Microsoft VC++ DLLs are included with their notices.
 
 F1 opens settings. Choose capture device/format and language there.
 Ctrl+F3 toggles the FPS HUD; Alt+L toggles low latency; Alt+V toggles VSync;
+Tab toggles the HUD's auxiliary FPS rows while it is visible and F1 is closed.
 F11 / Alt+Enter toggles fullscreen. Audio defaults to shared mode, drift
 correction on, 12 ms FIFO and 10 ms render targets. Optional exclusive output
 requests the sound device's supported minimum period; it falls back to shared

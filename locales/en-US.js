@@ -174,6 +174,7 @@ window.NitLinkLocales['en-US'] = {
   'shortcut.vsync': 'VSync',
   'shortcut.lowLatency': 'Low-Latency Mode',
   'shortcut.hdr': 'HDR',
+  'shortcut.fpsDetails': 'FPS details (while HUD is visible)',
   'shortcut.colorRange': 'Color range: Auto / Full / Limited',
   'shortcut.aspectRatio': 'Aspect ratio: Auto / 4:3 / 16:9 / 16:10 / 21:9 / Stretch',
   'shortcut.fullscreen': 'Fullscreen',

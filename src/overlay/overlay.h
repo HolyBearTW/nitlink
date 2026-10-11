@@ -76,6 +76,9 @@ public:
     bool HandleMouseDown(int clientX, int clientY) noexcept {
         return m_fpsDetailsToggle.ToggleAt(clientX, clientY);
     }
+    bool HandleTab(bool hudVisible, bool pipMode, bool settingsVisible) noexcept {
+        return m_fpsDetailsToggle.ToggleFromTab(hudVisible, pipMode, settingsVisible);
+    }
 
     // Draw a localized full-window status frame before capture initialization
     // completes or while a capture-format transition is in progress.

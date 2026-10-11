@@ -173,6 +173,7 @@ window.NitLinkLocales['zh-TW'] = {
   'shortcut.vsync': '垂直同步',
   'shortcut.lowLatency': '低延遲模式',
   'shortcut.hdr': 'HDR',
+  'shortcut.fpsDetails': 'FPS 詳細資訊（面板顯示時）',
   'shortcut.colorRange': '色彩範圍：自動／完整／有限',
   'shortcut.aspectRatio': '長寬比：自動／4:3／16:9／16:10／21:9／拉伸',
   'shortcut.fullscreen': '全螢幕',
