@@ -500,6 +500,7 @@ int main(int argc, char** argv) {
               "native close commits only the two pending final slider values");
         std::wstring failure;
         host.SetFailureHandler([&](const std::wstring& reason) { failure = reason; });
+        const size_t messagesBeforeCrash = messages.size();
         UINT32 browserPid = 0;
         Hr(view->get_BrowserProcessId(&browserPid));
         Check(browserPid != 0 && browserPid != GetCurrentProcessId(), "isolated test browser PID");
@@ -515,13 +516,97 @@ int main(int argc, char** argv) {
         Check(PumpUntil([&] { host.CheckHealth(); return host.IsReady(); }),
               "browser crash automatically restarts the secured host");
         auto* recovered = WebViewSettingsTestAccess::View(host);
-        Check(recovered && host.InitializationError().empty() &&
-              Script(recovered, L"document.documentElement.lang") == L"\"en-US\"",
-              "restarted host reloads the packaged menu");
+        Check(recovered && host.InitializationError().empty(),
+              "restarted host has no initialization error");
+        wil::unique_cotaskmem_string recoveredSource;
+        Check(SUCCEEDED(recovered->get_Source(&recoveredSource)) && recoveredSource &&
+              NitLink::WebViewPolicy::IsTrustedDocument(recoveredSource.get()),
+              "restarted host loads the trusted packaged menu URI");
+        Check(PumpUntil([&] {
+            return Script(recovered,
+                L"document.readyState === 'complete' && !!document.querySelector('h1') && "
+                L"!!document.getElementById('pane-about') && "
+                L"!!(window.NitLinkLocales && window.NitLinkLocales['en-US'] && "
+                L"window.NitLinkLocales['zh-TW'] && window.NitLinkLocales['zh-CN']) && "
+                L"!!(window.chrome && window.chrome.webview && window.chrome.webview.postMessage)") == L"true";
+        }), "restarted packaged DOM, locale resources and JavaScript bridge finish loading");
+        const std::wstring readyLocale = Script(recovered, L"document.documentElement.lang");
+        Check(readyLocale == L"\"en-US\"" || readyLocale == L"\"zh-TW\"" || readyLocale == L"\"zh-CN\"",
+              "restarted menu begins in a supported system locale");
+        bool restartedReadyMessage = false;
+        for (size_t i = messagesBeforeCrash; i < messages.size(); ++i) {
+            const auto message = NitLink::ParseSettingsMessage(messages[i]);
+            if (message && message->action == L"ready") {
+                restartedReadyMessage = true;
+                break;
+            }
+        }
+        Check(restartedReadyMessage, "restarted menu sends a fresh ready message through the native bridge");
+
+        // The application responds to every ready message with its persisted
+        // state. Mirror that native response here and verify all supported
+        // preferences are applied to the recovered document.
+        for (const auto* locale : {L"zh-TW", L"en-US", L"zh-CN"}) {
+            const std::wstring state = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
+                L"\",\"languagePreference\":\"" + locale + L"\"}}";
+            host.PostMessage(state);
+            const std::wstring localizedProbe =
+                std::wstring(L"document.documentElement.lang === '") + locale +
+                L"' && document.querySelector('[data-i18n=\"nav.video\"]').textContent === "
+                L"window.NitLinkLocales['" + locale + L"']['nav.video']";
+            Check(PumpUntil([&] { return Script(recovered, localizedProbe.c_str()) == L"true"; }),
+                  locale == std::wstring_view(L"zh-TW") ? "restart bridge applies Traditional Chinese" :
+                  locale == std::wstring_view(L"en-US") ? "restart bridge applies English" :
+                                                           "restart bridge applies Simplified Chinese");
+        }
         wil::com_ptr<ICoreWebView2Settings> recoveredSettings;
         Hr(recovered->get_Settings(&recoveredSettings));
         Hr(recoveredSettings->get_AreHostObjectsAllowed(&enabled));
         Check(!enabled, "restart reapplies host-object security restriction");
+        Hr(recoveredSettings->get_AreDevToolsEnabled(&enabled));
+        Check(!enabled, "restart reapplies developer-tools restriction");
+        Hr(recoveredSettings->get_AreDefaultScriptDialogsEnabled(&enabled));
+        Check(!enabled, "restart reapplies script-dialog restriction");
+        auto recoveredController4 = wil::com_ptr<ICoreWebView2Controller>(
+            WebViewSettingsTestAccess::Controller(host)).try_query<ICoreWebView2Controller4>();
+        Hr(recoveredController4->get_AllowExternalDrop(&enabled));
+        Check(!enabled, "restart reapplies external-drop restriction");
+        Check(Script(recovered, LR"JS((() => {
+            window.__restartedViolations = [];
+            document.addEventListener('securitypolicyviolation', e => __restartedViolations.push(e.violatedDirective));
+            window.__restartedInjection = false;
+            const script = document.createElement('script'); script.textContent = 'window.__restartedInjection=true'; document.body.append(script);
+            const frame = document.createElement('iframe'); frame.srcdoc = '<script>parent.__restartedInjection=true<\/script>'; document.body.append(frame);
+            const remoteFrame = document.createElement('iframe'); remoteFrame.src = 'https://blocked.invalid/frame'; document.body.append(remoteFrame);
+            fetch('https://blocked.invalid/').catch(() => {});
+            try { new Worker('assets/menu/menu.js'); } catch (_) {}
+            return true;
+        })())JS") == L"true", "restarted document accepts the security-policy probe");
+        const bool restartedCspEnforced = PumpUntil([&] { return Script(recovered,
+            L"!window.__restartedInjection && __restartedViolations.some(x=>x.startsWith('script-src')) && "
+            L"__restartedViolations.includes('frame-src') && __restartedViolations.includes('connect-src') && "
+            L"__restartedViolations.includes('worker-src')") == L"true"; });
+        if (!restartedCspEnforced)
+            std::wcout << L"Restart CSP observations " << Script(recovered,
+                L"JSON.stringify({injected:window.__restartedInjection,violations:window.__restartedViolations})") << L'\n';
+        Check(restartedCspEnforced,
+            "restart reapplies CSP against inline scripts, frames and network requests");
+        bool blockedNavigationCancelled = false;
+        EventRegistrationToken recoveredNavigationToken{};
+        Hr(recovered->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
+            [&blockedNavigationCancelled](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                wil::unique_cotaskmem_string uri;
+                if (SUCCEEDED(args->get_Uri(&uri)) && uri &&
+                    std::wstring_view(uri.get()).find(L"blocked.invalid/restart") != std::wstring_view::npos) {
+                    BOOL cancelled = FALSE;
+                    if (SUCCEEDED(args->get_Cancel(&cancelled))) blockedNavigationCancelled = cancelled != FALSE;
+                }
+                return S_OK;
+            }).Get(), &recoveredNavigationToken));
+        Hr(recovered->Navigate(L"https://blocked.invalid/restart"));
+        Check(PumpUntil([&] { return blockedNavigationCancelled; }),
+              "restart reapplies untrusted-navigation blocking");
+        Hr(recovered->remove_NavigationStarting(recoveredNavigationToken));
         host.Shutdown();
 
         WebViewSettings navigationHost;

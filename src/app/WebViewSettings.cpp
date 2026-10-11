@@ -263,6 +263,26 @@ bool WebViewSettings::Start(HWND parent) {
         return false;
     }
     std::wstring userDataFolder = std::wstring(localAppData.get()) + L"\\NitLink\\WebView2";
+#if defined(NITLINK_WEBVIEW_TEST_PROFILE)
+    // Runtime tests set this standard WebView2 override to a disposable
+    // per-process directory. The app target never defines this test-only
+    // switch and therefore always uses the normal NitLink profile above.
+    const DWORD profileLength = GetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", nullptr, 0);
+    if (profileLength <= 1) {
+        m_starting = false;
+        WVLog(L"test WebView profile override is missing; refusing to use the user profile");
+        return false;
+    }
+    std::vector<wchar_t> profile(profileLength);
+    const DWORD copied = GetEnvironmentVariableW(
+        L"WEBVIEW2_USER_DATA_FOLDER", profile.data(), profileLength);
+    if (copied == 0 || copied >= profileLength) {
+        m_starting = false;
+        WVLog(L"test WebView profile override could not be read; refusing to use the user profile");
+        return false;
+    }
+    userDataFolder.assign(profile.data(), copied);
+#endif
 
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,

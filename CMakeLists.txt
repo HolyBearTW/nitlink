@@ -251,6 +251,7 @@ if(BUILD_TESTING)
         target_include_directories(NitLinkWebViewRuntimeTests PRIVATE
             ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party
             ${CMAKE_SOURCE_DIR}/third_party/webview2/include)
+        target_compile_definitions(NitLinkWebViewRuntimeTests PRIVATE NITLINK_WEBVIEW_TEST_PROFILE=1)
         target_link_libraries(NitLinkWebViewRuntimeTests PRIVATE ole32 oleaut32 shlwapi
             ${CMAKE_SOURCE_DIR}/third_party/webview2/lib/x64/WebView2LoaderStatic.lib)
         add_dependencies(NitLinkWebViewRuntimeTests NitLinkRuntimeResources)
@@ -265,6 +266,7 @@ if(BUILD_TESTING)
         target_include_directories(NitLinkSettingsLayoutTests PRIVATE
             ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party
             ${CMAKE_SOURCE_DIR}/third_party/webview2/include)
+        target_compile_definitions(NitLinkSettingsLayoutTests PRIVATE NITLINK_WEBVIEW_TEST_PROFILE=1)
         target_link_libraries(NitLinkSettingsLayoutTests PRIVATE ole32 oleaut32 shlwapi
             ${CMAKE_SOURCE_DIR}/third_party/webview2/lib/x64/WebView2LoaderStatic.lib)
         add_dependencies(NitLinkSettingsLayoutTests NitLinkRuntimeResources)
