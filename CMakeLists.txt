@@ -448,6 +448,13 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkFrameRateStatsTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME frame_rate_stats COMMAND NitLinkFrameRateStatsTests)
 
+    add_executable(NitLinkHudFpsDetailsToggleTests
+        tests/hud_fps_details_toggle_tests.cpp
+        src/overlay/hud_fps_details_toggle.h
+    )
+    target_include_directories(NitLinkHudFpsDetailsToggleTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME hud_fps_details_toggle COMMAND NitLinkHudFpsDetailsToggleTests)
+
     add_executable(NitLinkFrameDifferAvailabilityTests
         tests/frame_differ_availability_tests.cpp src/capture/frame_differ.cpp)
     target_include_directories(NitLinkFrameDifferAvailabilityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)

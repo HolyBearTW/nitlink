@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/frame_rate_stats.h"
+#include "hud_fps_details_toggle.h"
 
 #include "no_signal_image.h"
 #include <d3d11.h>
@@ -72,6 +73,9 @@ public:
     void OnResizeEnd();
 
     void Render(const Stats& stats);
+    bool HandleMouseDown(int clientX, int clientY) noexcept {
+        return m_fpsDetailsToggle.ToggleAt(clientX, clientY);
+    }
 
     // Draw a localized full-window status frame before capture initialization
     // completes or while a capture-format transition is in progress.
@@ -200,6 +204,7 @@ private:
     bool                         m_noSignalUsingCustom = false;
 
     bool m_initialized = false;
+    HudFpsDetailsToggle m_fpsDetailsToggle;
 
     // Content-change FPS history; Unknown breaks this sparkline.
     std::deque<float> m_contentFpsHistory;

@@ -467,6 +467,16 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         m_renderer->EndFrame();
     }
     m_showOverlay = startupOverlayOk && m_config->showOverlay;
+    Window::InputCallbacks overlayInput{};
+    overlayInput.onMouseDown = [this](int x, int y) {
+        if (m_showOverlay && !m_isPiP && m_overlay) {
+            m_overlay->HandleMouseDown(x, y);
+        }
+    };
+    // Window captures the mouse whenever a mouse-down callback is installed;
+    // the matching callback lets WM_LBUTTONUP release that capture promptly.
+    overlayInput.onMouseUp = [](int, int) {};
+    m_window->SetInputCallbacks(std::move(overlayInput));
     m_window->Show(nCmdShow);
     AppLog(L"Initialize: startup frame presented and window shown");
     if (startupOverlayOk) ApplyNoSignalSettings();
@@ -2967,8 +2977,8 @@ void Application::Run()
             } else if (presentationState == PresentationState::WaitingForCapture) {
                 drawCaptureStatus();
             }
-            // PiP gate: the HUD panel is a fixed 280x156 px overlay, which
-            // dominates a 480x270 PiP window and looks broken. Suppress it
+            // PiP gate: the HUD panel is 280x162 collapsed or 280x202
+            // expanded, which dominates a 480x270 PiP window. Suppress it
             // entirely while PiP is active; the panel still renders
             // normally when PiP is off.
             else if (m_showOverlay && m_overlay && !m_isPiP) {
@@ -3123,7 +3133,7 @@ void Application::Run()
             drawCaptureStatus();
         }
         // Draw overlay if enabled (only when a real signal is present).
-        // PiP gate: same rationale as the HDR branch: the 280x156 HUD
+        // PiP gate: same rationale as the HDR branch: the 280x162/202 HUD
         // dominates a 480x270 PiP window. Suppress while PiP is active.
         else if (m_showOverlay && !m_isPiP) {
             Overlay::Stats stats{};

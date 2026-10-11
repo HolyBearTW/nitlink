@@ -598,12 +598,12 @@ void Overlay::Render(const Stats& stats)
     m_latencyHistory.push_back(stats.signalActive ? totalLatency : 0.0f);
     if (m_latencyHistory.size() > kHistorySize) m_latencyHistory.pop_front();
 
-    // HUD layout, matched to the F1 panel: a 280 x 202 card with square
-    // corners, a title band on top, two metric columns with sparklines,
-    // and a footer with the GPU time and the pipeline badges. Sizes are
-    // in DIPs at the 96 DPI the Direct2D target was created with.
+    // HUD layout, matched to the F1 panel: a 280 x 162 collapsed card or
+    // 280 x 202 expanded card, with square corners, two primary metrics,
+    // and a footer with GPU time and pipeline badges. Sizes are in DIPs at
+    // the 96 DPI the Direct2D target was created with.
     const float panelW = 280.0f;
-    const float panelH = 202.0f;
+    const float panelH = m_fpsDetailsToggle.PanelHeight();
     const float margin = 16.0f;
     const float pad    = 14.0f;
     const float bandH  = 30.0f;
@@ -664,6 +664,25 @@ void Overlay::Render(const Stats& stats)
         drawText(L"NITLINK", m_textFormatLabel.Get(),
                  D2D1::RectF(panel.left + pad + 15.0f, panel.top, panel.left + 150.0f, panel.top + bandH),
                  m_brushInk2.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        // The compact left/right disclosure button toggles the auxiliary FPS rows.
+        const D2D1_RECT_F toggleButton = D2D1::RectF(
+            static_cast<float>(HudFpsDetailsToggle::kButtonLeft),
+            static_cast<float>(HudFpsDetailsToggle::kButtonTop),
+            static_cast<float>(HudFpsDetailsToggle::kButtonRight),
+            static_cast<float>(HudFpsDetailsToggle::kButtonBottom));
+        m_d2dContext->FillRectangle(toggleButton, hairBrush.Get());
+        m_d2dContext->DrawRectangle(toggleButton, borderBrush.Get(), 1.0f);
+
+        const float cx = (toggleButton.left + toggleButton.right) * 0.5f;
+        const float cy = (toggleButton.top + toggleButton.bottom) * 0.5f;
+        const float direction = m_fpsDetailsToggle.IsExpanded() ? -1.0f : 1.0f;
+        m_d2dContext->DrawLine(
+            D2D1::Point2F(cx - direction * 3.5f, cy - 5.0f),
+            D2D1::Point2F(cx + direction * 2.5f, cy), m_brushAccent.Get(), 1.8f);
+        m_d2dContext->DrawLine(
+            D2D1::Point2F(cx + direction * 2.5f, cy),
+            D2D1::Point2F(cx - direction * 3.5f, cy + 5.0f), m_brushAccent.Get(), 1.8f);
 
         std::wstringstream ss;
         if (sig) ss << stats.captureWidth << L"\u00d7" << stats.captureHeight;
@@ -822,18 +841,21 @@ void Overlay::Render(const Stats& stats)
                  row, m_brushInk2.Get(), DWRITE_TEXT_ALIGNMENT_TRAILING,
                  DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     };
-    drawFpsRow(L"overlay.captureFps", stats.frameRates.captureFps, sig, 126.0f);
-    drawFpsRow(L"overlay.presentFps", stats.frameRates.presentFps, sig, 146.0f);
+    if (m_fpsDetailsToggle.IsExpanded()) {
+        drawFpsRow(L"overlay.captureFps", stats.frameRates.captureFps, sig, 126.0f);
+        drawFpsRow(L"overlay.presentFps", stats.frameRates.presentFps, sig, 146.0f);
+    }
 
     // ---- 5. Footer: GPU time and pipeline badges ---------------------------
     {
-        const float ruleY = panel.top + 170.0f + 0.5f;
+        const float ruleY = panel.top + m_fpsDetailsToggle.FooterRuleTop() + 0.5f;
         m_d2dContext->DrawLine(D2D1::Point2F(panel.left + pad,  ruleY),
                                D2D1::Point2F(panel.right - pad, ruleY),
                                hairBrush.Get(), 1.0f);
 
-        const D2D1_RECT_F footer = D2D1::RectF(panel.left + pad, panel.top + 172.0f,
-                                               panel.right - pad, panel.top + 194.0f);
+        const D2D1_RECT_F footer = D2D1::RectF(
+            panel.left + pad, panel.top + m_fpsDetailsToggle.FooterTop(),
+            panel.right - pad, panel.top + m_fpsDetailsToggle.FooterBottom());
 
         // Real per-frame GPU work from the renderer's timestamp queries.
         // Shows "GPU --" until the query ring has filled, or permanently if
