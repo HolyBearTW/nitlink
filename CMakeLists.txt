@@ -90,6 +90,7 @@ set(NITLINK_SOURCES
     src/discord/pipe_transport.cpp
     src/discord/discord_rpc.cpp
     src/discord/discord_rpc.h
+    src/discord/activity_fields.h
     src/app.rc
 )
 

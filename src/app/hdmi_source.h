@@ -123,10 +123,12 @@ constexpr std::wstring_view GetEffectiveHdmiSourceLabel(
     std::wstring_view customSource = {}) noexcept {
     if (manualSource == "other") {
         const auto custom = TrimManualHdmiSourceCustom(customSource);
-        return custom.empty() ? std::wstring_view(L"Other") : custom;
+        if (!custom.empty()) return custom;
+        // Until a name is saved, Other follows the same detector priority as Auto.
+    } else {
+        for (const auto& [canonical, label] : kManualHdmiSources)
+            if (manualSource == canonical && !label.empty()) return label;
     }
-    for (const auto& [canonical, label] : kManualHdmiSources)
-        if (manualSource == canonical && !label.empty()) return label;
     return !detectedSource.empty() ? detectedSource : sourceName;
 }
 

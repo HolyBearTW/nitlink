@@ -104,6 +104,61 @@ static void SourcePresenceTest() {
           payload.find("\"large_image\":\"spider-man-2\"") != std::string::npos,
           "selected game keeps game title/art and shares source mapping");
     pipe.Send(reply, sizeof(reply));
+    const auto singleCharacterSource = GetEffectiveHdmiSourceLabel("other", {}, {}, L"熊");
+    rpc.SetActivity(L"Spider-Man 2", ComposeHdmiPresenceState(singleCharacterSource, signal, L"HDR"),
+                    started, "spider-man-2", L"Spider-Man 2");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\":\"Spider-Man 2\"") != std::string::npos &&
+          payload.find("\"state\":\"熊 · 1920x1080 @ 60Hz · HDR\"") != std::string::npos &&
+          payload.find("\"large_image\":\"spider-man-2\"") != std::string::npos &&
+          payload.find("\"large_text\":\"Spider-Man 2\"") != std::string::npos &&
+          payload.find("\"start\":1700000000") != std::string::npos,
+          "source label switch retains selected game name, art, tooltip, and activity start time");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"熊", L"\xd83c\xdfae", started, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\"") == std::string::npos &&
+          payload.find("\"state\"") == std::string::npos &&
+          payload.find("\"large_image\":\"nitlink-logo\"") != std::string::npos &&
+          payload.find("\"start\":1700000000") != std::string::npos,
+          "single BMP or supplementary Unicode scalar fields are omitted without filler");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"熊貓", L"\xd83c\xdfae熊", started, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\":\"熊貓\"") != std::string::npos &&
+          payload.find(std::string("\"state\":\"") + "\xf0\x9f\x8e\xae" + "熊\"") != std::string::npos,
+          "two Unicode scalars remain valid regardless of UTF-8 bytes or UTF-16 units");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"\xd800x", L"x\xdc00", started, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\"") == std::string::npos &&
+          payload.find("\"state\"") == std::string::npos,
+          "malformed UTF-16 cannot produce empty or invalid serialized activity fields");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(ComposeHdmiPresenceDetails(singleCharacterSource, signal, L"HDR"),
+                    ComposeHdmiPresenceSignal(signal, L"HDR"), started, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(ComposeHdmiWindowTitle(singleCharacterSource, {}, {}) == L"NitLink - 熊" &&
+          payload.find("\"details\":\"熊 · 1920x1080 @ 60Hz · HDR\"") != std::string::npos &&
+          payload.find("\"state\":\"1920x1080 @ 60Hz · HDR\"") != std::string::npos &&
+          payload.find("\"start\":1700000000") != std::string::npos,
+          "viewer preserves one-character local source and uses actual signal metadata for Discord details");
+    pipe.Send(reply, sizeof(reply));
+    const auto automaticFallback = GetEffectiveHdmiSourceLabel("other", L"Detected PS5", L"SPD", L"　 ");
+    rpc.SetActivity(ComposeHdmiPresenceDetails(automaticFallback, signal, L"HDR"),
+                    ComposeHdmiPresenceSignal(signal, L"HDR"), started, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(ComposeHdmiWindowTitle(automaticFallback, {}, {}) == L"NitLink - Detected PS5" &&
+          payload.find("\"details\":\"Detected PS5\"") != std::string::npos &&
+          payload.find("Other") == std::string::npos && payload.find("\"start\":1700000000") != std::string::npos,
+          "unset Other uses the same automatic source in the window title and serialized Discord activity");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"Deck \"\\ PC", L"HDMI\nSDR", started);
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\":\"Deck \\\"\\\\ PC\"") != std::string::npos &&
+          payload.find("\"state\":\"HDMI\\nSDR\"") != std::string::npos,
+          "valid activity fields retain quote, backslash, and control-character JSON escaping");
+    pipe.Send(reply, sizeof(reply));
     rpc.SetActivity(L"", L"", started, "nitlink-logo", L"NitLink");
     payload = ReceiveServerFrame(pipe, 1);
     Check(payload.find("\"details\"") == std::string::npos && payload.find("\"state\"") == std::string::npos &&

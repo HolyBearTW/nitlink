@@ -5277,7 +5277,7 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
         // Viewer: source in details, actual signal in state. Discord supplies
         // the application name; do not repeat it as "In NitLink".
         m_discord->SetActivity(
-            sourceLabel,
+            ComposeHdmiPresenceDetails(sourceLabel, signalLabel, rangeLabel, GetHdmiSourceVrrState()),
             ComposeHdmiPresenceSignal(signalLabel, rangeLabel, GetHdmiSourceVrrState()),
             m_discordActivityStart,
             "nitlink-logo",

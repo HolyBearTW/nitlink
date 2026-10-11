@@ -14,16 +14,26 @@ manual_hdmi_source_custom =
 
 Canonical values are `auto`, `ps5`, `ps4`, `switch2`, `switch`, `xbox_series`,
 `xbox_one`, `pc`, and `other`. Fixed runtime labels are PS5, PS4, Switch 2,
-Switch, Xbox Series X|S, Xbox One, PC, and Other. Auto supplies no override.
+Switch, Xbox Series X|S, Xbox One, and PC. Auto supplies no override.
 Missing or invalid configuration defaults to `auto`. Invalid native UI messages
 are rejected. Switching capture cards does not reset these preferences.
 
 Other accepts a trimmed custom name of at most 64 Unicode scalar values.
 Controls, newlines, invalid UTF-8, and malformed UTF-16 are rejected. An empty
-name displays Other. JSON escaping and DOM text insertion preserve literal text.
+or whitespace-only saved name falls back to Auto's effective source, retaining
+the existing detector priority; no detection means an unknown identity.
+Cancelling the editor leaves the saved name intact and discards the draft.
+JSON escaping and DOM text insertion preserve literal text.
 The F1 Source popover uses the existing select style, placing the identity picker
 immediately after the manual capture format heading, before resolution/FPS/format.
 Changing identity saves immediately and refreshes labels without reopening capture.
+
+Local source labels accept single Unicode scalar names, such as `熊`. Discord's
+optional Details/State fields require at least two Unicode scalars, counting a
+UTF-16 surrogate pair as one character. Short viewer identities use the same name
+plus actual signal metadata when available; without metadata they are omitted.
+Selected game titles/art and the activity start time retain their existing behavior.
+The RPC boundary also omits short or malformed fields without padding or truncation.
 
 ## Independent signal fields
 

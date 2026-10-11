@@ -272,10 +272,67 @@ void CaptureLayouts(WebViewSettings& host, HWND window, const std::filesystem::p
         L"v1.2.4-holybear", false, L"", 1920, 1080, WebViewSettings::Dock::Full);
     captureAbout(L"about-full-2560x1440-zh-TW.png", L"Full", L"zh-TW", L"current",
         L"v1.2.4-holybear", false, L"", 2560, 1440, WebViewSettings::Dock::Full);
+    // Render the production source controls through the native host. The saved
+    // one-character name is a fixture; no capture hardware or user config is used.
+    for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        Resize(host, window, 1920, 1080, WebViewSettings::Dock::Full);
+        PushState(host, L"Full", locale);
+        std::wstring sourceState = LR"({"state":{"manualHdmiSource":"other",
+            "manualHdmiSourceCustom":"熊","effectiveHdmiSource":"熊",
+            "manualHdmiSourceOptions":[)";
+        for (const auto& [value, label] : NitLink::kManualHdmiSources) {
+            if (value != "auto") sourceState += L",";
+            sourceState += L"{\"value\":\"" + std::wstring(value.begin(), value.end()) +
+                L"\",\"label\":\"" + std::wstring(label) + L"\"}";
+        }
+        sourceState += L"]}}";
+        host.PostMessage(sourceState);
+        Check(PumpUntil([&] {
+            return Script(view, L"document.documentElement.lang === '" + std::wstring(locale) +
+                L"' && document.getElementById('hdmi-source-trigger').value === 'other' && "
+                L"document.getElementById('meta-hdmi-source').textContent === '熊'") == L"true";
+        }), "localized saved HDMI source reaches the native capture host");
+        Script(view, LR"JS(
+            document.querySelector('.rail-item[data-tab="pane-video"]').click();
+            if (document.getElementById('source-popover').dataset.open !== 'true')
+                document.getElementById('source-trigger').click();
+        )JS");
+        Check(PumpUntil([&] {
+            return Script(view, LR"JS((() => {
+                const p = document.getElementById('source-popover'), r = p.getBoundingClientRect();
+                const strings = window.NitLinkLocales[document.documentElement.lang];
+                return document.documentElement.dataset.side === 'full' && p.dataset.open === 'true' &&
+                    r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight &&
+                    document.querySelector('#hdmi-source-trigger option[value=other]').textContent === strings['hdmiSource.otherOption'] &&
+                    document.querySelector('#hdmi-source-trigger option[value=auto]').textContent === strings['value.auto'];
+            })())JS") == L"true";
+        }), "Full source popover is localized and visible before native capture");
+        PumpUntil([] { return false; }, 180);
+        Capture(view, folder / (L"full-source-" + std::wstring(locale) + L".png"));
+        Script(view, L"document.getElementById('hdmi-source-custom-edit').click()");
+        Check(PumpUntil([&] {
+            return Script(view, LR"JS((() => {
+                const editor = document.getElementById('hdmi-source-custom-editor');
+                const input = document.getElementById('hdmi-source-custom-input');
+                const strings = window.NitLinkLocales[document.documentElement.lang];
+                const r = editor.getBoundingClientRect(), p = document.getElementById('source-popover').getBoundingClientRect();
+                return !editor.hidden && document.activeElement === input && input.value === '熊' &&
+                    !document.getElementById('hdmi-source-custom-row').hidden && r.width > 0 &&
+                    r.top >= p.top && r.bottom <= p.bottom &&
+                    document.querySelector('label[for=hdmi-source-custom-input]').textContent === strings['hdmiSource.customName'] &&
+                    document.getElementById('hdmi-source-custom-save').textContent === strings['hdmiSource.save'] &&
+                    document.getElementById('hdmi-source-custom-cancel').textContent === strings['hdmiSource.cancel'];
+            })())JS") == L"true";
+        }), "Other editor shows the saved Unicode name and localized actions before native capture");
+        PumpUntil([] { return false; }, 180);
+        Capture(view, folder / (L"full-other-editor-" + std::wstring(locale) + L".png"));
+        Script(view, L"document.getElementById('source-trigger').click()");
+    }
     WriteText(folder / L"README.txt", L"Native WebView2 test-host renders of packaged NitLink settings.\n"
         L"Signal and settings are a fixed test fixture, not live capture observations.\n"
         L"Full PNGs have 1920x1080 and 2560x1440 viewports. Docked PNGs are 420px strips.\n"
         L"About PNGs exercise the localized current, available, API-error and disclosure states.\n"
+        L"Full Source and expanded Other editor PNGs use the saved name 熊 in en-US, zh-TW and zh-CN.\n"
         L"These do not replace screenshots from the NitLink application on real hardware.\n");
 }
 

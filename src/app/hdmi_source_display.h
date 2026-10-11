@@ -2,6 +2,7 @@
 
 #include "capture/hdmi_raw_timing.h"
 #include "capture/hdmi_source_vrr.h"
+#include "discord/activity_fields.h"
 #include <string>
 #include <string_view>
 
@@ -51,7 +52,7 @@ inline std::wstring ComposeHdmiPresenceSignal(std::wstring_view signal,
     append(signal);
     append(confirmedRange);
     if (sourceVrr == HdmiSourceVrrState::Enabled) append(L"VRR");
-    return state;
+    return std::wstring(GetDiscordActivityField(state));
 }
 
 // A selected game keeps its title/art in details, with source+signal in state.
@@ -64,7 +65,17 @@ inline std::wstring ComposeHdmiPresenceState(std::wstring_view identity,
         if (!state.empty()) state += L" · ";
         state += metadata;
     }
-    return state;
+    return std::wstring(GetDiscordActivityField(state));
+}
+
+// Keep short local names intact. Viewer details can include the actual signal
+// to meet Discord's minimum; without that information the field stays absent.
+inline std::wstring ComposeHdmiPresenceDetails(std::wstring_view identity,
+    std::wstring_view signal, std::wstring_view confirmedRange,
+    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown) {
+    if (identity.empty()) return {};
+    const auto fallback = ComposeHdmiPresenceState(identity, signal, confirmedRange, sourceVrr);
+    return std::wstring(GetDiscordActivityField(identity, fallback));
 }
 
 // The application supplies only a title/Discord refresh callback. Unknown

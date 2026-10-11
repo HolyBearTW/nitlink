@@ -46,7 +46,7 @@ void TestLabels() {
         Check(IsValidManualHdmiSource(value), "canonical value accepted");
         const std::wstring wide(value.begin(), value.end());
         Check(IsValidManualHdmiSource(std::wstring_view(wide)), "bridge canonical value accepted");
-        if (value != "auto")
+        if (value != "auto" && value != "other")
             Check(GetEffectiveHdmiSourceLabel(value, L"detected", L"SPD") == label,
                   "manual label overrides both automatic detectors");
     }
@@ -59,8 +59,21 @@ void TestLabels() {
     Check(GetEffectiveHdmiSourceLabel("pc") == L"PC", "PC");
     Check(GetEffectiveHdmiSourceLabel("other", {}, {}, L" Steam Deck ") == L"Steam Deck",
           "Other custom name trimmed");
-    Check(GetEffectiveHdmiSourceLabel("other", {}, {}, L"   ") == L"Other",
-          "empty Other name has English fallback");
+    for (const auto* custom : {L"", L"   ", L"　 \u00a0\u2003 "}) {
+        Check(GetEffectiveHdmiSourceLabel("other", L"4K S detected", L"4K X SPD", custom) ==
+              GetEffectiveHdmiSourceLabel("auto", L"4K S detected", L"4K X SPD"),
+              "blank Other uses Auto detector priority");
+        Check(GetEffectiveHdmiSourceLabel("other", {}, L"4K X SPD", custom) == L"4K X SPD",
+              "blank Other uses Auto secondary detector");
+        Check(GetEffectiveHdmiSourceLabel("other", {}, {}, custom).empty(),
+              "blank Other without detection remains unknown");
+    }
+    Check(GetEffectiveHdmiSourceLabel("other", L"detected", L"SPD", L"熊") == L"熊",
+          "saved one-scalar custom name overrides automatic detection locally");
+    Check(GetEffectiveHdmiSourceLabel("other", L"new device", L"SPD") == L"new device" &&
+          GetEffectiveHdmiSourceLabel("other", {}, L"new SPD") == L"new SPD" &&
+          GetEffectiveHdmiSourceLabel("other").empty(),
+          "unset Other follows each device's current detection, including unknown");
     Check(GetEffectiveHdmiSourceLabel("auto", L"4K S detected", L"4K X SPD") == L"4K S detected",
           "automatic detector priority preserved");
     Check(GetEffectiveHdmiSourceLabel("auto", {}, L"4K X SPD") == L"4K X SPD",
@@ -178,6 +191,20 @@ void TestConfig() {
     config.preferredDevice = L"Another capture card";
     Check(config.manualHdmiSource == "other" && config.manualHdmiSourceCustom == "Steam Deck",
           "identity is independent of capture selection");
+    for (const auto* custom : {L"", L"   ", L"　", L"熊"}) {
+        Check(config.SetManualHdmiSourceCustom(std::wstring_view(custom)) &&
+              config.Save(temporary.path.string()), "empty/Unicode custom can be saved");
+        Config loaded;
+        Check(loaded.Load(temporary.path.string()) && loaded.manualHdmiSource == "other",
+              "Other selection survives empty/Unicode config round-trip");
+        const auto normalized = NormalizeManualHdmiSourceCustom(std::wstring_view(custom));
+        Check(normalized && loaded.manualHdmiSourceCustom == *normalized,
+              "empty/whitespace/one-scalar custom persists normalized value");
+        const auto effective = GetEffectiveHdmiSourceLabel(loaded.manualHdmiSource, L"detected",
+            L"SPD", TrimManualHdmiSourceCustom(custom));
+        Check(effective == (loaded.manualHdmiSourceCustom.empty() ? L"detected" : L"熊"),
+              "persisted blank Other restores Auto, persisted one-scalar name remains local");
+    }
     config.manualHdmiSource = "bad";
     config.manualHdmiSourceCustom = "bad\nhdr_enabled = true";
     Check(config.Save(temporary.path.string()), "save sanitizes corrupted in-memory identity");
@@ -206,6 +233,12 @@ void TestPolicyIsolation() {
         Check(config.Save(temporary.path.string()) &&
               WithoutIdentity(Read(temporary.path)) == originalConfig,
               "identity leaves every other serialized preference unchanged");
+        for (const auto* custom : {L"", L"　 ", L"熊"}) {
+            Check(config.SetManualHdmiSourceCustom(std::wstring_view(custom)) &&
+                  config.Save(temporary.path.string()) &&
+                  WithoutIdentity(Read(temporary.path)) == originalConfig,
+                  "blank and one-scalar identity preserve capture, HDR, pacing, VSync and audio preferences");
+        }
         for (auto actual : {NegotiatedCaptureFormatKind::Other, NegotiatedCaptureFormatKind::NV12,
                             NegotiatedCaptureFormatKind::P010})
         for (auto preference : {CaptureFormatPreference::Auto, CaptureFormatPreference::ManualNV12,
@@ -236,6 +269,42 @@ void TestPolicyIsolation() {
 void TestDisplays() {
     const auto signal = FormatHdmiSourceTiming({1920, 1080, 6000, true});
     Check(signal == L"1920x1080 @ 60Hz", "existing timing style preserved");
+    for (const auto* custom : {L"", L"   ", L"　"}) {
+        const auto source = GetEffectiveHdmiSourceLabel("other", L"PS5", L"SPD", custom);
+        Check(ComposeHdmiWindowTitle(source, signal, L"HDR") ==
+                  L"NitLink - PS5 - 1920x1080 @ 60Hz [HDR]" &&
+              ComposeHdmiPresenceDetails(source, signal, L"HDR") == L"PS5" &&
+              ComposeHdmiPresenceState(source, signal, L"HDR") == L"PS5 · 1920x1080 @ 60Hz · HDR",
+              "blank Other title and Discord share the effective Auto identity");
+    }
+    const auto single = GetEffectiveHdmiSourceLabel("other", L"PS5", {}, L"熊");
+    Check(ComposeHdmiWindowTitle(single, {}, {}) == L"NitLink - 熊",
+          "Discord minimum never changes a legal single-character local title");
+    Check(ComposeHdmiPresenceDetails(single, signal, L"HDR") ==
+              L"熊 · 1920x1080 @ 60Hz · HDR" &&
+          ComposeHdmiPresenceState(single, signal, L"HDR") ==
+              L"熊 · 1920x1080 @ 60Hz · HDR",
+          "Discord short identity uses meaningful actual signal and retains source name");
+    Check(ComposeHdmiPresenceDetails(single, {}, {}).empty() &&
+          ComposeHdmiPresenceState(single, {}, {}).empty() &&
+          ComposeHdmiPresenceDetails({}, signal, L"HDR").empty(),
+          "Discord omits optional short or unknown identities without invented information");
+    Check(ComposeHdmiPresenceDetails(single, {}, L"SDR") == L"熊 · SDR" &&
+          ComposeHdmiPresenceDetails(single, {}, {}, HdmiSourceVrrState::Enabled) == L"熊 · VRR",
+          "confirmed range or VRR supplies meaningful fallback without timing");
+    Check(!HasMinimumDiscordActivityCharacters(L"熊") &&
+          !HasMinimumDiscordActivityCharacters(L"\xd83c\xdfae") &&
+          HasMinimumDiscordActivityCharacters(L"熊貓") &&
+          HasMinimumDiscordActivityCharacters(L"\xd83c\xdfae熊"),
+          "Discord counts Unicode scalars instead of UTF-8 bytes or UTF-16 units");
+    Check(!HasMinimumDiscordActivityCharacters(L"AB\xd800") &&
+          !HasMinimumDiscordActivityCharacters(L"\xdc00" L"AB") &&
+          !HasMinimumDiscordActivityCharacters(L"\xd800" L"A"),
+          "Discord validates the entire UTF-16 field before accepting it");
+    Check(GetDiscordActivityField(L"熊", signal) == signal &&
+          GetDiscordActivityField(L"熊", L"X").empty() &&
+          GetDiscordActivityField(L"熊貓", signal) == L"熊貓",
+          "Discord fallback validates both candidates without padding or clipping");
     Check(ComposeHdmiWindowTitle(GetEffectiveHdmiSourceLabel("switch2"), signal, L"HDR") ==
           L"NitLink - Switch 2 - 1920x1080 @ 60Hz [HDR]", "identity plus true signal title");
     Check(ComposeHdmiWindowTitle(L"Steam Deck", L"1920x1080 @ 120Hz", L"SDR") ==
