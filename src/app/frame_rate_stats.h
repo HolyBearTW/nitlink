@@ -22,9 +22,11 @@ struct FrameRateStats {
     uint32_t presentFps = 0;
     bool contentAvailable = false;
 
-    // The HUD's primary number always measures presentation, in every pacing
-    // mode. Zero is a valid measurement, never a request for a fallback.
-    uint32_t HudFps() const { return presentFps; }
+    // The primary HUD metric estimates observed content changes, not the
+    // game's renderer or the display's scanout. Unknown and measured zero
+    // remain distinct; neither falls back to capture or presentation.
+    uint32_t HudFps() const { return contentFps; }
+    bool HudFpsAvailable() const { return contentAvailable; }
 };
 
 inline FrameRateStats SampleFrameRates(const FrameRateCounters& current,
@@ -33,8 +35,8 @@ inline FrameRateStats SampleFrameRates(const FrameRateCounters& current,
                                       bool contentAvailable)
 {
     FrameRateStats stats;
-    stats.contentAvailable = contentAvailable;
     if (!(elapsedSeconds > 0) || !std::isfinite(elapsedSeconds)) return stats;
+    stats.contentAvailable = contentAvailable && current.content >= previous.content;
 
     auto rate = [elapsedSeconds](uint64_t count, uint64_t before) -> uint32_t {
         // Capture buffers are rebuilt on device/format changes. A reset must
@@ -45,7 +47,7 @@ inline FrameRateStats SampleFrameRates(const FrameRateCounters& current,
             static_cast<double>(std::numeric_limits<uint32_t>::max())));
     };
     stats.captureFps = rate(current.captured, previous.captured);
-    stats.contentFps = contentAvailable ? rate(current.content, previous.content) : 0;
+    stats.contentFps = stats.contentAvailable ? rate(current.content, previous.content) : 0;
     stats.presentFps = rate(current.presented, previous.presented);
     return stats;
 }

@@ -398,6 +398,12 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkFrameRateStatsTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME frame_rate_stats COMMAND NitLinkFrameRateStatsTests)
 
+    add_executable(NitLinkFrameDifferAvailabilityTests
+        tests/frame_differ_availability_tests.cpp src/capture/frame_differ.cpp)
+    target_include_directories(NitLinkFrameDifferAvailabilityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkFrameDifferAvailabilityTests PRIVATE d3d11 d3dcompiler)
+    add_test(NAME frame_differ_availability COMMAND NitLinkFrameDifferAvailabilityTests)
+
     add_executable(NitLinkDisplayRefreshTests
         tests/display_refresh_tests.cpp src/app/display_refresh.cpp)
     target_include_directories(NitLinkDisplayRefreshTests PRIVATE ${CMAKE_SOURCE_DIR}/src)

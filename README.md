@@ -71,7 +71,7 @@ NitLink is NOT for you if:
 - **True-HDR screenshots.** `Ctrl+S` saves a shareable tonemapped SDR `.png` and, when capturing HDR, a true-HDR `.jxr` (scRGB FP16) sidecar that opens as real HDR in the Windows Photos app.
 - **MJP-style Catmull-Rom resampling**: sharp bicubic without ringing artifacts, the same algorithm used by mpv and madVR.
 - **NIS upscaling**: NVIDIA Image Scaling integrated as a compute-shader pass for sharpening at non-native window sizes.
-- **HDR-aware HUD overlay**: successful Present FPS, Capture FPS, Content FPS (estimated), latency and pipeline status. Present counts submissions, including repeated pictures; Content estimates picture changes rather than game FPS. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
+- **HDR-aware HUD overlay**: Content FPS (estimated) is the main number and sparkline, with Capture FPS and successful Present FPS underneath. Static content can measure 0; unavailable estimation shows `--`. Capture includes duplicates, Content estimates pixel changes rather than game FPS, and Present counts submissions rather than display scanout. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
 - **WASAPI audio routing** with volume + mute.
 - **Borderless fullscreen** and **picture-in-picture**.
 - **Prevent sleep while playing.** Enabled by default while captured video is visible, including paused games. Releases when minimized, hidden, showing No signal or closed. Turn off **Prevent sleep** in F1 to keep normal Windows idle sleep behavior. Windows power settings are not changed; manual sleep and policy-enforced screen locking remain available.

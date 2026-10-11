@@ -458,6 +458,8 @@ private:
 
     uint32_t m_currentFps        = 0;   // frames written to the capture buffer per second
     uint32_t m_currentContentFps = 0;   // changed frames estimated by the GPU differ per second
+    bool     m_currentContentAvailable = false;
+    uint64_t m_contentClassificationsSinceSample = 0;
     uint64_t m_uniqueFrameCount  = 0;
     uint64_t m_skippedFrameCount = 0;   // frames skipped by VRR present pacing (total)
     // Keep skip counts for pacing diagnostics. Capture stalls make iteration

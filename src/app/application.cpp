@@ -1150,7 +1150,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     // Frame differ: detects "is this captured frame new content vs a duplicate?"
-    // Needed for real game-FPS reporting. Best-effort init.
+    // Estimates visible content-change FPS, not the game's true FPS. Best-effort init.
     m_frameDiffer = std::make_unique<FrameDiffer>();
     if (!m_frameDiffer->Initialize(m_renderer->GetDevice())) {
         AppLog(L"Initialize: FrameDiffer::Initialize FAILED (continuing without)");
@@ -1819,6 +1819,8 @@ void Application::Run()
     
     auto lastFpsUpdate = Clock::now();
     FrameRateCounters lastFpsCounters;
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
 
     MSG msg{};
     while (m_running) {
@@ -2563,8 +2565,11 @@ void Application::Run()
             m_loopDifferSumMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - differStart).count();
             isNewFrame = m_frameDiffer->WasPreviousFrameNew();
             m_sourceCadence.OnClassifiedFrame(isNewFrame);
+            if (m_frameDiffer->HasFrameClassification()) {
+                ++m_contentClassificationsSinceSample;
+                if (isNewFrame) ++m_uniqueFrameCount;
+            }
             if (isNewFrame) {
-                m_uniqueFrameCount++;
                 // Motion-recency gate: the differ saw a non-duplicate frame,
                 // so the HDMI source is producing fresh content. This is the
                 // motion half of the (motion OR content) gate consulted by
@@ -2595,10 +2600,12 @@ void Application::Run()
                     m_uniqueFrameCount, m_presentCount
                 };
                 const auto rates = SampleFrameRates(counters, lastFpsCounters,
-                                                   elapsed, m_frameDiffer != nullptr);
+                                                   elapsed, m_contentClassificationsSinceSample > 0);
                 m_currentFps        = rates.captureFps;
                 m_currentContentFps = rates.contentFps;
                 m_currentPresentFps = rates.presentFps;
+                m_currentContentAvailable = rates.contentAvailable;
+                m_contentClassificationsSinceSample = 0;
                 lastFpsCounters     = counters;
 
                 lastFpsUpdate          = now;
@@ -2633,6 +2640,7 @@ void Application::Run()
                        << L" maxTile=" << (m_frameDiffer ? m_frameDiffer->GetLastMaxTileValue() : 0.0f)
                        << L" tileThr=" << (m_frameDiffer ? m_frameDiffer->GetTileThreshold() : 0.0f)
                        << L" contentFps=" << m_currentContentFps
+                       << L" contentAvailable=" << m_currentContentAvailable
                        << L" captureFps=" << m_currentFps
                        << L" dropped=" << dropped
                        << L" totalSkipped=" << m_skippedFrameCount
@@ -2928,7 +2936,7 @@ void Application::Run()
                 stats.appIngestMs      = m_mfDeliveryLatencyMs;
                 stats.gpuMs            = m_renderer->GetLastGpuMs();
                 stats.frameRates = {m_currentFps, m_currentContentFps,
-                                    m_currentPresentFps, m_frameDiffer != nullptr};
+                                    m_currentPresentFps, m_currentContentAvailable};
                 stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
                 stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
                 stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -3083,7 +3091,7 @@ void Application::Run()
             stats.appIngestMs      = m_mfDeliveryLatencyMs;
             stats.gpuMs            = m_renderer->GetLastGpuMs();
             stats.frameRates = {m_currentFps, m_currentContentFps,
-                                m_currentPresentFps, m_frameDiffer != nullptr};
+                                m_currentPresentFps, m_currentContentAvailable};
             stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
             stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
             stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -4076,6 +4084,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     // classification can persist across the swap, leaving contentFps wedged
     // at 0 even when fresh content is arriving from the new capture session.
     if (m_frameDiffer) m_frameDiffer->Reset();
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
     // The new stream may run at another source rate, so its cadence is
     // measured again from the first new frames.
     m_sourceCadence.Reset();
@@ -4509,6 +4519,8 @@ bool Application::RecoverFromDeviceLost()
     m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
     m_frameDiffer.reset();
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
     m_nisUpscaler.reset();
     // Keep the Overlay object itself so its device-independent decoded No
     // Signal pixels survive the graphics-device rebuild. Shutdown releases all

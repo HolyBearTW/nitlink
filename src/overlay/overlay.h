@@ -201,8 +201,8 @@ private:
 
     bool m_initialized = false;
 
-    // History for sparkline graphs
-    std::deque<float> m_fpsHistory;
+    // Content-change FPS history; Unknown breaks this sparkline.
+    std::deque<float> m_contentFpsHistory;
     std::deque<float> m_latencyHistory;
     static constexpr size_t kHistorySize = 60;
 };

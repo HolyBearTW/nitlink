@@ -12,8 +12,8 @@ namespace NitLink {
 //
 // Why this is needed:
 //   The Elgato delivers 60 frames/sec over HDMI regardless of game framerate.
-//   A 30fps game sends each rendered frame TWICE. To get the real game FPS
-//   a reliable signal is needed: "is this frame actually new content?"
+//   A 30fps game may send each rendered frame TWICE. Content-change FPS is
+//   an estimate from the captured pixels, not the game's true renderer FPS.
 //
 // Architecture:
 //   FrameDiffer is self-contained: it owns two small internal textures (the
@@ -63,6 +63,10 @@ public:
     // content. Available after >=2 calls; returns true conservatively until
     // then to avoid undercounting during startup.
     bool WasPreviousFrameNew() const { return m_wasNew; }
+    // True only when the latest Process obtained an actual GPU comparison.
+    // Startup/reset and busy/failed readbacks are Unknown for FPS telemetry;
+    // the conservative WasPreviousFrameNew pacing verdict is unchanged.
+    bool HasFrameClassification() const { return m_classificationAvailable; }
     // Readbacks that found the GPU still busy and kept the previous
     // classification instead of waiting. Cumulative; a steadily growing
     // count means the GPU is contended by other work.
@@ -146,6 +150,7 @@ private:
     uint32_t                           m_readbackSkips  = 0;
 
     bool   m_wasNew    = true;
+    bool   m_classificationAvailable = false;
     float  m_lastDiff  = 0.0f;     // frame-global mean SAD (= average of tiles)
     float  m_lastMaxTile = 0.0f;   // max per-tile mean SAD (localized motion)
     // Threshold tuned empirically with VRR present pacing on real HDR content
