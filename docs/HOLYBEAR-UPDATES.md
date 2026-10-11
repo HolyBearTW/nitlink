@@ -1,9 +1,13 @@
 # Optional HolyBear update checks
 
 F1 → About shows the running HolyBear version once, a compact update control,
-and easy-to-find feedback/support links. Technical details, the complete build
-tag, last attempt time, source/license links and contributor credits are in a
-keyboard-accessible disclosure that is expanded by default. The shared
+and easy-to-find feedback/support links. The update section shows the last check
+time in the selected language's date format, or “Not yet checked.” A newer
+version is displayed without the leading `v`; its release link retains the
+actual GitHub tag. Technical information and contributor credits have separate
+keyboard-accessible disclosures, both expanded by default. Technical details,
+the community edition notice and source/license links stay in the first;
+the original contributor names and links stay in the second. The shared
 capture/signal strip is hidden only while About is selected and returns on the
 other tabs. English, Traditional
 Chinese and Simplified Chinese use the existing localization and settings

@@ -212,6 +212,7 @@
     .about-auto-check .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     .about-release-row { padding: 0 22px 6px; }
     .about-release-link { display: inline-block; color: var(--accent-text); font-size: 12px; font-weight: 500; line-height: 1.5; }
+    .about-last-check { padding: 0 22px 6px; color: var(--ink3); font-size: 11.5px; line-height: 1.55; overflow-wrap: anywhere; }
     .about-update-note { padding: 0 22px 12px; color: var(--ink3); font-size: 11.5px; line-height: 1.55; }
     .about-links { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 22px; border-bottom: 1px solid var(--hair); }
     .about-links a, .about-source-links a { font-size: 12.5px; font-weight: 500; }
@@ -221,14 +222,10 @@
     .about-details > summary::after { content: '▾'; color: var(--ink3); transition: transform .12s ease; }
     .about-details[open] > summary::after { transform: rotate(180deg); }
     .about-details-body { padding: 12px 22px 18px; }
-    .about-detail-list { display: grid; grid-template-columns: minmax(100px, max-content) minmax(0, 1fr); gap: 6px 16px; font-size: 12px; line-height: 1.5; }
-    .about-detail-list dt { color: var(--ink3); }
-    .about-detail-list dd { min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
-    .about-tech { margin-top: 12px; color: var(--ink2); font-size: 12px; line-height: 1.55; }
     .about-details-body > p { margin-top: 10px; color: var(--ink2); font-size: 12px; line-height: 1.6; text-wrap: pretty; }
+    .about-details-body > p:first-child { margin-top: 0; }
     .about-source-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
-    .about-contributors { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hair); color: var(--ink2); font-size: 12px; line-height: 1.55; }
-    .about-contributors-title { color: var(--ink3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+    .about-contributors { color: var(--ink2); font-size: 12px; line-height: 1.55; }
     .about-contributor { margin-top: 4px; }
     .about-contributor a { color: var(--accent-text); font-weight: 500; transition: color .12s ease; }
     .about-contributor a:hover { color: var(--accent); }
@@ -345,11 +342,11 @@
       .about-update-state { align-items: flex-start; padding: 10px 16px 5px; }
       .about-auto-check { min-width: auto; }
       .about-release-row { padding: 0 16px 5px; }
+      .about-last-check { padding: 0 16px 5px; }
       .about-update-note { padding: 0 16px 10px; }
       .about-links { gap: 12px 18px; padding: 11px 16px; }
       .about-details > summary { padding: 10px 16px; }
       .about-details-body { padding: 11px 16px 16px; }
-      .about-detail-list { grid-template-columns: minmax(88px, max-content) minmax(0, 1fr); gap: 5px 10px; }
       .toast { max-width: calc(100vw - 24px); }
     }
 
@@ -769,20 +766,16 @@
             <div class="about-release-row">
               <a id="holy-bear-release-link" class="about-release-link" target="_blank" rel="noopener noreferrer" data-i18n="update.download" hidden></a>
             </div>
+            <p class="about-last-check"><span data-i18n="update.lastCheck"></span>: <span id="holy-bear-last-check"></span></p>
             <p class="about-update-note" data-i18n="update.autoHelp"></p>
           </section>
           <nav class="about-links" data-i18n-aria-label="about.quickLinks">
             <a href="https://tally.so/r/EkZjNr" target="_blank" rel="noopener noreferrer" data-i18n="about.feedback"></a>
             <a href="https://ko-fi.com/klosed89" target="_blank" rel="noopener noreferrer" data-i18n="about.support"></a>
           </nav>
-          <details class="about-details" open>
-            <summary id="about-details-summary" aria-controls="about-details-body" aria-expanded="true" data-i18n="about.technicalContributors"></summary>
+          <details class="about-details" id="about-technical" open>
+            <summary id="about-details-summary" aria-controls="about-details-body" aria-expanded="true" data-i18n="about.technicalInformation"></summary>
             <div class="about-details-body" id="about-details-body">
-              <dl class="about-detail-list">
-                <dt data-i18n="about.build"></dt><dd id="holy-bear-version"></dd>
-                <dt data-i18n="about.latestRelease"></dt><dd id="holy-bear-latest-version"></dd>
-                <dt data-i18n="about.lastCheck"></dt><dd id="holy-bear-last-check"></dd>
-              </dl>
               <p class="about-tech"><strong data-i18n="about.renderer"></strong>: <span data-i18n="about.renderingDetails"></span></p>
               <p data-i18n="about.description"></p>
               <p data-i18n="about.holyBearDisclaimer"></p>
@@ -792,11 +785,13 @@
                 <a href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSES.md" target="_blank" rel="noopener noreferrer" data-i18n="about.licenseNotices"></a>
                 <a href="https://github.com/HolyBearTW/nitlink/blob/main/ACKNOWLEDGMENTS.md" target="_blank" rel="noopener noreferrer" data-i18n="about.acknowledgments"></a>
               </div>
-              <div class="about-contributors">
-                <div class="about-contributors-title" data-i18n="about.contributors"></div>
-                <div class="about-contributor"><a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.holyBearName"></a> <span data-i18n="about.holyBearHandle"></span></div>
-                <div class="about-contributor"><a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer">CN_115</a> <span data-i18n="about.cn115Handle"></span></div>
-              </div>
+            </div>
+          </details>
+          <details class="about-details" id="about-contributors" open>
+            <summary id="about-contributors-summary" aria-controls="about-contributors-body" aria-expanded="true" data-i18n="about.contributors"></summary>
+            <div class="about-details-body about-contributors" id="about-contributors-body">
+              <div class="about-contributor"><a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.holyBearName"></a> <span data-i18n="about.holyBearHandle"></span></div>
+              <div class="about-contributor"><a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer">CN_115</a> <span data-i18n="about.cn115Handle"></span></div>
             </div>
           </details>
         </section>

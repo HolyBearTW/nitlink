@@ -497,6 +497,8 @@ int main(int argc, char** argv) {
         Check(PumpUntil([&] { return Script(view, LR"JS((() => {
             const state = window.__lastNativeState;
             return !!state && state.holyBearUpdate.hasNewer === true &&
+                state.holyBearUpdate.current === '1.2.4-holybear' &&
+                state.holyBearUpdate.latest === 'v1.2.5-holybear' &&
                 state.holyBearUpdate.unread === true &&
                 state.holyBearUpdate.lastCheckUtc === 1791730000 &&
                 state.preventSleep === true && Array.isArray(state.captureDevices) &&
@@ -514,7 +516,7 @@ int main(int argc, char** argv) {
             const badge = document.getElementById('holy-bear-update-badge');
             const lastCheck = document.getElementById('holy-bear-last-check');
             return document.documentElement.lang === 'zh-TW' &&
-                update.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5') &&
+                update.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5-holybear') &&
                 !update.hidden && link.href.endsWith('/v1.2.5-holybear') && !link.hidden && !badge.hidden &&
                 lastCheck.textContent === new Date(1791730000 * 1000).toLocaleString('zh-TW') &&
                 document.getElementById('toggle-prevent-sleep').classList.contains('on') &&
@@ -602,7 +604,7 @@ int main(int argc, char** argv) {
                 L"\"lastCheckUtc\":1791730000,\"automatic\":false,\"busy\":false,\"status\":\"available\","
                 L"\"hasNewer\":true,\"unread\":true,\"url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear\"}}}";
             host.PostMessage(state);
-            Check(PumpUntil([&] { return Script(view, L"document.getElementById('holy-bear-update-status').textContent === window.NitLinkLocales[document.documentElement.lang]['update.available'].replace('{version}', '1.2.5') && document.getElementById('holy-bear-release-link').href.endsWith('/v1.2.5-holybear') && !document.getElementById('holy-bear-update-badge').hidden && document.getElementById('holy-bear-latest-version').textContent === 'v1.2.5-holybear'") == L"true"; }),
+            Check(PumpUntil([&] { return Script(view, L"document.getElementById('holy-bear-update-status').textContent === window.NitLinkLocales[document.documentElement.lang]['update.available'].replace('{version}', '1.2.5-holybear') && document.getElementById('holy-bear-release-link').href.endsWith('/v1.2.5-holybear') && !document.getElementById('holy-bear-update-badge').hidden && !document.getElementById('holy-bear-latest-version') && document.getElementById('holy-bear-last-check').closest('.about-update') !== null") == L"true"; }),
                   "HolyBear update notification localizes without network or HTML injection");
         }
         host.PostMessage(LR"({"state":{"locale":"zh-CN","languagePreference":"zh-CN"}})");

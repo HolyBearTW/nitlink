@@ -139,11 +139,11 @@
       const version = currentTag.replace(/^v/, '').replace(/-holybear$/i, '');
       const productTitle = document.getElementById('holy-bear-product-title');
       productTitle.textContent = t('about.productTitle').replace('{version}', version).replace(/\s{2,}/g, ' ').trim();
-      document.getElementById('holy-bear-version').textContent = currentTag || '—';
       const latestTag = typeof s.latest === 'string' ? s.latest : '';
-      document.getElementById('holy-bear-latest-version').textContent = latestTag || t('update.never');
-      document.getElementById('holy-bear-last-check').textContent = s.lastCheckUtc
-        ? new Date(s.lastCheckUtc * 1000).toLocaleString(currentLocale) : t('update.never');
+      const lastCheckDate = typeof s.lastCheckUtc === 'number' && s.lastCheckUtc > 0
+        ? new Date(s.lastCheckUtc * 1000) : null;
+      document.getElementById('holy-bear-last-check').textContent = lastCheckDate && !Number.isNaN(lastCheckDate.getTime())
+        ? lastCheckDate.toLocaleString(currentLocale) : t('update.never');
       const toggle = document.getElementById('toggle-holy-bear-auto-update');
       toggle.classList.toggle('on', !!s.automatic);
       toggle.setAttribute('aria-checked', s.automatic ? 'true' : 'false');
@@ -153,7 +153,7 @@
         'notFound', 'serverUnavailable', 'apiUnavailable', 'invalid'];
       const key = states.includes(s.status) ? s.status : 'never';
       const status = document.getElementById('holy-bear-update-status');
-      status.textContent = t('update.' + key).replace('{version}', latestTag.replace(/^v/, '').replace(/-holybear$/i, ''));
+      status.textContent = t('update.' + key).replace('{version}', latestTag.replace(/^v/, ''));
       status.hidden = key === 'never';
       const link = document.getElementById('holy-bear-release-link');
       const validTag = /^v\d+\.\d+\.\d+(?:\.\d+)?-holybear$/.test(latestTag);
@@ -164,10 +164,11 @@
       else link.removeAttribute('href');
       document.getElementById('holy-bear-update-badge').hidden = !s.unread;
     };
-    const aboutDetails = document.querySelector('.about-details');
-    const aboutDetailsSummary = document.getElementById('about-details-summary');
-    aboutDetails?.addEventListener('toggle', () => {
-      aboutDetailsSummary?.setAttribute('aria-expanded', aboutDetails.open ? 'true' : 'false');
+    document.querySelectorAll('.about-details').forEach(details => {
+      const summary = details.querySelector('summary');
+      const syncExpanded = () => summary.setAttribute('aria-expanded', details.open ? 'true' : 'false');
+      syncExpanded();
+      details.addEventListener('toggle', syncExpanded);
     });
     const updateButton = document.getElementById('holy-bear-check-update');
     if (updateButton) updateButton.addEventListener('click', () => {

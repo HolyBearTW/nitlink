@@ -56,6 +56,36 @@ std::wstring Script(ICoreWebView2* view, const std::wstring& script) {
     return result->value;
 }
 
+void BrowserCommand(ICoreWebView2* view, const wchar_t* method, const std::wstring& parameters) {
+    const auto done = std::make_shared<bool>(false);
+    const auto result = std::make_shared<HRESULT>(E_PENDING);
+    Hr(view->CallDevToolsProtocolMethod(method, parameters.c_str(),
+        Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+            [done, result](HRESULT hr, LPCWSTR) -> HRESULT {
+                *result = hr;
+                *done = true;
+                return S_OK;
+            }).Get()));
+    Check(PumpUntil([&] { return *done; }), "browser input command completes");
+    Hr(*result);
+}
+
+// Dispatch through Chromium's input path so native <summary> keyboard behavior
+// and focus styling are exercised, including in the hidden WebView test host.
+void BrowserKey(ICoreWebView2* view, const wchar_t* key, const wchar_t* code, int virtualKey) {
+    for (const auto* type : {L"keyDown", L"keyUp"}) {
+        std::wstring parameters = std::wstring(L"{\"type\":\"") + type +
+            L"\",\"key\":\"" + key + L"\",\"code\":\"" + code +
+            L"\",\"windowsVirtualKeyCode\":" + std::to_wstring(virtualKey);
+        if (std::wstring_view(type) == L"keyDown" && virtualKey == VK_RETURN)
+            parameters += L",\"text\":\"\\r\"";
+        if (std::wstring_view(type) == L"keyDown" && virtualKey == VK_SPACE)
+            parameters += L",\"text\":\" \"";
+        parameters += L"}";
+        BrowserCommand(view, L"Input.dispatchKeyEvent", parameters);
+    }
+}
+
 // These are test values, not observations from capture hardware. Every native
 // state push carries the same settings; only panelSide and locale vary.
 void PushState(WebViewSettings& host, const wchar_t* side, const wchar_t* locale = L"en-US") {
@@ -166,9 +196,9 @@ void Capture(ICoreWebView2* view, const std::filesystem::path& path) {
 
 void PushAboutUpdate(WebViewSettings& host, const wchar_t* side, const wchar_t* locale,
     const wchar_t* status, const wchar_t* latest, bool hasNewer, bool automatic, bool busy,
-    bool unread, const wchar_t* url) {
+    bool unread, const wchar_t* url, long long lastCheckUtc = 1791691200) {
     PushState(host, side, locale);
-    const auto timestamp = std::wstring_view(status) == L"never" ? 0 : 1791691200;
+    const auto timestamp = std::wstring_view(status) == L"never" ? 0 : lastCheckUtc;
     std::wstring message = L"{\"state\":{\"holyBearUpdate\":{\"current\":\"1.2.4-holybear\",\"latest\":\"";
     message += latest;
     message += L"\",\"lastCheckUtc\":" + std::to_wstring(timestamp);
@@ -195,14 +225,17 @@ void PushAboutUpdate(WebViewSettings& host, const wchar_t* side, const wchar_t* 
     ready += L"'];";
     if (std::wstring_view(status) == L"available")
         ready += L"expected=expected.replace('{version}','" +
-            std::wstring(latest).substr(1, std::wstring(latest).size() - 10) + L"');";
+            std::wstring(latest).substr(1) + L"');";
+    ready += L"const date = new Date(" + std::to_wstring(timestamp) + L" * 1000); "
+        L"const expectedTime = " + std::to_wstring(timestamp) + L" > 0 && !Number.isNaN(date.getTime()) "
+        L"? date.toLocaleString('" + locale + L"') : window.NitLinkLocales['" + locale + L"']['update.never']; ";
     ready += L"return document.documentElement.lang==='";
     ready += locale;
     ready += L"' && node.textContent===expected && node.hidden===";
     ready += std::wstring_view(status) == L"never" ? L"true" : L"false";
     ready += L" && document.querySelector('#toggle-holy-bear-auto-update').getAttribute('aria-checked')==='";
     ready += automatic ? L"true" : L"false";
-    ready += L"'; })()";
+    ready += L"' && document.querySelector('#holy-bear-last-check').textContent === expectedTime; })()";
     Check(PumpUntil([&] {
         return Script(view, ready) == L"true";
     }), "mock update state reaches About UI");
@@ -253,15 +286,15 @@ void CaptureLayouts(WebViewSettings& host, HWND window, const std::filesystem::p
         Resize(host, window, width, height, dock);
         PushAboutUpdate(host, side, locale, status, latest, newer, false, false, newer, url);
         SelectAbout(view, true);
-        Script(view, L"{ const details=document.querySelector('.about-details'); if(details) details.open=false; }");
+        Script(view, L"document.querySelectorAll('.about-details').forEach(details => details.open = true)");
         PumpUntil([] { return false; }, 120);
         Capture(view, folder / name);
     };
     captureAbout(L"about-docked-zh-TW-current.png", L"Right", L"zh-TW", L"current",
         L"v1.2.4-holybear", false, L"", 1920, 1080, WebViewSettings::Dock::Right);
-    Script(view, L"document.querySelector('.about-details').open = true");
+    Script(view, L"document.querySelector('#about-technical').open = false");
     PumpUntil([] { return false; }, 120);
-    Capture(view, folder / L"about-docked-zh-TW-details.png");
+    Capture(view, folder / L"about-docked-zh-TW-contributors-only.png");
     captureAbout(L"about-docked-en-US-available.png", L"Right", L"en-US", L"available",
         L"v1.2.5-holybear", true,
         L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
@@ -484,19 +517,24 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
         const pane = document.querySelector('#pane-about'), heroText = pane.querySelector('.about-hero').innerText;
         return document.documentElement.dataset.activePane === 'pane-about' &&
             getComputedStyle(document.querySelector('.metabar')).display === 'none' &&
-            document.querySelector('.about-details').open &&
-            document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'true' &&
-            document.querySelector('#about-details-summary').getAttribute('aria-controls') === 'about-details-body' &&
-            document.querySelector('#about-details-summary').tabIndex >= 0 &&
+            document.querySelectorAll('#pane-about > .about-details').length === 2 &&
+            [...document.querySelectorAll('.about-details')].every(details => {
+                const summary = details.querySelector('summary');
+                return details.open && summary.getAttribute('aria-expanded') === 'true' &&
+                    document.getElementById(summary.getAttribute('aria-controls')).parentElement === details &&
+                    summary.tabIndex >= 0;
+            }) &&
             document.querySelector('#holy-bear-product-title').textContent === 'NitLink 1.2.4 HolyBear Edition' &&
             (heroText.match(/1\.2\.4/g) || []).length === 1 &&
+            !pane.querySelector('#holy-bear-version, #holy-bear-latest-version, .about-detail-list') &&
+            document.querySelector('#holy-bear-last-check').closest('.about-update') !== null &&
             document.querySelector('#holy-bear-update-status').textContent === window.NitLinkLocales['zh-TW']['update.current'] &&
             document.querySelector('#holy-bear-update-status').hidden === false &&
             document.querySelector('#holy-bear-release-link').hidden &&
             document.querySelector('#holy-bear-update-status').textContent.indexOf('未知') < 0 &&
             !!document.querySelector('.about-links a[href="https://tally.so/r/EkZjNr"]') &&
             !!document.querySelector('.about-links a[href="https://ko-fi.com/klosed89"]');
-    })())JS") == L"true", "About defaults to expanded technical details with one hero version, quick links and accessible disclosure");
+    })())JS") == L"true", "About has two independently accessible default-open disclosures and centralized update information");
     Check(Script(view, LR"JS((() => {
         const main = document.querySelector('main');
         return document.documentElement.scrollWidth <= innerWidth && main.scrollWidth <= main.clientWidth &&
@@ -504,17 +542,22 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
     })())JS") == L"true", "420px docked About has no horizontal overflow");
 
     const size_t sizeBeforeCheck = messages.size();
+    Script(view, L"window.__lastAboutCheck = document.querySelector('#holy-bear-last-check').textContent");
     Script(view, L"document.querySelector('#holy-bear-check-update').click()");
     Check(PumpUntil([&] { return messages.size() == sizeBeforeCheck + 1; }), "manual update click posts a native action");
     const auto autoCheck = NitLink::ParseSettingsMessage(messages.back());
     Check(autoCheck && autoCheck->action == L"checkHolyBearUpdate" &&
         Script(view, LR"JS(document.querySelector('#holy-bear-update-status').textContent ===
             window.NitLinkLocales[document.documentElement.lang]['update.checking'] &&
-            document.querySelector('#holy-bear-check-update').disabled)JS") == L"true",
-        "manual button retains its action and shows a busy state");
+            document.querySelector('#holy-bear-check-update').disabled &&
+            document.querySelector('#holy-bear-last-check').textContent === window.__lastAboutCheck)JS") == L"true",
+        "manual button retains its action and busy state without inventing a completion time");
 
     PushAboutUpdate(host, L"Right", L"zh-TW", L"current", L"v1.2.4-holybear",
-        false, false, false, false, L"");
+        false, false, false, false, L"", 1791691320);
+    Check(Script(view, L"document.querySelector('#holy-bear-last-check').textContent !== window.__lastAboutCheck && "
+        L"!document.querySelector('#holy-bear-check-update').disabled") == L"true",
+        "manual completion refreshes the localized last-check time from native state");
     const size_t sizeBeforeToggle = messages.size();
     Script(view, L"document.querySelector('#toggle-holy-bear-auto-update').click()");
     Check(PumpUntil([&] { return messages.size() == sizeBeforeToggle + 1; }), "automatic check switch posts one native action");
@@ -527,6 +570,14 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
     Check(Script(view, L"document.querySelector('#toggle-holy-bear-auto-update').classList.contains('on') && "
         L"document.querySelector('#toggle-holy-bear-auto-update').getAttribute('aria-checked') === 'true'") == L"true",
         "automatic check setting is restored from native state");
+    Script(view, L"window.__lastAboutCheck = document.querySelector('#holy-bear-last-check').textContent");
+    PushAboutUpdate(host, L"Right", L"zh-TW", L"checking", L"v1.2.4-holybear",
+        false, true, true, false, L"");
+    PushAboutUpdate(host, L"Right", L"zh-TW", L"current", L"v1.2.4-holybear",
+        false, true, false, false, L"", 1791691440);
+    Check(Script(view, L"document.querySelector('#holy-bear-last-check').textContent !== window.__lastAboutCheck && "
+        L"document.querySelector('#toggle-holy-bear-auto-update').getAttribute('aria-checked') === 'true'") == L"true",
+        "automatic completion refreshes the last-check time while retaining the opt-in state");
     const size_t sizeBeforeDisable = messages.size();
     Script(view, L"document.querySelector('#toggle-holy-bear-auto-update').click()");
     Check(PumpUntil([&] { return messages.size() == sizeBeforeDisable + 1; }), "automatic check can be turned off");
@@ -541,16 +592,25 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
         {L"rateLimited", L"rateLimited"}, {L"notFound", L"notFound"},
         {L"serverUnavailable", L"serverUnavailable"}, {L"apiUnavailable", L"apiUnavailable"},
         {L"invalid", L"invalid"}, {L"never", L"never"}}};
-    for (const auto& [status, key] : statuses) {
-        const auto latest = std::wstring_view(status) == L"never" ? L"" : L"v1.2.4-holybear";
-        PushAboutUpdate(host, L"Right", L"zh-TW", status, latest, false,
-            true, std::wstring_view(status) == L"checking", false, L"");
-        std::wstring expression = L"(() => { const node=document.querySelector('#holy-bear-update-status'); return node.hidden === ";
-        expression += std::wstring_view(status) == L"never" ? L"true" : L"false";
-        expression += L" && node.textContent === window.NitLinkLocales['zh-TW']['update.";
-        expression += key;
-        expression += L"']; })()";
-        Check(Script(view, expression) == L"true", "localized update status renders without a duplicate unknown row");
+    for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        for (const auto& [status, key] : statuses) {
+            const auto latest = std::wstring_view(status) == L"never" ? L"" : L"v1.2.4-holybear";
+            PushAboutUpdate(host, L"Right", locale, status, latest, false,
+                true, std::wstring_view(status) == L"checking", false, L"");
+            std::wstring expression = L"(() => { const node=document.querySelector('#holy-bear-update-status'); return node.hidden === ";
+            expression += std::wstring_view(status) == L"never" ? L"true" : L"false";
+            expression += L" && node.textContent === window.NitLinkLocales['" + std::wstring(locale) + L"']['update.";
+            expression += key;
+            expression += L"']; })()";
+            Check(Script(view, expression) == L"true", "localized update status renders without a duplicate unknown row");
+        }
+    }
+    for (const auto timestamp : {0LL, -1LL, 9223372036854775807LL}) {
+        PushAboutUpdate(host, L"Right", L"zh-TW", L"current", L"v1.2.4-holybear",
+            false, false, false, false, L"", timestamp);
+        Check(Script(view, L"document.querySelector('#holy-bear-last-check').textContent === "
+            L"window.NitLinkLocales['zh-TW']['update.never']") == L"true",
+            "missing, negative and out-of-range times never display an epoch or invalid date");
     }
 
     const std::wstring validUrl = L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear";
@@ -558,7 +618,7 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
         true, true, false, true, validUrl.c_str());
     Check(Script(view, LR"JS((() => {
         const link = document.querySelector('#holy-bear-release-link'), status = document.querySelector('#holy-bear-update-status');
-        return status.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5') &&
+        return status.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5-holybear') &&
             !link.hidden && link.href === 'https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear' &&
             document.querySelector('#holy-bear-update-badge').hidden === false;
     })())JS") == L"true", "newer release shows a localized message, verified link and unread state");
@@ -576,60 +636,118 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
 
     PushAboutUpdate(host, L"Right", L"zh-TW", L"available", L"v1.2.5-holybear",
         true, true, false, true, validUrl.c_str());
-    Script(view, L"document.querySelector('.about-details > summary').click()");
-    Check(PumpUntil([&] { return Script(view, L"!document.querySelector('.about-details').open && "
-        L"document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'false'") == L"true"; }),
-        "technical disclosure can collapse and updates its ARIA state");
-    Script(view, L"document.querySelector('.about-details > summary').click()");
-    Check(PumpUntil([&] { return Script(view, L"document.querySelector('.about-details').open && "
-        L"document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'true'") == L"true"; }),
-        "technical disclosure expands and updates its ARIA state");
+    const size_t beforeDisclosure = messages.size();
+    Script(view, L"document.querySelector('#about-details-summary').click()");
+    Check(PumpUntil([&] { return Script(view, L"!document.querySelector('#about-technical').open && "
+        L"document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'false' && "
+        L"document.querySelector('#about-contributors').open && "
+        L"document.querySelector('#about-contributors-summary').getAttribute('aria-expanded') === 'true'") == L"true"; }),
+        "collapsing technical information leaves contributors open and synchronizes only its own ARIA state");
+    Script(view, L"document.querySelector('#about-contributors-summary').click()");
+    Check(PumpUntil([&] { return Script(view, L"!document.querySelector('#about-technical').open && "
+        L"!document.querySelector('#about-contributors').open && "
+        L"document.querySelector('#about-contributors-summary').getAttribute('aria-expanded') === 'false'") == L"true"; }),
+        "contributors also collapse independently");
+    BrowserCommand(view, L"Emulation.setFocusEmulationEnabled", L"{\"enabled\":true}");
+    Script(view, L"document.querySelector('#about-details-summary').focus()");
+    BrowserKey(view, L"Enter", L"Enter", VK_RETURN);
+    std::wcout << L"Keyboard disclosure state: " << Script(view, LR"JS(JSON.stringify({
+        open: document.querySelector('#about-technical').open,
+        expanded: document.querySelector('#about-details-summary').getAttribute('aria-expanded'),
+        active: document.activeElement.id, focused: document.hasFocus(),
+        visible: document.querySelector('#about-details-summary').matches(':focus-visible'),
+        outline: getComputedStyle(document.querySelector('#about-details-summary')).outlineWidth
+    }))JS") << L'\n';
+    Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+        const summary = document.querySelector('#about-details-summary');
+        return document.querySelector('#about-technical').open && !document.querySelector('#about-contributors').open &&
+            summary.getAttribute('aria-expanded') === 'true' && document.activeElement === summary &&
+            summary.matches(':focus-visible') && getComputedStyle(summary).outlineWidth === '2px';
+    })())JS") == L"true"; }), "Enter opens technical information and preserves visible keyboard focus");
+    Script(view, L"document.querySelector('#about-contributors-summary').focus()");
+    BrowserKey(view, L" ", L"Space", VK_SPACE);
+    Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+        const summary = document.querySelector('#about-contributors-summary');
+        return document.querySelector('#about-technical').open && document.querySelector('#about-contributors').open &&
+            summary.getAttribute('aria-expanded') === 'true' && document.activeElement === summary &&
+            summary.matches(':focus-visible') && getComputedStyle(summary).outlineWidth === '2px';
+    })())JS") == L"true"; }), "Space opens contributors independently with the original focus styling");
+    Script(view, L"document.querySelector('#about-details-summary').focus()");
+    BrowserKey(view, L"Tab", L"Tab", VK_TAB);
+    Check(Script(view, L"document.activeElement === document.querySelector('#about-details-body a')") == L"true",
+        "Tab reaches the preserved project links within the expanded technical section");
+    Check(messages.size() == beforeDisclosure, "disclosure and keyboard navigation do not post native settings actions");
     Check(Script(view, LR"JS((() => {
         const text = document.querySelector('#about-details-body').innerText;
-        return text.includes('1.2.4-holybear') && text.includes('v1.2.5-holybear') &&
-            text.includes('CN_115 (@CN115)') && text.includes('HolyBear') &&
+        const contributors = document.querySelector('#about-contributors-body').innerText;
+        return text.includes('D3D11') && text.includes('P010 / NV12 / BGRA') && text.includes('HDR10') && text.includes('VRR') &&
+            text.includes(window.NitLinkLocales['zh-TW']['about.holyBearDisclaimer']) &&
+            !text.includes('1.2.4-holybear') && !text.includes('v1.2.5-holybear') &&
+            contributors.includes('CN_115 (@CN115)') && contributors.includes('聖小熊 (@HolyBearTW)') &&
+            !!document.querySelector('#about-contributors-body a[href="https://github.com/HolyBearTW"]') &&
+            !!document.querySelector('#about-contributors-body a[href="https://github.com/CN115"]') &&
             !!document.querySelector('#about-details-body a[href="https://github.com/nitlink-dev/nitlink"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSES.md"]');
-    })())JS") == L"true", "expanded details retain build history, project sources and named contributor handles");
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSE"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSES.md"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/ACKNOWLEDGMENTS.md"]');
+    })())JS") == L"true", "separate sections preserve technical text, all license links and original contributor names and handles");
     Check(Script(view, LR"JS((() => {
         const main = document.querySelector('main');
         return document.documentElement.scrollWidth <= innerWidth && main.scrollWidth <= main.clientWidth &&
             document.querySelector('#pane-about').scrollWidth <= document.querySelector('#pane-about').clientWidth;
-    })())JS") == L"true", "expanded 420px About remains horizontally scrollable without clipping");
+    })())JS") == L"true", "expanded 420px About remains free of horizontal overflow");
 
     PushAboutUpdate(host, L"Right", L"zh-CN", L"available", L"v1.2.5-holybear",
         true, true, false, true, validUrl.c_str());
     Check(Script(view, LR"JS(document.documentElement.lang === 'zh-CN' &&
-        document.querySelector('#about-details-summary').textContent.includes('技术信息与贡献者') &&
+        document.querySelector('#about-details-summary').textContent === '技术信息' &&
+        document.querySelector('#about-contributors-summary').textContent === '贡献者' &&
         document.querySelector('#holy-bear-check-update').textContent === '检查更新' &&
         document.querySelector('#holy-bear-update-status').textContent.includes('已发布'))JS") == L"true",
         "Simplified Chinese updates the About and update controls");
     PushAboutUpdate(host, L"Right", L"en-US", L"available", L"v1.2.5-holybear",
         true, true, false, true, validUrl.c_str());
     Check(Script(view, LR"JS(document.documentElement.lang === 'en-US' &&
-        document.querySelector('#about-details-summary').textContent.includes('Technical information') &&
+        document.querySelector('#about-details-summary').textContent === 'Technical Information' &&
+        document.querySelector('#about-contributors-summary').textContent === 'Contributors' &&
         document.querySelector('#holy-bear-check-update').textContent === 'Check for updates' &&
         document.querySelector('#holy-bear-update-status').textContent.includes('has been released'))JS") == L"true",
         "English updates About and update controls");
 
     for (const auto size : {std::pair{1920, 1080}, std::pair{2560, 1440}}) {
-        Resize(host, window, size.first, size.second, WebViewSettings::Dock::Full);
-        PushAboutUpdate(host, L"Full", L"zh-TW", L"apiUnavailable", L"v1.2.4-holybear",
-            false, true, false, false, L"");
-        Script(view, L"document.querySelector('.about-details').open = false");
+      for (const auto* side : {L"Full", L"Right", L"Left"}) {
+        const auto dock = std::wstring_view(side) == L"Full" ? WebViewSettings::Dock::Full
+            : std::wstring_view(side) == L"Left" ? WebViewSettings::Dock::Left : WebViewSettings::Dock::Right;
+        Resize(host, window, size.first, size.second, dock);
+        for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+          PushAboutUpdate(host, side, locale, L"available", L"v1.2.4.1-holybear",
+              true, true, false, false, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear");
+          Script(view, L"document.querySelectorAll('.about-details').forEach(details => details.open = true)");
+          Check(Script(view, LR"JS((() => {
+              const pane = document.querySelector('#pane-about'), main = document.querySelector('main');
+              const technical = document.querySelector('#about-technical').getBoundingClientRect();
+              const contributors = document.querySelector('#about-contributors').getBoundingClientRect();
+              const locale = window.NitLinkLocales[document.documentElement.lang];
+              return [...document.querySelectorAll('.about-details')].every(details => details.open) &&
+                  Math.abs(technical.left - contributors.left) < 1 && Math.abs(technical.width - contributors.width) < 1 &&
+                  contributors.top >= technical.bottom && main.scrollWidth <= main.clientWidth &&
+                  pane.scrollWidth <= pane.clientWidth && document.documentElement.scrollWidth <= innerWidth &&
+                  document.querySelector('#about-details-summary').textContent === locale['about.technicalInformation'] &&
+                  document.querySelector('#about-contributors-summary').textContent === locale['about.contributors'] &&
+                  document.querySelector('#holy-bear-update-status').textContent === locale['update.available'].replace('{version}', '1.2.4.1-holybear') &&
+                  document.querySelector('#holy-bear-release-link').href.endsWith('/v1.2.4.1-holybear');
+          })())JS") == L"true", "Full and both Docked modes stack localized disclosures without clipping at 1080p and 1440p");
+        }
+        if (dock != WebViewSettings::Dock::Full) continue;
         Check(Script(view, LR"JS((() => {
             const content = document.querySelector('.content'), main = document.querySelector('main');
             const c = content.getBoundingClientRect(), m = main.getBoundingClientRect();
             return document.documentElement.dataset.side === 'full' &&
                 getComputedStyle(document.querySelector('.metabar')).display === 'none' &&
                 Math.abs(m.left - c.left) < 1 && Math.abs(m.width - c.width) < 1 &&
-                main.scrollWidth <= main.clientWidth && document.documentElement.scrollWidth <= innerWidth &&
-                !document.querySelector('.about-details').open;
+                main.scrollWidth <= main.clientWidth && document.documentElement.scrollWidth <= innerWidth;
         })())JS") == L"true", "Full About fills the released signal column without horizontal overflow");
-        Script(view, L"document.querySelector('.about-details > summary').click()");
-        Check(Script(view, L"document.querySelector('.about-details').open && "
-            L"document.querySelector('#holy-bear-update-status').textContent === window.NitLinkLocales['zh-TW']['update.apiUnavailable']") == L"true",
-            "Full details and API-error status render at both target viewport sizes");
+      }
     }
 
     Resize(host, window, 1920, 1080, WebViewSettings::Dock::Right);

@@ -28,7 +28,7 @@ function Get-HolyBearVersion {
     $overlay = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/overlay/overlay.cpp') -Raw
     $native = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/app/holybear_version.h') -Raw
     if (-not $menu.Contains('id="holy-bear-product-title"') -or
-        -not $menu.Contains('id="holy-bear-version"') -or
+        -not $menu.Contains('id="holy-bear-last-check"') -or
         -not $menuScript.Contains("const currentTag = typeof s.current") -or
         -not $overlay.Contains(('L"v{0}"' -f $value)) -or
         -not $native.Contains(('L"{0}"' -f $value))) { throw 'About/HUD/native update version mismatch.' }
