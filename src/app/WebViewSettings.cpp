@@ -438,10 +438,11 @@ bool WebViewSettings::IsTrustedDocument() const {
         NitLink::WebViewPolicy::IsTrustedDocument(source.get());
 }
 
-void WebViewSettings::PostMessage(const std::wstring& json) {
-    if (!IsTrustedDocument()) return;
+bool WebViewSettings::PostMessage(const std::wstring& json) {
+    if (!IsTrustedDocument()) return false;
     const HRESULT hr = m_webview->PostWebMessageAsJson(json.c_str());
     if (FAILED(hr)) WVLogHr(L"settings state message failed", hr);
+    return SUCCEEDED(hr);
 }
 
 void WebViewSettings::LogBudgetStats(bool force) {

@@ -57,7 +57,7 @@ public:
     void SetTransparentBackground(bool on);
 
     void NavigateToMenu();
-    void PostMessage(const std::wstring& json);
+    bool PostMessage(const std::wstring& json);
     void DispatchPendingMessages(bool closing = false);
     void SetMessageHandler(MessageCallback cb) { m_onMessage = cb; }
     void Shutdown();

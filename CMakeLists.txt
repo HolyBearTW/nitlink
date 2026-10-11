@@ -41,6 +41,8 @@ set(NITLINK_SOURCES
     src/app/WebViewSettings.h
     src/app/settings_message.cpp
     src/app/settings_message.h
+    src/app/settings_state_json.cpp
+    src/app/settings_state_json.h
     src/app/webview_policy.h
     src/app/holybear_version.h
     src/app/update_checker.cpp
@@ -250,6 +252,7 @@ if(BUILD_TESTING)
             tests/webview_runtime_tests.cpp
             src/app/WebViewSettings.cpp
             src/app/settings_message.cpp
+            src/app/settings_state_json.cpp
             src/app/game_database.cpp
         )
         target_include_directories(NitLinkWebViewRuntimeTests PRIVATE

@@ -178,7 +178,10 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
     SettingsMessage result;
     result.action = actionIt->second.text;
     const auto& action = result.action;
-    if (OneOf(action, {L"ready", L"cycleNoSignalMode", L"chooseNoSignalImage",
+    if (action == L"javascriptException") {
+        if (!value || !Text(*value, 512)) return std::nullopt;
+        result.text = value->text;
+    } else if (OneOf(action, {L"ready", L"cycleNoSignalMode", L"chooseNoSignalImage",
         L"clearNoSignalImage", L"cycleNoSignalFit", L"cycleNoSignalDimImage",
         L"cyclePresentPacing", L"cycleAspect", L"cyclePanelSide", L"cycleScaler",
         L"clearGame", L"saveGameSettings", L"getDeviceList", L"refreshDevices",

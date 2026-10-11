@@ -3,6 +3,7 @@
 #include "capture_device_names.h"
 #include "WebViewSettings.h"
 #include "settings_message.h"
+#include "settings_state_json.h"
 #include "hdmi_source_display.h"
 #include "resync_frame_presentation.h"
 #include "webview_policy.h"
@@ -383,50 +384,6 @@ static std::wstring DeriveAudioHint(const std::wstring& videoDeviceName)
     if (hint.empty()) hint = L"Elgato";
     return hint;
 }
-
-// Escape a wide string for safe inclusion inside a JSON string literal.
-// Handles the JSON-required escapes (" and \), the seven standard
-// control-character escapes (\b \f \n \r \t), and any other control
-// codepoint below 0x20 via \uXXXX. Non-control Unicode codepoints
-// >= 0x20 pass through unchanged: the JSON spec accepts those directly
-// in string content. WebView2's PostWebMessageAsJson handles the
-// UTF-16 -> UTF-8 transcode on the wire.
-//
-// Used for capture-device friendly names pushed to the settings panel.
-// MF-reported names are almost always ASCII, but escaping
-// unconditionally keeps the JSON valid against any future driver that
-// includes a quote, backslash, or non-Latin character.
-static std::wstring JsonEscapeWide(const std::wstring& s)
-{
-    std::wstring out;
-    out.reserve(s.size() + 4);
-    for (wchar_t c : s) {
-        switch (c) {
-            case L'"':  out += L"\\\""; break;
-            case L'\\': out += L"\\\\"; break;
-            case L'\b': out += L"\\b";  break;
-            case L'\f': out += L"\\f";  break;
-            case L'\n': out += L"\\n";  break;
-            case L'\r': out += L"\\r";  break;
-            case L'\t': out += L"\\t";  break;
-            default:
-                if (c < 0x20) {
-                    // Control codepoint outside the seven named
-                    // escapes. Codepoints 0x00..0x1F always fit in
-                    // two hex digits prefixed with "00".
-                    static const wchar_t hex[] = L"0123456789abcdef";
-                    out += L"\\u00";
-                    out.push_back(hex[(c >> 4) & 0xF]);
-                    out.push_back(hex[c & 0xF]);
-                } else {
-                    out.push_back(c);
-                }
-                break;
-        }
-    }
-    return out;
-}
-
 
 Application::Application() = default;
 Application::~Application() { Shutdown(); }
@@ -1189,6 +1146,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
 
         AppLog(L"WebView2 msg: " + action);
 
+        if (action == L"javascriptException") {
+            AppLog(L"WebView2 JavaScript exception: " + message->text);
+            return;
+        }
         if (action == L"ready") {
             // JS finished loading and asked for an initial state dump.
             AppLog(L"Initialize: WebView2 settings ready");
@@ -4498,8 +4459,7 @@ bool Application::ChooseNoSignalImage()
 void Application::CycleNoSignalMode()
 {
     if (!m_config) return;
-    m_config->noSignalMode =
-        m_config->noSignalMode == "image" ? "default" : "image";
+    m_config->noSignalMode = WideToUtf8(NextNoSignalMode(Utf8ToWide(m_config->noSignalMode)));
     ApplyNoSignalSettings();
     if (!m_config->Save("nitlink.json")) {
         AppLog(L"No Signal mode: could not save nitlink.json");
@@ -4967,42 +4927,47 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
             return names;
         });
 
-    // Build a JSON state blob and push to JS via WebView2 PostWebMessageAsJson.
-    // Schema must match what nitlink-menu.html's applyState() expects.
-    // Keep manual (no JSON lib) since it's small and structured.
-    std::wstringstream js;
-    js << L"{\"state\":{";
-    const std::wstring languagePreference(m_config->language.begin(), m_config->language.end());
-    js << L"\"languagePreference\":\"" << languagePreference << L"\",";
-    js << L"\"locale\":\"" << Localization::Instance().LocaleName() << L"\",";
+    // These fields share one production serializer with the real WebView2
+    // bridge regression test. PostWebMessageAsJson rejects malformed JSON.
+    NitLink::WebViewCoreSettingsState coreState;
+    coreState.languagePreference.assign(m_config->language.begin(), m_config->language.end());
+    coreState.locale = Localization::Instance().LocaleName();
     const std::wstring latest(m_config->holyBearUpdateLatestTag.begin(), m_config->holyBearUpdateLatestTag.end());
     const auto latestVersion = HolyBear::ParseVersion(latest);
     const bool newer = latestVersion && *latestVersion > *HolyBear::ParseVersion(HolyBear::Version);
     const auto status = m_updateStatus == HolyBear::UpdateStatus::Never && latestVersion
         ? (newer ? HolyBear::UpdateStatus::Available : HolyBear::UpdateStatus::Current) : m_updateStatus;
-    js << L"\"holyBearUpdate\":{\"current\":\"" << HolyBear::Version
-       << L"\",\"latest\":\"" << (latestVersion ? latest : L"")
-       << L"\",\"lastCheckUtc\":" << m_config->holyBearUpdateLastCheckUtc
-       << L",\"automatic\":" << (m_config->holyBearAutoUpdateCheck ? L"true" : L"false")
-       << L",\"busy\":" << (m_updateChecker && m_updateChecker->Busy() ? L"true" : L"false")
-       << L",\"status\":\"" << HolyBear::StatusKey(status)
-       << L"\",\"hasNewer\":" << (newer ? L"true" : L"false")
-       << L"\",\"unread\":" << (newer && m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag ? L"true" : L"false")
-       << L",\"url\":\"" << (newer ? std::wstring(HolyBear::ReleasePrefix) + latest : L"") << L"\"},";
-    js << L"\"manualHdmiSource\":\""
-       << Utf8ToWide(std::string(NormalizeManualHdmiSource(m_config->manualHdmiSource))) << L"\",";
-    js << L"\"manualHdmiSourceCustom\":\""
-       << JsonEscapeWide(Utf8ToWide(m_config->manualHdmiSourceCustom)) << L"\",";
-    js << L"\"effectiveHdmiSource\":\""
-       << JsonEscapeWide(GetEffectiveHdmiSourceLabel()) << L"\",";
-    js << L"\"manualHdmiSourceOptions\":[";
-    for (size_t i = 0; i < kManualHdmiSources.size(); ++i) {
-        if (i) js << L",";
-        const auto& [value, label] = kManualHdmiSources[i];
-        js << L"{\"value\":\"" << std::wstring(value.begin(), value.end())
-           << L"\",\"label\":\"" << JsonEscapeWide(std::wstring(label)) << L"\"}";
+    coreState.holyBearUpdate.current = HolyBear::Version;
+    coreState.holyBearUpdate.latest = latestVersion ? latest : L"";
+    coreState.holyBearUpdate.lastCheckUtc = m_config->holyBearUpdateLastCheckUtc;
+    coreState.holyBearUpdate.automatic = m_config->holyBearAutoUpdateCheck;
+    coreState.holyBearUpdate.busy = m_updateChecker && m_updateChecker->Busy();
+    coreState.holyBearUpdate.status = HolyBear::StatusKey(status);
+    coreState.holyBearUpdate.hasNewer = newer;
+    coreState.holyBearUpdate.unread = newer &&
+        m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag;
+    coreState.holyBearUpdate.url = newer ? std::wstring(HolyBear::ReleasePrefix) + latest : L"";
+    coreState.manualHdmiSource = Utf8ToWide(
+        std::string(NormalizeManualHdmiSource(m_config->manualHdmiSource)));
+    coreState.manualHdmiSourceCustom = Utf8ToWide(m_config->manualHdmiSourceCustom);
+    coreState.effectiveHdmiSource = GetEffectiveHdmiSourceLabel();
+    coreState.manualHdmiSourceOptions.reserve(kManualHdmiSources.size());
+    for (const auto& [value, label] : kManualHdmiSources) {
+        coreState.manualHdmiSourceOptions.push_back({
+            std::wstring(value.begin(), value.end()), std::wstring(label)});
     }
-    js << L"],";
+    coreState.preventSleep = m_config->preventSleep;
+    coreState.noSignalMode = Utf8ToWide(m_config->noSignalMode);
+    coreState.noSignalImage = Utf8ToWide(m_config->noSignalImage);
+    coreState.noSignalImageAvailable = m_overlay && m_overlay->HasNoSignalImage();
+    coreState.noSignalFit = Utf8ToWide(m_config->noSignalFit);
+    coreState.noSignalDimImage = m_config->noSignalDimImage;
+    coreState.captureDevices = m_cachedCaptureDeviceNames;
+    coreState.activeDevice = m_currentDeviceInfo.name;
+    coreState.preferredDevice = m_config->preferredDevice;
+
+    std::wstringstream js;
+    js << L"{\"state\":{" << NitLink::SerializeWebViewCoreSettingsProperties(coreState) << L",";
     js << L"\"hdrEnabled\":"        << (m_config->hdrEnabled        ? L"true" : L"false") << L",";
     js << L"\"hdrAutoDetectAvailable\":" << (m_hdrDetectionAvailable ? L"true" : L"false") << L",";
     // GC553Pro source detection remains a supported device capability while
@@ -5019,7 +4984,6 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
                                                       : L"refresh") << L"\",";
     js << L"\"vsync\":"             << (m_config->vsync ? L"true" : L"false") << L",";
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
-    js << L"\"preventSleep\":"      << (m_config->preventSleep      ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
     js << L"\"audioFifoMs\":" << m_config->audioFifoMs << L",";
     js << L"\"audioRenderMs\":" << m_config->audioRenderMs << L",";
@@ -5053,16 +5017,6 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
     js << L"\"aspectRatio\":\"" << JsonEscapeWide(ApplyAspectRatio()) << L"\",";
     js << L"\"panelSide\":\"" << ApplyPanelLayout() << L"\",";
     js << L"\"configWarning\":\"" << JsonEscapeWide(ConfigWarning()) << L"\",";
-    js << L"\"noSignalMode\":\""
-       << JsonEscapeWide(Utf8ToWide(m_config->noSignalMode)) << L"\",";
-    js << L"\"noSignalImage\":\""
-       << JsonEscapeWide(Utf8ToWide(m_config->noSignalImage)) << L"\",";
-    js << L"\"noSignalImageAvailable\":" << (m_overlay && m_overlay->HasNoSignalImage() ? L"true" : L"false") << L",";
-    js << L"\"noSignalFit\":\""
-       << JsonEscapeWide(Utf8ToWide(m_config->noSignalFit)) << L"\",";
-    js << L"\"noSignalDimImage\":"
-       << (m_config->noSignalDimImage ? L"true" : L"false") << L",";
-
     if (m_captureDevice) {
         auto fmt = m_captureDevice->GetOutputFormat();
         js << L"\"negotiatedWidth\":"  << fmt.width  << L",";
@@ -5208,40 +5162,6 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
             if (i + 1 < games.size()) js << L",";
         }
         js << L"]";
-    }
-
-    // ===== Capture-device picker state =====
-    //
-    // captureDevices: array of friendly-name strings produced by a
-    // fresh Media Foundation enumeration. The order matches MF
-    // enumeration order; the UI consumer can display it directly.
-    // Each name is run through JsonEscapeWide so non-ASCII Unicode
-    // and the rare quote/backslash do not break the JSON.
-    //
-    // activeDevice: friendly name of the device the capture pipeline
-    // currently has open (mirrors m_currentDeviceInfo.name). The UI
-    // uses this to mark which entry in captureDevices is currently
-    // active. May differ from preferredDevice when the saved
-    // preference was unplugged and Initialize fell through to a
-    // different device via PickPreferredDevice.
-    //
-    // preferredDevice: the user's saved preference from Config. The
-    // UI can show this distinctly from activeDevice when the two
-    // differ ("you asked for X, currently showing Y because X is
-    // not connected"). Empty when the user has never explicitly
-    // picked a device.
-    {
-        js << L",\"captureDevices\":[";
-        for (size_t i = 0; i < m_cachedCaptureDeviceNames.size(); ++i) {
-            js << L"\"" << JsonEscapeWide(m_cachedCaptureDeviceNames[i]) << L"\"";
-            if (i + 1 < m_cachedCaptureDeviceNames.size()) js << L",";
-        }
-        js << L"]";
-
-        js << L",\"activeDevice\":\""
-           << JsonEscapeWide(m_currentDeviceInfo.name) << L"\"";
-        js << L",\"preferredDevice\":\""
-           << JsonEscapeWide(m_config->preferredDevice) << L"\"";
     }
 
     js << L"}}";

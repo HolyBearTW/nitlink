@@ -1089,7 +1089,14 @@
       window.chrome.webview.addEventListener('message', evt => {
         let msg = evt.data;
         if (typeof msg === 'string') try { msg = JSON.parse(msg); } catch { return; }
-        if (msg && msg.state) applyState(msg.state);
+        if (msg && msg.state) {
+          try {
+            applyState(msg.state);
+          } catch (error) {
+            const detail = String(error).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 512);
+            post('javascriptException', detail || 'applyState failed');
+          }
+        }
         if (msg && typeof msg.toast === 'string') showToast(msg.toast);
         if (msg && typeof msg.pipOpacity === 'number') setPiPOpacityVisual(msg.pipOpacity);
       });

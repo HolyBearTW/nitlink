@@ -1,10 +1,13 @@
 #include "app/WebViewSettings.h"
 #include "app/settings_message.h"
+#include "app/settings_state_json.h"
 #include "app/hdmi_source.h"
 #include "app/webview_lifecycle.h"
 #include "app/webview_policy.h"
 
 #include <chrono>
+#include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -33,6 +36,36 @@ namespace {
 void Check(bool result, const char* label) {
     if (!result) throw std::runtime_error(label);
     std::cout << "PASS " << label << '\n';
+}
+NitLink::WebViewCoreSettingsState RuntimeNativeStateFixture() {
+    NitLink::WebViewCoreSettingsState state;
+    state.languagePreference = L"zh-TW";
+    state.locale = L"zh-TW";
+    state.holyBearUpdate.current = L"1.2.4-holybear";
+    state.holyBearUpdate.latest = L"v1.2.5-holybear";
+    state.holyBearUpdate.lastCheckUtc = 1791730000;
+    state.holyBearUpdate.automatic = true;
+    state.holyBearUpdate.status = L"available";
+    state.holyBearUpdate.hasNewer = true;
+    state.holyBearUpdate.unread = true;
+    state.holyBearUpdate.url =
+        L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear";
+    state.manualHdmiSource = L"switch2";
+    state.effectiveHdmiSource = L"Switch 2";
+    for (const auto& [value, label] : NitLink::kManualHdmiSources) {
+        state.manualHdmiSourceOptions.push_back({
+            std::wstring(value.begin(), value.end()), std::wstring(label)});
+    }
+    state.preventSleep = true;
+    state.noSignalMode = L"default";
+    state.noSignalImage = L"C:\\test\\no-signal.png";
+    state.noSignalImageAvailable = true;
+    state.noSignalFit = L"contain";
+    state.noSignalDimImage = true;
+    state.captureDevices = {L"AVerMedia \"test\" device", L"Live Gamer ULTRA S GC553Pro"};
+    state.activeDevice = L"Live Gamer ULTRA S GC553Pro";
+    state.preferredDevice = state.activeDevice;
+    return state;
 }
 void Hr(HRESULT hr) {
     if (FAILED(hr)) throw std::runtime_error("WebView API failed: " + std::to_string(hr));
@@ -393,13 +426,46 @@ int main(int argc, char** argv) {
             incomplete.Shutdown();
         } else {
         std::vector<std::wstring> messages;
+        std::vector<std::wstring> javascriptExceptions;
+        auto nativeState = RuntimeNativeStateFixture();
+        unsigned noSignalModeActions = 0;
+        unsigned nativeStatePushes = 0;
+        bool nativeStatePostAccepted = false;
+        std::wstring startupFailure;
         WebViewSettings host;
         Check(host.Initialize(window, 800, 600), "host initialization dispatched");
         Check(WebViewSettingsTestAccess::DeadlineUnarmed(host), "healthy startup timer waits for message pumping");
-        host.SetMessageHandler([&](const std::wstring& json) { messages.push_back(json); });
+        host.SetFailureHandler([&](const std::wstring& reason) { startupFailure = reason; });
+        host.SetMessageHandler([&](const std::wstring& json) {
+            messages.push_back(json);
+            const auto message = NitLink::ParseSettingsMessage(json);
+            if (!message) return;
+            if (message->action == L"javascriptException") {
+                javascriptExceptions.push_back(message->text);
+            } else if (message->action == L"ready" || message->action == L"cycleNoSignalMode") {
+                if (message->action == L"cycleNoSignalMode") {
+                    nativeState.noSignalMode = NitLink::NextNoSignalMode(nativeState.noSignalMode);
+                    ++noSignalModeActions;
+                }
+                ++nativeStatePushes;
+                nativeStatePostAccepted = host.PostMessage(
+                    NitLink::SerializeWebViewCoreSettingsState(nativeState));
+            }
+        });
         host.NavigateToMenu();
-        Check(PumpUntil([&] { return !messages.empty(); }, 15000), "packaged menu ready via real bridge");
+        const bool readyViaBridge = PumpUntil([&] {
+            host.CheckHealth();
+            return !messages.empty() || (!startupFailure.empty() && !host.IsStarting());
+        }, 50000);
+        if (!readyViaBridge || messages.empty()) {
+            std::wcerr << L"WebView2 packaged-menu startup failure: "
+                       << (startupFailure.empty() ? L"ready message timed out" : startupFailure) << L'\n';
+        }
+        Check(readyViaBridge && !messages.empty(), "packaged menu ready via real bridge");
         Check(NitLink::ParseSettingsMessage(messages.front()).has_value(), "ready payload schema");
+        Check(host.IsReady(), "native host accepts ready state");
+        Check(nativeStatePushes == 1 && nativeStatePostAccepted,
+              "production settings serializer accepted by WebView2 PostWebMessageAsJson");
         auto* view = WebViewSettingsTestAccess::View(host);
         Check(view != nullptr, "secured WebView available");
         auto view2 = wil::com_ptr<ICoreWebView2>(view).try_query<ICoreWebView2_2>();
@@ -419,6 +485,101 @@ int main(int argc, char** argv) {
         auto controller4 = wil::com_ptr<ICoreWebView2Controller>(WebViewSettingsTestAccess::Controller(host))
             .try_query<ICoreWebView2Controller4>();
         Hr(controller4->get_AllowExternalDrop(&enabled)); Check(!enabled, "external drop disabled");
+        Script(view, LR"JS((() => {
+            window.__lastNativeState = null;
+            window.chrome.webview.addEventListener('message', event => {
+                if (event.data && event.data.state) window.__lastNativeState = event.data.state;
+            });
+            return true;
+        })())JS");
+        Check(host.PostMessage(NitLink::SerializeWebViewCoreSettingsState(nativeState)),
+              "production serializer JSON is accepted for typed-field verification");
+        Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+            const state = window.__lastNativeState;
+            return !!state && state.holyBearUpdate.hasNewer === true &&
+                state.holyBearUpdate.unread === true &&
+                state.holyBearUpdate.lastCheckUtc === 1791730000 &&
+                state.preventSleep === true && Array.isArray(state.captureDevices) &&
+                state.captureDevices.length === 2 &&
+                state.activeDevice === 'Live Gamer ULTRA S GC553Pro' &&
+                Array.isArray(state.manualHdmiSourceOptions) &&
+                state.manualHdmiSourceOptions.length === 9 &&
+                state.manualHdmiSourceOptions.some(option =>
+                    option.value === 'switch2' && option.label === 'Switch 2');
+        })())JS") == L"true"; }),
+              "production state arrives as valid JSON with exact boolean, number and collection values");
+        Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+            const update = document.getElementById('holy-bear-update-status');
+            const link = document.getElementById('holy-bear-release-link');
+            const badge = document.getElementById('holy-bear-update-badge');
+            const lastCheck = document.getElementById('holy-bear-last-check');
+            return document.documentElement.lang === 'zh-TW' &&
+                update.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5') &&
+                !update.hidden && link.href.endsWith('/v1.2.5-holybear') && !link.hidden && !badge.hidden &&
+                lastCheck.textContent === new Date(1791730000 * 1000).toLocaleString('zh-TW') &&
+                document.getElementById('toggle-prevent-sleep').classList.contains('on') &&
+                document.getElementById('meta-source').textContent === 'Live Gamer ULTRA S GC553Pro' &&
+                document.getElementById('hdmi-source-trigger').options.length === 9 &&
+                document.getElementById('hdmi-source-trigger').value === 'switch2' &&
+                document.getElementById('meta-hdmi-source').textContent === 'Switch 2' &&
+                document.getElementById('no-signal-image-row').hidden;
+        })())JS") == L"true"; }),
+              "production state JSON applies update flags, sleep, capture source, HDMI options and No Signal defaults");
+        const size_t devicesInMenu = messages.size();
+        Script(view, L"document.getElementById('source-trigger').click()");
+        Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+            const items = [...document.querySelectorAll('#source-popover .source-popover-item')];
+            return document.getElementById('source-popover').dataset.open === 'true' &&
+                items.length === 2 && items.some(item => item.textContent === 'AVerMedia "test" device') &&
+                items.some(item => item.textContent === 'Live Gamer ULTRA S GC553Pro' && item.dataset.active === 'true');
+        })())JS") == L"true"; }),
+              "production captureDevices and activeDevice populate the native-backed source picker");
+        Check(PumpUntil([&] {
+            return std::any_of(messages.begin() + static_cast<std::ptrdiff_t>(devicesInMenu), messages.end(),
+                               [](const auto& json) {
+                                   const auto parsed = NitLink::ParseSettingsMessage(json);
+                                   return parsed && parsed->action == L"getDeviceList";
+                               });
+        }), "source picker request crosses the real WebView2 bridge");
+        Script(view, L"document.querySelector('main').click()");
+        Check(Script(view, L"document.getElementById('no-signal-image-row').hidden") == L"true",
+              "No Signal image controls start hidden in default mode");
+        Script(view, L"document.getElementById('no-signal-screen-row').click()");
+        Check(PumpUntil([&] {
+            return noSignalModeActions == 1 && Script(view, LR"JS((() => {
+                return !document.getElementById('no-signal-image-row').hidden &&
+                    !document.getElementById('no-signal-fit-row').hidden &&
+                    !document.getElementById('no-signal-dim-row').hidden &&
+                    document.getElementById('no-signal-image-value').textContent === 'no-signal.png';
+            })())JS") == L"true";
+        }), "No Signal click reaches native handler and image settings return through WebView2");
+        Check(nativeState.noSignalMode == L"image" && nativeStatePostAccepted,
+              "native No Signal mode advances and production state is accepted");
+        Script(view, L"document.getElementById('no-signal-screen-row').click()");
+        Check(PumpUntil([&] {
+            return noSignalModeActions == 2 && Script(view,
+                L"document.getElementById('no-signal-image-row').hidden") == L"true";
+        }), "second No Signal click restores default mode through state round trip");
+        Check(nativeState.noSignalMode == L"default" && nativeStatePushes == 3,
+              "two native No Signal transitions produce three state pushes including ready");
+
+        Script(view, LR"JS((() => {
+            window.__originalGetElementById = document.getElementById.bind(document);
+            document.getElementById = id => {
+                if (id === 'holy-bear-update-status') throw new Error('simulated applyState exception');
+                return window.__originalGetElementById(id);
+            };
+            return true;
+        })())JS");
+        Check(host.PostMessage(NitLink::SerializeWebViewCoreSettingsState(nativeState)),
+              "exception fixture state reaches real WebView2");
+        Check(PumpUntil([&] { return !javascriptExceptions.empty(); }),
+              "JavaScript applyState exception reports through native bridge");
+        Check(javascriptExceptions.back().find(L"simulated applyState exception") != std::wstring::npos,
+              "JavaScript exception detail is preserved for native diagnostics");
+        Script(view, L"document.getElementById = window.__originalGetElementById");
+        Check(host.PostMessage(NitLink::SerializeWebViewCoreSettingsState(nativeState)),
+              "normal state recovers after JavaScript exception fixture");
         Check(Script(view, LR"JS((() => {
             window.__violations = [];
             document.addEventListener('securitypolicyviolation', e => __violations.push(e.violatedDirective));
