@@ -47,6 +47,10 @@ struct DX11RendererTestAccess {
     {
         return renderer.m_presentCapDeadline != std::chrono::steady_clock::time_point{};
     }
+    static auto Deadline(const DX11Renderer& renderer)
+    {
+        return renderer.m_presentCapDeadline;
+    }
 };
 }
 
@@ -66,16 +70,39 @@ int main()
         const auto interval = std::chrono::milliseconds(10);
         Require(AdvancePresentCapDeadline({}, now, interval) == now + interval,
                 "first release establishes a rate-derived deadline");
-        Require(AdvancePresentCapDeadline(now, now + std::chrono::milliseconds(1), interval) == now + interval,
-                "minor scheduling lateness does not add render time to the cap interval");
+        Require(AdvancePresentCapDeadline(now, now, interval) == now + interval,
+                "an on-time completed wait retains the configured interval");
+        Require(AdvancePresentCapDeadline(now, now - std::chrono::milliseconds(1), interval) == now + interval,
+                "an early completion cannot release before the pending deadline");
+        Require(AdvancePresentCapDeadline(now, now + std::chrono::milliseconds(1), interval)
+                    == now + interval + std::chrono::milliseconds(1),
+                "one millisecond of lateness does not shorten the next interval");
+        Require(AdvancePresentCapDeadline(now, now + interval, interval) == now + 2 * interval,
+                "a full missed interval starts a fresh interval without catch-up");
         Require(AdvancePresentCapDeadline(now, now + 3 * interval, interval) == now + 4 * interval,
                 "a missed deadline rebases without catch-up bursts");
         auto deadline = now;
         for (int frame = 1; frame <= 120; ++frame) {
-            deadline = AdvancePresentCapDeadline(deadline, deadline + std::chrono::milliseconds(1), interval);
-            Require(deadline == now + frame * interval,
-                    "render/present work stays inside the interval across repeated frames");
+            const auto completedAt = deadline + std::chrono::milliseconds(1);
+            deadline = AdvancePresentCapDeadline(deadline, completedAt, interval);
+            Require(deadline - completedAt == interval,
+                    "every late completion leaves a full interval before the next release");
+            Require(deadline == now + frame * (interval + std::chrono::milliseconds(1)),
+                    "continuous lateness cannot accumulate catch-up debt");
         }
+        // Useful rendering can finish before the next slot without adding
+        // its duration to the cap interval; the subsequent wait ends at
+        // that slot and schedules another full interval.
+        const auto release = now;
+        deadline = AdvancePresentCapDeadline({}, release, interval);
+        const auto renderFinishedAt = release + std::chrono::milliseconds(2);
+        Require(deadline - renderFinishedAt == std::chrono::milliseconds(8),
+                "render work remains inside the interval instead of lowering the cap");
+        Require(AdvancePresentCapDeadline(deadline, deadline, interval) == release + 2 * interval,
+                "on-time releases maintain the configured cadence across frames");
+        const auto changedInterval = std::chrono::milliseconds(5);
+        Require(AdvancePresentCapDeadline({}, now, changedInterval) == now + changedInterval,
+                "a reset clock starts with the changed cap interval");
         DX11Renderer renderer;
         DX11RendererTestAccess::Initialize(renderer);
         renderer.SetPresentCap(30.0);
@@ -90,6 +117,18 @@ int main()
         renderer.SetPresentCap(0.0);
         Require(!DX11RendererTestAccess::HasDeadline(renderer),
                 "turning the cap off clears its pending interval");
+        renderer.SetPresentCap(95.0);
+        Require(!DX11RendererTestAccess::HasDeadline(renderer),
+                "re-enabling the cap cannot restore the obsolete deadline");
+        const auto restartedAt = Clock::now();
+        renderer.WaitForFrameReady();
+        const auto restartCompletedAt = Clock::now();
+        const auto restartedDeadline = DX11RendererTestAccess::Deadline(renderer);
+        const auto restartedInterval = std::chrono::nanoseconds(
+            static_cast<long long>(1.0e9 / renderer.GetPresentCapHz()));
+        Require(restartedDeadline >= restartedAt + restartedInterval
+                    && restartedDeadline <= restartCompletedAt + restartedInterval,
+                "the first wait after re-enabling starts a fresh rate-derived deadline");
         for (bool lowLatency : {false, true}) {
             for (bool vsync : {false, true}) {
                 for (bool marker : {false, true}) {
@@ -100,6 +139,7 @@ int main()
                         Require(renderer.SetPresentCap(cap) == !marker, "SetPresentCap preserves marker priority");
                         Require(renderer.GetPresentCapHz() == (marker ? 141.0 : cap), "renderer stores the actual cap");
                         DX11RendererTestAccess::StartInterval(renderer);
+                        const auto pendingDeadline = DX11RendererTestAccess::Deadline(renderer);
                         const auto start = std::chrono::steady_clock::now();
                         if (lowLatency) renderer.WaitForFrameReady();
                         renderer.BeginFrame(!lowLatency);
@@ -116,6 +156,13 @@ int main()
                                 "a signaled waitable succeeds without timeout");
                         if (capped) Require(elapsedMs >= 0.8 * 1000.0 / renderer.GetPresentCapHz(),
                                             "a ready waitable cannot bypass a configured rate interval");
+                        if (capped) {
+                            const auto nextDeadline = DX11RendererTestAccess::Deadline(renderer);
+                            const auto capInterval = std::chrono::nanoseconds(
+                                static_cast<long long>(1.0e9 / renderer.GetPresentCapHz()));
+                            Require(nextDeadline >= pendingDeadline + capInterval,
+                                    "both low-latency wait locations retain a full interval after the slot");
+                        }
                         Require(renderer.ConsumePhaseTimes().iterations == 0, "phase counters consume once");
                     }
                 }
