@@ -158,6 +158,22 @@ int main(int argc, char** argv) {
         host.PostMessage(LR"({"state":{"locale":"zh-TW","languagePreference":"zh-TW","audioVolume":0.75}})");
         Check(PumpUntil([&] { return Script(view, L"document.documentElement.lang") == L"\"zh-TW\""; }),
               "native state reaches trusted page");
+        host.PostMessage(LR"({"state":{"noSignalMode":"image","noSignalImage":"C:\\photo.png","noSignalImageAvailable":true}})");
+        Check(PumpUntil([&] { return Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.NitLinkLocales['zh-TW']['value.customImage']") == L"true"; }),
+              "custom image label available");
+        Script(view, L"window.__neutralImageLabel = document.getElementById('no-signal-mode-val').textContent");
+        host.PostMessage(LR"({"state":{"noSignalMode":"image","noSignalImage":"","noSignalImageAvailable":false,"configWarning":"Settings will not be saved."}})");
+        Check(PumpUntil([&] {
+            return Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.__neutralImageLabel") == L"true";
+        }), "unchosen custom image keeps neutral localized label");
+        Check(Script(view, L"document.getElementById('config-warning').textContent === 'Settings will not be saved.' && document.getElementById('config-warning').getBoundingClientRect().height > 0") == L"true",
+              "config warning remains visibly in settings");
+        Check(Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.NitLinkLocales['zh-TW']['value.customImage']") == L"true",
+              "applied empty-image state has no unavailable label");
+        host.PostMessage(LR"({"state":{"configWarning":""}})");
+        Check(PumpUntil([&] { return Script(view, L"document.getElementById('config-warning').hidden") == L"true"; }),
+              "resolved config warning clears");
+        // Keep metadata readback checks separate from the HDMI source picker in #25.
         for (const auto* locale : {L"en-US", L"zh-TW"}) {
             const std::wstring prefix = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"negotiatedWidth\":1920,\"negotiatedHeight\":1080,";
@@ -177,21 +193,7 @@ int main(int argc, char** argv) {
                 L"document.getElementById('meta-resolution').textContent === '1920x1080 / -- FPS'") == L"true"; }),
                 "missing negotiated rate remains unknown while resolution stays visible");
         }
-        host.PostMessage(LR"({"state":{"noSignalMode":"image","noSignalImage":"C:\\photo.png","noSignalImageAvailable":true}})");
-        Check(PumpUntil([&] { return Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.NitLinkLocales['zh-TW']['value.customImage']") == L"true"; }),
-              "custom image label available");
-        Script(view, L"window.__neutralImageLabel = document.getElementById('no-signal-mode-val').textContent");
-        host.PostMessage(LR"({"state":{"noSignalMode":"image","noSignalImage":"","noSignalImageAvailable":false,"configWarning":"Settings will not be saved."}})");
-        Check(PumpUntil([&] {
-            return Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.__neutralImageLabel") == L"true";
-        }), "unchosen custom image keeps neutral localized label");
-        Check(Script(view, L"document.getElementById('config-warning').textContent === 'Settings will not be saved.' && document.getElementById('config-warning').getBoundingClientRect().height > 0") == L"true",
-              "config warning remains visibly in settings");
-        Check(Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.NitLinkLocales['zh-TW']['value.customImage']") == L"true",
-              "applied empty-image state has no unavailable label");
-        host.PostMessage(LR"({"state":{"configWarning":""}})");
-        Check(PumpUntil([&] { return Script(view, L"document.getElementById('config-warning').hidden") == L"true"; }),
-              "resolved config warning clears");
+
         const size_t count = messages.size();
         Script(view, L"document.querySelector('[data-action=toggleHDR]').click()");
         Check(PumpUntil([&] { return messages.size() > count; }), "menu control posts through native bridge");
