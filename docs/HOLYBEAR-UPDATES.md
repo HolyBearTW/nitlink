@@ -3,8 +3,9 @@
 F1 → About shows the running HolyBear version once, a compact update control,
 and easy-to-find feedback/support links. Technical details, the complete build
 tag, last attempt time, source/license links and contributor credits are in a
-keyboard-accessible disclosure. The shared capture/signal strip is hidden only
-while About is selected and returns on the other tabs. English, Traditional
+keyboard-accessible disclosure that is expanded by default. The shared
+capture/signal strip is hidden only while About is selected and returns on the
+other tabs. English, Traditional
 Chinese and Simplified Chinese use the existing localization and settings
 layout. An unread badge is cleared when About is opened; no startup popup, toast
 or forced update is used.

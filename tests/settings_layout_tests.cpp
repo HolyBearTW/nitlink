@@ -481,22 +481,22 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
     Check(messages.size() == beforeAbout + 1 && messages.back().find(L"markHolyBearUpdateSeen") != std::wstring::npos,
         "opening About only acknowledges the current update notification");
     Check(Script(view, LR"JS((() => {
-        const pane = document.querySelector('#pane-about'), text = pane.innerText;
+        const pane = document.querySelector('#pane-about'), heroText = pane.querySelector('.about-hero').innerText;
         return document.documentElement.dataset.activePane === 'pane-about' &&
             getComputedStyle(document.querySelector('.metabar')).display === 'none' &&
-            !document.querySelector('.about-details').open &&
-            document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'false' &&
+            document.querySelector('.about-details').open &&
+            document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'true' &&
             document.querySelector('#about-details-summary').getAttribute('aria-controls') === 'about-details-body' &&
             document.querySelector('#about-details-summary').tabIndex >= 0 &&
             document.querySelector('#holy-bear-product-title').textContent === 'NitLink 1.2.4 HolyBear Edition' &&
-            (text.match(/1\.2\.4/g) || []).length === 1 &&
+            (heroText.match(/1\.2\.4/g) || []).length === 1 &&
             document.querySelector('#holy-bear-update-status').textContent === window.NitLinkLocales['zh-TW']['update.current'] &&
             document.querySelector('#holy-bear-update-status').hidden === false &&
             document.querySelector('#holy-bear-release-link').hidden &&
             document.querySelector('#holy-bear-update-status').textContent.indexOf('未知') < 0 &&
             !!document.querySelector('.about-links a[href="https://tally.so/r/EkZjNr"]') &&
             !!document.querySelector('.about-links a[href="https://ko-fi.com/klosed89"]');
-    })())JS") == L"true", "collapsed About has one dynamic version, concise update state, quick links and accessible disclosure");
+    })())JS") == L"true", "About defaults to expanded technical details with one hero version, quick links and accessible disclosure");
     Check(Script(view, LR"JS((() => {
         const main = document.querySelector('main');
         return document.documentElement.scrollWidth <= innerWidth && main.scrollWidth <= main.clientWidth &&
@@ -576,6 +576,10 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
 
     PushAboutUpdate(host, L"Right", L"zh-TW", L"available", L"v1.2.5-holybear",
         true, true, false, true, validUrl.c_str());
+    Script(view, L"document.querySelector('.about-details > summary').click()");
+    Check(PumpUntil([&] { return Script(view, L"!document.querySelector('.about-details').open && "
+        L"document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'false'") == L"true"; }),
+        "technical disclosure can collapse and updates its ARIA state");
     Script(view, L"document.querySelector('.about-details > summary').click()");
     Check(PumpUntil([&] { return Script(view, L"document.querySelector('.about-details').open && "
         L"document.querySelector('#about-details-summary').getAttribute('aria-expanded') === 'true'") == L"true"; }),
