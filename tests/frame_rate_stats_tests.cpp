@@ -142,9 +142,12 @@ int main()
                     localization.Get(L"overlay.captureFps") ==
                         (english ? L"Capture FPS" : simplified ? L"采集 FPS" : L"擷取 FPS") &&
                     localization.Get(L"overlay.contentFps") ==
-                        (english ? L"Content FPS (est.)" : simplified
-                            ? L"内容变化 FPS（估计）" : L"內容變化 FPS（估計）"),
-                    "all three languages must label the distinct content/capture/present metrics");
+                        (english ? L"Content Changes" : simplified
+                            ? L"内容变化" : L"內容變化") &&
+                    localization.Get(L"overlay.appIngest") ==
+                        (english ? L"App Latency" : simplified
+                            ? L"程序延迟" : L"程式延遲"),
+                    "all three languages must label content changes, app latency and the distinct capture/present metrics");
         }
         std::cout << "PASS independent rates, missing differ, resets, sample intervals and dropped frames\n";
     } catch (const std::exception& error) {

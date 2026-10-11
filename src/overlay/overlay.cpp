@@ -641,9 +641,9 @@ void Overlay::Render(const Stats& stats)
     // Body, band, and rules mirror the drawer tokens (--bg, --band, --hair,
     // --hair2) so the HUD reads as the same material as the panel.
     ComPtr<ID2D1SolidColorBrush> bandBrush, borderBrush, hairBrush;
-    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.173f, 0.173f, 0.173f, 0.88f), &bandBrush);
-    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f),       &borderBrush);
-    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.075f),      &hairBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(0.173f, 0.173f, 0.173f, 0.70f), &bandBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.09f),       &borderBrush);
+    m_d2dContext->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.045f),      &hairBrush);
 
     m_d2dContext->FillRectangle(panel, m_brushBg.Get());
     m_d2dContext->FillRectangle(
@@ -853,11 +853,11 @@ void Overlay::Render(const Stats& stats)
                  DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
         // Badges hang off the right edge, active in accent, inactive in the
-        // muted ink. Order matches pipeline execution: scale, HDR, NIS, color.
+        // muted ink. LL is accent-colored when low-latency presentation is enabled.
         const std::wstring labels[4] = {
-            L"CR", L"HDR", L"NIS", Tr(L"overlay.badgeColor")
+            L"CR", L"HDR", L"NIS", L"LL"
         };
-        const bool     active[4] = { true, stats.hdrActive, stats.nisActive, stats.colorExpansion };
+        const bool     active[4] = { true, stats.hdrActive, stats.nisActive, stats.lowLatency };
         float x = footer.right;
         for (int i = 3; i >= 0; --i) {
             const std::wstring& badge = labels[i];

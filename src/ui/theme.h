@@ -55,7 +55,7 @@ struct Theme {
 inline const Theme& GetTheme() {
     static const Theme t = {
         // Backgrounds
-        /*overlayBg*/ D2D1::ColorF(0.102f, 0.102f, 0.102f, 0.93f), // #1A1A1A at 93%, the F1 drawer surface
+        /*overlayBg*/ D2D1::ColorF(0.102f, 0.102f, 0.102f, 0.72f), // #1A1A1A at 72%, translucent HUD surface
         /*panelBg*/   D2D1::ColorF(0.06f, 0.07f, 0.12f, 0.92f),
         /*backdrop*/  D2D1::ColorF(0.00f, 0.00f, 0.00f, 0.45f),
         /*trackBg*/   D2D1::ColorF(0.16f, 0.18f, 0.24f, 1.00f),

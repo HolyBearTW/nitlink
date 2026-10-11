@@ -39,13 +39,13 @@ public:
         uint32_t     captureHeight    = 0;
         std::wstring deviceName;
         bool         signalActive     = false; // false = capture card showing NO SIGNAL placeholder
-        // Pipeline feature flags: drawn as a thin status strip at the
+        // Pipeline and pacing flags: drawn as a thin status strip at the
         // bottom of the overlay so users can see what's active without
         // opening F1. Active features show in accent color, inactive in
         // dim text.
         bool         hdrActive        = false;
         bool         nisActive        = false;
-        bool         colorExpansion   = false;
+        bool         lowLatency       = false;
     };
 
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context,

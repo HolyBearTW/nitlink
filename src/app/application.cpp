@@ -2987,7 +2987,7 @@ void Application::Run()
                 // users can see which features are on without opening F1.
                 stats.hdrActive        = true; // inside the HDR branch
                 stats.nisActive        = m_nisUpscaler && m_config && m_config->nisEnabled;
-                stats.colorExpansion   = m_config && m_config->colorExpansion;
+                stats.lowLatency       = m_lowLatency;
                 m_overlay->Render(stats);
 
                 // Composite the offscreen onto the HDR backbuffer. The
@@ -3141,7 +3141,7 @@ void Application::Run()
             // users can see which features are on without opening F1.
             stats.hdrActive        = false; // inside the SDR branch
             stats.nisActive        = m_nisUpscaler && m_config && m_config->nisEnabled;
-            stats.colorExpansion   = m_config && m_config->colorExpansion;
+            stats.lowLatency       = m_lowLatency;
             m_overlay->Render(stats);
         }
 
