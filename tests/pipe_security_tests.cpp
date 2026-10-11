@@ -135,17 +135,17 @@ static void SourcePresenceTest() {
           payload.find("\"state\"") == std::string::npos,
           "malformed UTF-16 cannot produce empty or invalid serialized activity fields");
     pipe.Send(reply, sizeof(reply));
-    rpc.SetActivity(ComposeHdmiPresenceDetails(singleCharacterSource, signal, L"HDR"),
+    rpc.SetActivity(ComposeHdmiPresenceDetails(singleCharacterSource),
                     ComposeHdmiPresenceSignal(signal, L"HDR"), started, "nitlink-logo", L"NitLink");
     payload = ReceiveServerFrame(pipe, 1);
     Check(ComposeHdmiWindowTitle(singleCharacterSource, {}, {}) == L"NitLink - 熊" &&
-          payload.find("\"details\":\"熊 · 1920x1080 @ 60Hz · HDR\"") != std::string::npos &&
+          payload.find("\"details\":\"Source: 熊\"") != std::string::npos &&
           payload.find("\"state\":\"1920x1080 @ 60Hz · HDR\"") != std::string::npos &&
           payload.find("\"start\":1700000000") != std::string::npos,
-          "viewer preserves one-character local source and uses actual signal metadata for Discord details");
+          "viewer preserves one-character source without repeating signal metadata in details");
     pipe.Send(reply, sizeof(reply));
     const auto automaticFallback = GetEffectiveHdmiSourceLabel("other", L"Detected PS5", L"SPD", L"　 ");
-    rpc.SetActivity(ComposeHdmiPresenceDetails(automaticFallback, signal, L"HDR"),
+    rpc.SetActivity(ComposeHdmiPresenceDetails(automaticFallback),
                     ComposeHdmiPresenceSignal(signal, L"HDR"), started, "nitlink-logo", L"NitLink");
     payload = ReceiveServerFrame(pipe, 1);
     Check(ComposeHdmiWindowTitle(automaticFallback, {}, {}) == L"NitLink - Detected PS5" &&

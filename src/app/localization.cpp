@@ -12,6 +12,7 @@ using Table = std::map<std::wstring, std::wstring>;
 const Table& EnglishTable()
 {
     static const Table table = {
+        {L"discord.sourcePrefix", L"Source: "},
         {L"error.com", L"Failed to initialize COM runtime."},
         {L"error.mediaFoundation", L"Failed to initialize Media Foundation."},
         {L"error.application", L"Failed to initialize NitLink.\nCheck that a capture card is connected."},
@@ -104,6 +105,7 @@ const Table& EnglishTable()
 const Table& TraditionalChineseTable()
 {
     static const Table table = {
+        {L"discord.sourcePrefix", L"來源："},
         {L"error.com", L"COM 執行階段初始化失敗。"},
         {L"error.mediaFoundation", L"Media Foundation 初始化失敗。"},
         {L"error.application", L"NitLink 初始化失敗。\n請確認已連接擷取卡。"},
@@ -196,6 +198,7 @@ const Table& TraditionalChineseTable()
 const Table& SimplifiedChineseTable()
 {
     static const Table table = {
+        {L"discord.sourcePrefix", L"来源："},
         {L"overlay.presentRate", L"呈现帧率"},
         {L"overlay.presentFps", L"呈现 FPS"},
         {L"overlay.captureFps", L"采集 FPS"},

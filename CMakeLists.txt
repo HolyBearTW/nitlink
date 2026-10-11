@@ -224,6 +224,13 @@ if(BUILD_TESTING)
     target_link_libraries(NitLinkPipeSecurityTests PRIVATE advapi32)
     add_test(NAME pipe_security COMMAND NitLinkPipeSecurityTests)
 
+    add_executable(NitLinkDiscordPresenceTests tests/discord_presence_tests.cpp
+        src/app/localization.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp)
+    target_include_directories(NitLinkDiscordPresenceTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkDiscordPresenceTests PRIVATE advapi32)
+    add_test(NAME discord_presence COMMAND NitLinkDiscordPresenceTests)
+    set_tests_properties(discord_presence PROPERTIES TIMEOUT 90)
+
     add_executable(NitLinkMediaSecurityTests tests/media_security_tests.cpp)
     target_include_directories(NitLinkMediaSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(NitLinkMediaSecurityTests PRIVATE ole32 oleaut32 strmiids uuid mfuuid avrt)

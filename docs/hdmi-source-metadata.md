@@ -30,8 +30,11 @@ Changing identity saves immediately and refreshes labels without reopening captu
 
 Local source labels accept single Unicode scalar names, such as `熊`. Discord's
 optional Details/State fields require at least two Unicode scalars, counting a
-UTF-16 surrogate pair as one character. Short viewer identities use the same name
-plus actual signal metadata when available; without metadata they are omitted.
+UTF-16 surrogate pair as one character. Short viewer identities use a localized
+source prefix (`Source: 熊`, `來源：熊`, or `来源：熊`), with or without signal
+metadata. Longer names remain unchanged. Viewer State contains only confirmed
+signal metadata, so Details never repeats it. A selected game's State keeps
+source plus signal; a short source without signal uses the same localized prefix.
 Selected game titles/art and the activity start time retain their existing behavior.
 The RPC boundary also omits short or malformed fields without padding or truncation.
 

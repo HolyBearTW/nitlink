@@ -1190,6 +1190,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                 }
                 m_config->Save("nitlink.json");
                 UpdateWindowTitle();
+                UpdateDiscordForCurrentGame(/*preserveStartTime=*/ true);
                 PushSettingsState();
             }
             return;
@@ -5225,7 +5226,7 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
         // Viewer: source in details, actual signal in state. Discord supplies
         // the application name; do not repeat it as "In NitLink".
         m_discord->SetActivity(
-            ComposeHdmiPresenceDetails(sourceLabel, signalLabel, rangeLabel, GetHdmiSourceVrrState()),
+            ComposeHdmiPresenceDetails(sourceLabel, Tr(L"discord.sourcePrefix")),
             ComposeHdmiPresenceSignal(signalLabel, rangeLabel, GetHdmiSourceVrrState()),
             m_discordActivityStart,
             "nitlink-logo",
@@ -5251,7 +5252,8 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
     // back to no image: the text still shows fine.
     m_discord->SetActivity(
         title,                                      // "Spider-Man 2"
-        ComposeHdmiPresenceState(sourceLabel, signalLabel, rangeLabel, GetHdmiSourceVrrState()),
+        ComposeHdmiPresenceState(sourceLabel, signalLabel, rangeLabel, GetHdmiSourceVrrState(),
+            Tr(L"discord.sourcePrefix")),
         m_discordActivityStart,
         m_config->currentGameId,                    // large image asset key
         title                                       // tooltip when hovering image

@@ -273,25 +273,24 @@ void TestDisplays() {
         const auto source = GetEffectiveHdmiSourceLabel("other", L"PS5", L"SPD", custom);
         Check(ComposeHdmiWindowTitle(source, signal, L"HDR") ==
                   L"NitLink - PS5 - 1920x1080 @ 60Hz [HDR]" &&
-              ComposeHdmiPresenceDetails(source, signal, L"HDR") == L"PS5" &&
+              ComposeHdmiPresenceDetails(source) == L"PS5" &&
               ComposeHdmiPresenceState(source, signal, L"HDR") == L"PS5 · 1920x1080 @ 60Hz · HDR",
               "blank Other title and Discord share the effective Auto identity");
     }
     const auto single = GetEffectiveHdmiSourceLabel("other", L"PS5", {}, L"熊");
     Check(ComposeHdmiWindowTitle(single, {}, {}) == L"NitLink - 熊",
           "Discord minimum never changes a legal single-character local title");
-    Check(ComposeHdmiPresenceDetails(single, signal, L"HDR") ==
-              L"熊 · 1920x1080 @ 60Hz · HDR" &&
+    Check(ComposeHdmiPresenceDetails(single) == L"Source: 熊" &&
           ComposeHdmiPresenceState(single, signal, L"HDR") ==
               L"熊 · 1920x1080 @ 60Hz · HDR",
-          "Discord short identity uses meaningful actual signal and retains source name");
-    Check(ComposeHdmiPresenceDetails(single, {}, {}).empty() &&
-          ComposeHdmiPresenceState(single, {}, {}).empty() &&
-          ComposeHdmiPresenceDetails({}, signal, L"HDR").empty(),
-          "Discord omits optional short or unknown identities without invented information");
-    Check(ComposeHdmiPresenceDetails(single, {}, L"SDR") == L"熊 · SDR" &&
-          ComposeHdmiPresenceDetails(single, {}, {}, HdmiSourceVrrState::Enabled) == L"熊 · VRR",
-          "confirmed range or VRR supplies meaningful fallback without timing");
+          "Discord short identity stays separate from signal metadata");
+    Check(ComposeHdmiPresenceDetails(single) == L"Source: 熊" &&
+          ComposeHdmiPresenceState(single, {}, {}) == L"Source: 熊" &&
+          ComposeHdmiPresenceDetails({}).empty(),
+          "Discord retains short sources without signal and omits unknown identities");
+    Check(ComposeHdmiPresenceDetails(single, L"來源：") == L"來源：熊" &&
+          ComposeHdmiPresenceDetails(single, L"来源：") == L"来源：熊",
+          "short identity uses a localized label without borrowing range or VRR");
     Check(!HasMinimumDiscordActivityCharacters(L"熊") &&
           !HasMinimumDiscordActivityCharacters(L"\xd83c\xdfae") &&
           HasMinimumDiscordActivityCharacters(L"熊貓") &&

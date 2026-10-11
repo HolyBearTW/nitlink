@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/hdmi_source.h"
 #include "capture/hdmi_raw_timing.h"
 #include "capture/hdmi_source_vrr.h"
 #include "discord/activity_fields.h"
@@ -55,27 +56,31 @@ inline std::wstring ComposeHdmiPresenceSignal(std::wstring_view signal,
     return std::wstring(GetDiscordActivityField(state));
 }
 
+// Source-only viewer details never borrow signal metadata from state. A
+// localized label preserves single-scalar names even when no signal is known.
+inline std::wstring ComposeHdmiPresenceDetails(std::wstring_view identity,
+    std::wstring_view sourcePrefix = L"Source: ") {
+    identity = TrimManualHdmiSourceCustom(identity);
+    if (identity.empty()) return {};
+    const auto labeled = std::wstring(sourcePrefix) + std::wstring(identity);
+    return std::wstring(GetDiscordActivityField(identity, labeled));
+}
+
 // A selected game keeps its title/art in details, with source+signal in state.
+// Without signal metadata, short source names use the same localized label.
 inline std::wstring ComposeHdmiPresenceState(std::wstring_view identity,
     std::wstring_view signal, std::wstring_view confirmedRange,
-    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown) {
+    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown,
+    std::wstring_view sourcePrefix = L"Source: ") {
+    identity = TrimManualHdmiSourceCustom(identity);
     std::wstring state(identity);
     const auto metadata = ComposeHdmiPresenceSignal(signal, confirmedRange, sourceVrr);
+    if (metadata.empty()) return ComposeHdmiPresenceDetails(identity, sourcePrefix);
     if (!metadata.empty()) {
         if (!state.empty()) state += L" · ";
         state += metadata;
     }
     return std::wstring(GetDiscordActivityField(state));
-}
-
-// Keep short local names intact. Viewer details can include the actual signal
-// to meet Discord's minimum; without that information the field stays absent.
-inline std::wstring ComposeHdmiPresenceDetails(std::wstring_view identity,
-    std::wstring_view signal, std::wstring_view confirmedRange,
-    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown) {
-    if (identity.empty()) return {};
-    const auto fallback = ComposeHdmiPresenceState(identity, signal, confirmedRange, sourceVrr);
-    return std::wstring(GetDiscordActivityField(identity, fallback));
 }
 
 // The application supplies only a title/Discord refresh callback. Unknown
