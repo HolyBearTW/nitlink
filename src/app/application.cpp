@@ -4,6 +4,7 @@
 #include "WebViewSettings.h"
 #include "settings_message.h"
 #include "hdmi_source_presence.h"
+#include "discord/activity_fields.h"
 #include "webview_policy.h"
 #include "game_database.h"
 #include "localization.h"
@@ -5218,7 +5219,7 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
     if (m_config->currentGameId.empty()) {
         // Discord supplies the application name; viewer details show HDMI identity.
         m_discord->SetActivity(
-            sourceLabel.empty() ? L"In NitLink" : sourceLabel,
+            std::wstring(GetDiscordActivityField(sourceLabel, L"In NitLink")),
             L"Capture Viewer",
             m_discordActivityStart,
             "nitlink-logo",
@@ -5243,8 +5244,8 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
     // Portal for the image to render. If no asset exists, Discord falls
     // back to no image: the text still shows fine.
     m_discord->SetActivity(
-        title,                                      // "Spider-Man 2"
-        sourceLabel.empty() ? L"Playing" : sourceLabel, // effective HDMI source identity
+        std::wstring(GetDiscordActivityField(title, L"Playing")),
+        std::wstring(GetDiscordActivityField(sourceLabel, L"Playing")),
         m_discordActivityStart,                     // resets on game selection only
         m_config->currentGameId,                    // large image asset key
         title                                       // tooltip when hovering image

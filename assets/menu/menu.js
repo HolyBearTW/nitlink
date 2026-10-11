@@ -818,8 +818,7 @@
         trigger.value = selected;
         customRow.hidden = selected !== 'other';
         nameEl.textContent = selected === 'auto' ? t('value.auto')
-          : selected === 'other' && !custom ? t('hdmiSource.other')
-          : effective;
+          : effective || t('meta.none');
         trigger.title = effective
           ? `${nameEl.textContent} · ${effective}`
           : t('meta.hdmiSourceInfo');

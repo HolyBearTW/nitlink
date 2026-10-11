@@ -1,5 +1,6 @@
 #include "app/WebViewSettings.h"
 #include "app/settings_message.h"
+#include "app/hdmi_source.h"
 
 #include <shlwapi.h>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <vector>
 
 using Microsoft::WRL::Callback;
@@ -55,6 +57,12 @@ std::wstring Script(ICoreWebView2* view, const std::wstring& script) {
 // These are test values, not observations from capture hardware. Every native
 // state push carries the same settings; only panelSide and locale vary.
 void PushState(WebViewSettings& host, const wchar_t* side, const wchar_t* locale = L"en-US") {
+    std::wstringstream sourceOptions;
+    for (const auto& [value, label] : NitLink::kManualHdmiSources) {
+        if (value != "auto") sourceOptions << L",";
+        sourceOptions << L"{\"value\":\"" << std::wstring(value.begin(), value.end())
+                      << L"\",\"label\":\"" << label << L"\"}";
+    }
     host.PostMessage(std::wstring(LR"({"state":{"hdrEnabled":true,"colorExpansion":true,
         "colorExpansionAvailable":true,"nisEnabled":true,"vsync":false,
         "lowLatency":true,"preventSleep":true,"presentPacing":"unique",
@@ -69,7 +77,10 @@ void PushState(WebViewSettings& host, const wchar_t* side, const wchar_t* locale
         "captureFormatOverride":{"width":0,"height":0,"fps":0,
             "fpsNumerator":0,"fpsDenominator":1,"format":""},
         "languagePreference":"system","panelSide":")") + side +
-        L"\",\"locale\":\"" + locale + L"\"}}");
+        L"\",\"locale\":\"" + locale +
+        L"\",\"manualHdmiSource\":\"auto\",\"manualHdmiSourceCustom\":\"\","
+        L"\"effectiveHdmiSource\":\"Detected PS5\",\"manualHdmiSourceOptions\":[" +
+        sourceOptions.str() + L"]}}");
     auto* view = WebViewSettingsTestAccess::View(host);
     const std::wstring expected = side == std::wstring_view(L"Full") ? L"full"
         : side == std::wstring_view(L"Left") ? L"left" : L"right";
@@ -260,15 +271,57 @@ void TestLayouts(WebViewSettings& host, HWND window, std::vector<std::wstring>& 
     Check(Script(view, L"__controls.every(e => e.isConnected) && new Set([...document.querySelectorAll('[id]')].map(e => e.id)).size === document.querySelectorAll('[id]').length") == L"true",
         "presentation changes retain the original controls without duplicate IDs");
 
-    Resize(host, window, 1920, 1080, WebViewSettings::Dock::Full);
-    PushState(host, L"Full");
-    Script(view, L"document.querySelector('#source-trigger').click()");
-    Check(Script(view, LR"JS((() => {
-        const p = document.querySelector('#source-popover'), r = p.getBoundingClientRect();
-        return p.dataset.open === 'true' && r.width > 0 && r.left >= 0 && r.right <= innerWidth &&
-            r.top >= 0 && r.bottom <= innerHeight && p.querySelectorAll('select').length === 3;
-    })())JS") == L"true", "source picker and format controls remain reachable in the signal sidebar");
-    Script(view, L"document.querySelector('#source-trigger').click()");
+    for (const auto size : {std::pair{1920, 1080}, std::pair{2560, 1440}}) {
+        Resize(host, window, size.first, size.second, WebViewSettings::Dock::Full);
+        PushState(host, L"Full");
+        const auto beforeOpen = messages.size();
+        Script(view, L"document.querySelector('#source-trigger').click()");
+        Check(PumpUntil([&] { return messages.size() == beforeOpen + 1; }),
+            "Full source opening completes its native device-list request");
+        const auto opened = NitLink::ParseSettingsMessage(messages.back());
+        Check(opened && opened->action == L"getDeviceList", "source refresh precedes the HDMI selection");
+        Check(Script(view, LR"JS((() => {
+            const p = document.querySelector('#source-popover'), r = p.getBoundingClientRect();
+            const formatRows = [...p.querySelectorAll(':scope > .source-popover-select-row')];
+            const strings = window.NitLinkLocales[document.documentElement.lang];
+            return document.documentElement.dataset.side === 'full' && p.dataset.open === 'true' &&
+                r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight &&
+                p.querySelectorAll('select').length === 4 && formatRows.length === 3 &&
+                ['source.resolution','source.framerate','source.format'].every((key, i) =>
+                    formatRows[i].querySelector('label').textContent === strings[key] &&
+                    formatRows[i].querySelector('select')) &&
+                document.querySelector('#hdmi-source-trigger').options.length === 9;
+        })())JS") == L"true", "Full source sidebar exposes HDMI identity and all three capture format selects");
+        const auto beforeSelection = messages.size();
+        Check(Script(view, LR"JS((() => {
+            const hdmi = document.querySelector('#hdmi-source-trigger'); hdmi.value = 'other';
+            hdmi.dispatchEvent(new Event('change', {bubbles:true}));
+            return true;
+        })())JS") == L"true", "Full HDMI selection script completes without a JavaScript exception");
+        Check(PumpUntil([&] { return messages.size() == beforeSelection + 1; }),
+            "Full HDMI Other selection reaches the native bridge");
+        const auto selected = NitLink::ParseSettingsMessage(messages.back());
+        Check(selected && selected->action == L"setManualHdmiSource" && selected->text == L"other",
+            "Full HDMI source selection uses the canonical native action");
+        host.PostMessage(LR"({"state":{"manualHdmiSource":"other","manualHdmiSourceCustom":"",
+            "effectiveHdmiSource":"Detected PS5"}})");
+        Check(PumpUntil([&] {
+            return Script(view, L"document.querySelector('#hdmi-source-trigger').value === 'other'") == L"true";
+        }), "Full selection is confirmed by native state");
+        Script(view, L"document.querySelector('#hdmi-source-custom-edit').click()");
+        Check(Script(view, LR"JS((() => {
+            const editor = document.querySelector('#hdmi-source-custom-editor'), r = editor.getBoundingClientRect();
+            return !editor.hidden && !document.querySelector('#hdmi-source-custom-row').hidden &&
+                document.activeElement === document.querySelector('#hdmi-source-custom-input') &&
+                r.width > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+        })())JS") == L"true", "Other custom editor is visible, focused and inside the Full viewport");
+        const auto beforeCancel = messages.size();
+        Script(view, L"document.querySelector('#hdmi-source-custom-input').value='unsaved'; document.querySelector('#hdmi-source-custom-cancel').click()");
+        Check(messages.size() == beforeCancel &&
+            Script(view, L"document.querySelector('#hdmi-source-custom-editor').hidden && document.querySelector('#meta-hdmi-source').textContent === 'Detected PS5'") == L"true",
+            "Full editor cancellation keeps the effective automatic source without posting a draft");
+        Script(view, L"document.querySelector('#source-trigger').click()");
+    }
 
     for (const int width : {640, 900, 1200}) {
         for (const auto side : {L"Left", L"Right"}) {

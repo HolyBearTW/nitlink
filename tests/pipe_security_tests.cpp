@@ -1,5 +1,6 @@
 #include "discord/pipe_transport.h"
 #include "discord/discord_rpc.h"
+#include "discord/activity_fields.h"
 #include "app/hdmi_source.h"
 #include "app/hdmi_source_presence.h"
 #include <utility>
@@ -113,6 +114,47 @@ static void SourcePresenceTest() {
           payload.find("spider-man-2") != std::string::npos &&
           payload.find("1700000300") != std::string::npos,
           "Auto identity refresh restores detection without resetting game art or activity time");
+    pipe.Send(reply, sizeof(reply));
+    const auto single = GetEffectiveHdmiSourceLabel("other", {}, {}, L"熊");
+    rpc.SetActivity(std::wstring(GetDiscordActivityField(single, L"In NitLink")),
+                    L"Capture Viewer", activityStart, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(single == L"熊" && payload.find("\"details\":\"In NitLink\"") != std::string::npos &&
+          payload.find("\"state\":\"Capture Viewer\"") != std::string::npos,
+          "one-character local source gets the existing viewer details fallback");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"Spider-Man 2", std::wstring(GetDiscordActivityField(single, L"Playing")),
+                    activityStart, "spider-man-2", L"Spider-Man 2");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"state\":\"Playing\"") != std::string::npos &&
+          payload.find("\"large_image\":\"spider-man-2\"") != std::string::npos &&
+          payload.find("1700000300") != std::string::npos,
+          "single-character source fallback preserves game art and start time");
+    pipe.Send(reply, sizeof(reply));
+    const auto unset = GetEffectiveHdmiSourceLabel("other", L"Detected PS5", L"SPD", L"　 ");
+    rpc.SetActivity(std::wstring(unset), L"Capture Viewer", activityStart);
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\":\"Detected PS5\"") != std::string::npos &&
+          payload.find("Other") == std::string::npos,
+          "empty Other is serialized as the effective automatic identity");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"熊", L"\xd83c\xdfae", activityStart, "nitlink-logo", L"NitLink");
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\"") == std::string::npos &&
+          payload.find("\"state\"") == std::string::npos && payload.find("nitlink-logo") != std::string::npos,
+          "serializer omits optional fields shorter than two Unicode scalars");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"熊貓", L"\xd83c\xdfae熊", activityStart);
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\":\"熊貓\"") != std::string::npos &&
+          payload.find(std::string("\"state\":\"") + "\xf0\x9f\x8e\xae" + "熊\"") != std::string::npos,
+          "two Unicode scalars keep their original UTF-8 serialization");
+    pipe.Send(reply, sizeof(reply));
+    rpc.SetActivity(L"\xd800x", L"x\xdc00", activityStart);
+    payload = ReceiveServerFrame(pipe, 1);
+    Check(payload.find("\"details\"") == std::string::npos &&
+          payload.find("\"state\"") == std::string::npos,
+          "invalid UTF-16 cannot enter activity fields");
     pipe.Send(reply, sizeof(reply));
     rpc.Disconnect();
 }

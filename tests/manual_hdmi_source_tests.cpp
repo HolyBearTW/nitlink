@@ -2,6 +2,7 @@
 #include "app/hdmi_source_presence.h"
 #include "app/settings_message.h"
 #include "app/capture_output_policy.h"
+#include "discord/activity_fields.h"
 
 #include <windows.h>
 #include <filesystem>
@@ -46,7 +47,7 @@ void TestLabels() {
         Check(IsValidManualHdmiSource(value), "canonical value accepted");
         const std::wstring wide(value.begin(), value.end());
         Check(IsValidManualHdmiSource(std::wstring_view(wide)), "bridge canonical value accepted");
-        if (value != "auto")
+        if (value != "auto" && value != "other")
             Check(GetEffectiveHdmiSourceLabel(value, L"detected", L"SPD") == label,
                   "manual label overrides both automatic detectors");
     }
@@ -59,8 +60,14 @@ void TestLabels() {
     Check(GetEffectiveHdmiSourceLabel("pc") == L"PC", "PC");
     Check(GetEffectiveHdmiSourceLabel("other", {}, {}, L" Steam Deck ") == L"Steam Deck",
           "Other custom name trimmed");
-    Check(GetEffectiveHdmiSourceLabel("other", {}, {}, L"   ") == L"Other",
-          "empty Other name has English fallback");
+    Check(GetEffectiveHdmiSourceLabel("other", L"Detected PS5", L"SPD", L"   ") == L"Detected PS5",
+          "unset Other uses Auto detector priority");
+    Check(GetEffectiveHdmiSourceLabel("other", {}, L"SPD", L"　\u00a0 ") == L"SPD",
+          "Unicode-whitespace Other uses Auto SPD fallback");
+    Check(GetEffectiveHdmiSourceLabel("other").empty(),
+          "unset Other with unknown Auto identity stays unknown");
+    Check(GetEffectiveHdmiSourceLabel("other", L"Detected PS5", L"SPD", L"熊") == L"熊",
+          "one-character custom name remains valid locally");
     Check(GetEffectiveHdmiSourceLabel("auto", L"4K S detected", L"4K X SPD") == L"4K S detected",
           "automatic detector priority preserved");
     Check(GetEffectiveHdmiSourceLabel("auto", {}, L"4K X SPD") == L"4K X SPD",
@@ -252,6 +259,22 @@ void TestActivityStartTime() {
     Check(HdmiSourceActivityStartTime(started, true, Clock::time_point{}) == started,
           "display refresh retains the previous start independently of refresh time");
 }
+void TestDiscordFields() {
+    Check(!HasMinimumDiscordActivityCharacters(L"熊"), "one BMP scalar is too short for Discord");
+    Check(!HasMinimumDiscordActivityCharacters(L"\xd83c\xdfae"), "one surrogate pair is one scalar");
+    Check(HasMinimumDiscordActivityCharacters(L"熊貓") &&
+          HasMinimumDiscordActivityCharacters(L"\xd83c\xdfae熊"), "two Unicode scalars are accepted");
+    Check(!HasMinimumDiscordActivityCharacters(L"\xd800x") &&
+          !HasMinimumDiscordActivityCharacters(L"x\xdc00"), "invalid UTF-16 is rejected");
+    Check(GetDiscordActivityField(L"熊", L"In NitLink") == L"In NitLink",
+          "viewer details use the existing viewer fallback for a short name");
+    Check(GetDiscordActivityField(L"熊", L"Playing") == L"Playing",
+          "selected-game state uses the existing game fallback for a short name");
+    Check(GetDiscordActivityField(L"Steam Deck", L"Playing") == L"Steam Deck",
+          "valid source names are not replaced");
+    Check(GetDiscordActivityField(L"熊", L"x").empty() && GetDiscordActivityField(L"").empty(),
+          "fields without a valid fallback remain optional");
+}
 } // namespace
 
 int main() {
@@ -262,6 +285,7 @@ int main() {
         TestConfig();
         TestPolicyIsolation();
         TestActivityStartTime();
+        TestDiscordFields();
         std::cout << checks << " manual HDMI source checks passed\n";
         return 0;
     } catch (const std::exception& error) {
