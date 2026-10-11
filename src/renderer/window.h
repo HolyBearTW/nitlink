@@ -85,14 +85,12 @@ public:
     std::pair<uint32_t, uint32_t> GetWindowedClientSize() const { return m_windowedClientSize; }
     bool WasResized() const { return m_wasResized; }
     void AcknowledgeResize() { m_wasResized = false; }
-    // WM_MOVE flag, set by WndProc on every move tick while the user
-    // drags the window. Consumed by Application's run loop to call
-    // TrackOwnerRect() on the WebView2 popup so it follows the main
-    // window's client rect across the screen. Separate from m_wasResized
-    // to avoid thrashing the renderer / overlay D2D resources on each
-    // drag tick (WM_MOVE fires continuously during a drag).
+    // Defer monitor-crossing detection to the run loop. Owner movement still
+    // reaches the settings host synchronously through the move callback.
     bool WasMoved() const { return m_wasMoved; }
     void AcknowledgeMove() { m_wasMoved = false; }
+    bool WasDisplayChanged() const { return m_displayChanged; }
+    void AcknowledgeDisplayChange() { m_displayChanged = false; }
 
     // Window procedure
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -114,6 +112,7 @@ private:
     bool       m_isFullscreen = false;
     bool       m_wasResized = false;
     bool       m_wasMoved = false;
+    bool       m_displayChanged = false;
     RECT       m_windowedRect{}; // Stored position for fullscreen restore
     DWORD      m_windowedStyle = 0;
     std::pair<uint32_t, uint32_t> m_windowedClientSize{};

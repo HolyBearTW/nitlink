@@ -30,6 +30,9 @@ set(NITLINK_SOURCES
     src/app/source_cadence.h
     src/app/frame_rate_stats.h
     src/app/present_cap_policy.h
+    src/app/display_refresh_policy.h
+    src/app/display_refresh.h
+    src/app/display_refresh.cpp
     src/app/presentation_state.h
     src/app/capture_output_policy.h
     src/app/WebViewSettings.cpp
@@ -394,6 +397,12 @@ if(BUILD_TESTING)
     )
     target_include_directories(NitLinkFrameRateStatsTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME frame_rate_stats COMMAND NitLinkFrameRateStatsTests)
+
+    add_executable(NitLinkDisplayRefreshTests
+        tests/display_refresh_tests.cpp src/app/display_refresh.cpp)
+    target_include_directories(NitLinkDisplayRefreshTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkDisplayRefreshTests PRIVATE user32)
+    add_test(NAME display_refresh COMMAND NitLinkDisplayRefreshTests)
 
     add_executable(NitLinkPresentCapPolicyTests tests/present_cap_policy_tests.cpp)
     target_include_directories(NitLinkPresentCapPolicyTests PRIVATE ${CMAKE_SOURCE_DIR}/src)

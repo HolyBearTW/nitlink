@@ -443,6 +443,7 @@ private:
     int      m_lastPresentationMode = -2;  // last DXGI composition mode logged
     bool m_lowLatency = true;   // present-on-arrival (wait-then-read) vs VRR pacing; default ON, toggle Alt+L / F1
     double m_presentCapMonitorHz = 0.0;
+    HMONITOR m_presentCapMonitor = nullptr;
     PresentCapDecision m_presentCapDecision{};
     std::wstring m_lastPresentCapLog; // policy changes can matter even at the same numeric cap
 

@@ -7,6 +7,7 @@
 #include "game_database.h"
 #include "localization.h"
 #include "capture_output_policy.h"
+#include "display_refresh.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
@@ -1873,6 +1874,18 @@ void Application::Run()
             }
             m_window->AcknowledgeResize();
             AppLog(L"Resize event: done");
+        }
+
+        // Refresh display metadata only on a display notification or monitor
+        // crossing. Same-monitor moves reuse the cached rational rate.
+        if (m_window->WasDisplayChanged() || m_window->WasMoved()) {
+            const bool displayChanged = m_window->WasDisplayChanged();
+            m_window->AcknowledgeDisplayChange();
+            m_window->AcknowledgeMove();
+            if (displayChanged || MonitorFromWindow(m_window->GetHWND(),
+                    MONITOR_DEFAULTTONEAREST) != m_presentCapMonitor) {
+                ApplyPresentCap();
+            }
         }
 
         // HDR source auto-detect drain. Once per second, the HDR poller's
@@ -4182,26 +4195,15 @@ void Application::ToggleVSync()
 // otherwise cap at the monitor rate instead of accidentally going unlimited.
 // Explicit Off, fixed caps, marker priority and source/VSync bypasses remain.
 //
-// The refresh rate is read from the current display mode of the monitor
-// under the window. A window dragged to another monitor without a resize
-// keeps the previous cap until the next resize or format change.
+// The window's GDI device name identifies its active DisplayConfig source.
+// Query failures and ambiguous clones clear the rate instead of keeping a
+// different monitor's ceiling; policy selects an explicit conservative cap.
 void Application::ApplyPresentCap()
 {
     if (!m_renderer || !m_config) return;
-    m_presentCapMonitorHz = 0.0;
-    HMONITOR monitor = m_window
-        ? MonitorFromWindow(m_window->GetHWND(), MONITOR_DEFAULTTONEAREST) : nullptr;
-    MONITORINFOEXW info{};
-    info.cbSize = sizeof(info);
-    if (monitor && GetMonitorInfoW(monitor, &info)) {
-        DEVMODEW mode{};
-        mode.dmSize = sizeof(mode);
-        // 0/1 mean hardware default; do not invent a refresh rate on query failure.
-        if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
-            mode.dmDisplayFrequency > 1) {
-            m_presentCapMonitorHz = static_cast<double>(mode.dmDisplayFrequency);
-        }
-    }
+    const auto refresh = QueryWindowDisplayRefresh(m_window ? m_window->GetHWND() : nullptr);
+    m_presentCapMonitor = refresh.monitor;
+    m_presentCapMonitorHz = refresh.refresh.hz;
     const uint32_t rateHint = m_captureDevice ? m_captureDevice->GetPresentPacingRateHint() : 0;
     m_presentCapDecision = ChoosePresentCap({m_config->presentCapHz, m_presentCapMonitorHz,
         static_cast<double>(rateHint), m_config->presentPacing, m_renderer->IsVSyncOn(),
@@ -4210,7 +4212,11 @@ void Application::ApplyPresentCap()
 
     std::wstringstream ss;
     ss << L"PresentCap: config=" << m_config->presentCapHz
-       << L" monitor=" << info.szDevice << L" monitorHz=" << m_presentCapMonitorHz
+       << L" monitor=" << refresh.gdiDeviceName << L" monitorHz=" << m_presentCapMonitorHz
+       << L" refreshRatio=" << refresh.refresh.rational.numerator << L"/" << refresh.refresh.rational.denominator
+       << L" refreshStatus=" << DisplayRefreshStatusName(refresh.refresh.status)
+       << L" refreshOrigin=" << DisplayRefreshOriginName(refresh.refresh.origin)
+       << L" refreshApiError=" << refresh.apiError
        << L" pacingHint=" << rateHint
        << L" requestedHz=" << m_presentCapDecision.requestedHz
        << L" storedHz=" << m_renderer->GetPresentCapHz()
