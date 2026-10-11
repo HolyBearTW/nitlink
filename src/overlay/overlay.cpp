@@ -200,6 +200,7 @@ bool Overlay::RefreshTextFormats()
     ComPtr<IDWriteTextFormat> textFormatBig;
     ComPtr<IDWriteTextFormat> textFormatLabel;
     ComPtr<IDWriteTextFormat> textFormatUnit;
+    ComPtr<IDWriteTextFormat> fpsDetailsToggleFormat;
 
     auto createTextFormat = [&](const wchar_t* family,
                                 DWRITE_FONT_WEIGHT weight,
@@ -239,12 +240,21 @@ bool Overlay::RefreshTextFormats()
                           11.0f, textFormatUnit, L"unit")) {
         return false;
     }
+    if (!createTextFormat(L"Segoe UI Symbol", DWRITE_FONT_WEIGHT_NORMAL,
+                          HudFpsDetailsToggle::kGlyphFontSize,
+                          fpsDetailsToggleFormat, L"FPS details toggle")) {
+        return false;
+    }
+    fpsDetailsToggleFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fpsDetailsToggleFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fpsDetailsToggleFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
 
     m_textFormat = textFormat;
     m_smallTextFormat = smallTextFormat;
     m_textFormatBig = textFormatBig;
     m_textFormatLabel = textFormatLabel;
     m_textFormatUnit = textFormatUnit;
+    m_fpsDetailsToggleFormat = fpsDetailsToggleFormat;
 
     OvLog(L"Text formats refreshed for locale " + localization.LocaleName());
     return true;
@@ -665,24 +675,17 @@ void Overlay::Render(const Stats& stats)
                  D2D1::RectF(panel.left + pad + 15.0f, panel.top, panel.left + 150.0f, panel.top + bandH),
                  m_brushInk2.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        // The compact left/right disclosure button toggles the auxiliary FPS rows.
+        // Borderless ⇌ toggles the auxiliary FPS rows. Its color mirrors the
+        // state: white while collapsed, brand accent while expanded.
         const D2D1_RECT_F toggleButton = D2D1::RectF(
             static_cast<float>(HudFpsDetailsToggle::kButtonLeft),
             static_cast<float>(HudFpsDetailsToggle::kButtonTop),
             static_cast<float>(HudFpsDetailsToggle::kButtonRight),
             static_cast<float>(HudFpsDetailsToggle::kButtonBottom));
-        m_d2dContext->FillRectangle(toggleButton, hairBrush.Get());
-        m_d2dContext->DrawRectangle(toggleButton, borderBrush.Get(), 1.0f);
-
-        const float cx = (toggleButton.left + toggleButton.right) * 0.5f;
-        const float cy = (toggleButton.top + toggleButton.bottom) * 0.5f;
-        const float direction = m_fpsDetailsToggle.IsExpanded() ? -1.0f : 1.0f;
-        m_d2dContext->DrawLine(
-            D2D1::Point2F(cx - direction * 3.5f, cy - 5.0f),
-            D2D1::Point2F(cx + direction * 2.5f, cy), m_brushAccent.Get(), 1.8f);
-        m_d2dContext->DrawLine(
-            D2D1::Point2F(cx + direction * 2.5f, cy),
-            D2D1::Point2F(cx - direction * 3.5f, cy + 5.0f), m_brushAccent.Get(), 1.8f);
+        constexpr wchar_t kFpsDetailsGlyph[] = L"\u21CC";
+        m_d2dContext->DrawText(kFpsDetailsGlyph, 1, m_fpsDetailsToggleFormat.Get(),
+            toggleButton, m_fpsDetailsToggle.IsExpanded()
+                ? m_brushAccent.Get() : m_brushText.Get());
 
         std::wstringstream ss;
         if (sig) ss << stats.captureWidth << L"\u00d7" << stats.captureHeight;

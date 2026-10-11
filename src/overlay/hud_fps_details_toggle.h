@@ -3,13 +3,15 @@
 namespace NitLink {
 
 // Layout and interaction state for the optional Capture / Present FPS rows.
-// Button coordinates are client pixels and match the HUD's 96-DPI D2D layout.
+// The hit area matches the small, borderless title glyph. Coordinates are
+// client pixels and match the HUD's 96-DPI D2D layout.
 class HudFpsDetailsToggle {
 public:
-    static constexpr int kButtonLeft = 100;
-    static constexpr int kButtonTop = 19;
-    static constexpr int kButtonRight = 128;
-    static constexpr int kButtonBottom = 43;
+    static constexpr int kButtonLeft = 84;
+    static constexpr int kButtonTop = 17;
+    static constexpr int kButtonRight = 112;
+    static constexpr int kButtonBottom = 41;
+    static constexpr float kGlyphFontSize = 14.0f;
 
     static constexpr float kCollapsedPanelHeight = 162.0f;
     static constexpr float kExpandedPanelHeight = 202.0f;

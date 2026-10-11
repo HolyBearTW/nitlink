@@ -184,6 +184,7 @@ private:
     ComPtr<IDWriteTextFormat>    m_textFormatBig;
     ComPtr<IDWriteTextFormat>    m_textFormatLabel;
     ComPtr<IDWriteTextFormat>    m_textFormatUnit;
+    ComPtr<IDWriteTextFormat>    m_fpsDetailsToggleFormat;
 
     // WIC decodes once into device-independent premultiplied BGRA pixels. The
     // D2D bitmap is recreated from this CPU cache after resize, HDR swap-chain
