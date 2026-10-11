@@ -453,6 +453,7 @@ private:
     uint32_t m_loopIterations  = 0;
     int      m_lastPresentationMode = -2;  // last DXGI composition mode logged
     bool m_lowLatency = true;   // present-on-arrival (wait-then-read) vs VRR pacing; default ON, toggle Alt+L / F1
+    HMONITOR m_presentCapMonitor = nullptr;
     double m_presentCapMonitorHz = 0.0;
     PresentCapDecision m_presentCapDecision{};
     std::wstring m_lastPresentCapLog; // policy changes can matter even at the same numeric cap
@@ -468,6 +469,8 @@ private:
 
     uint32_t m_currentFps        = 0;   // frames written to the capture buffer per second
     uint32_t m_currentContentFps = 0;   // changed frames estimated by the GPU differ per second
+    bool     m_currentContentAvailable = false;
+    uint64_t m_contentClassificationsSinceSample = 0;
     uint64_t m_uniqueFrameCount  = 0;
     uint64_t m_skippedFrameCount = 0;   // frames skipped by VRR present pacing (total)
     // Keep skip counts for pacing diagnostics. Capture stalls make iteration

@@ -4,19 +4,22 @@
 
 namespace NitLink {
 
-// Advance the release schedule, not Present-return + interval. Render work
-// belongs inside the interval. If an entire slot was missed, start a fresh
-// interval instead of issuing a burst of catch-up submissions.
-// The caller supplies a positive interval from the active cap; Off and
-// unknown-refresh decisions bypass this clock in WaitForFrameReady.
+// Start the next interval at the actual wait completion, not at an earlier
+// scheduled slot. Even a small overshoot must not shorten the next interval
+// and cause catch-up submissions. Render work still belongs inside the
+// interval rather than adding another interval after Present returns.
+// The caller supplies a positive interval from the active cap. Off and
+// VSync bypass this clock; Source/Capture pacing skip the refresh wait.
 inline std::chrono::steady_clock::time_point AdvancePresentCapDeadline(
     std::chrono::steady_clock::time_point deadline,
-    std::chrono::steady_clock::time_point now,
+    std::chrono::steady_clock::time_point waitCompletedAt,
     std::chrono::steady_clock::duration interval)
 {
-    if (deadline == std::chrono::steady_clock::time_point{} || now >= deadline + interval)
-        return now + interval;
-    return deadline + interval;
+    // A caller reporting an early completion cannot advance the schedule
+    // before the pending deadline. The renderer calls this after waiting.
+    const auto release = deadline == std::chrono::steady_clock::time_point{}
+        || waitCompletedAt >= deadline ? waitCompletedAt : deadline;
+    return release + interval;
 }
 
 } // namespace NitLink

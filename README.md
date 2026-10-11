@@ -77,7 +77,7 @@ NitLink is NOT for you if:
 - **True-HDR screenshots.** `Ctrl+S` saves a shareable tonemapped SDR `.png` and, when capturing HDR, a true-HDR `.jxr` (scRGB FP16) sidecar that opens as real HDR in the Windows Photos app.
 - **MJP-style Catmull-Rom resampling**: sharp bicubic without ringing artifacts, the same algorithm used by mpv and madVR.
 - **NIS upscaling**: NVIDIA Image Scaling integrated as a compute-shader pass for sharpening at non-native window sizes.
-- **HDR-aware HUD overlay**: successful Present FPS, Capture FPS, Content FPS (estimated), latency and pipeline status. Present counts submissions, including repeated pictures; Content estimates picture changes rather than game FPS. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
+- **HDR-aware HUD overlay**: Content FPS (estimated) as the primary number and sparkline, with Capture FPS and successful Present FPS below it, latency and pipeline status. A measured zero is retained; unavailable content estimates show `--`. Present counts submissions, including repeated pictures; Content estimates picture changes rather than game FPS. Composited correctly into the HDR backbuffer at 203-nit paper-white so it doesn't blow out against HDR content.
 - **WASAPI audio routing** with volume + mute.
 - **Borderless fullscreen** and **picture-in-picture**.
 - **Prevent sleep while playing.** Enabled by default while captured video is visible, including paused games. Releases when minimized, hidden, showing No signal or closed. Turn off **Prevent sleep** in F1 to keep normal Windows idle sleep behavior. Windows power settings are not changed; manual sleep and policy-enforced screen locking remain available.
@@ -125,7 +125,7 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 </p>
 
 <p align="center">
-  <em>HUD overlay (<code>Ctrl+F3</code>) on a live 4K60 PS5 feed. This screenshot predates the FPS telemetry update: the current HUD shows Present FPS as its primary value, with Capture FPS and estimated Content FPS below it.</em>
+  <em>HUD overlay (<code>Ctrl+F3</code>) on a live 4K60 PS5 feed. This screenshot predates the FPS telemetry update: the current HUD shows estimated Content FPS as its primary value, with Capture FPS and Present FPS below it.</em>
 </p>
 
 ### Tested platforms
@@ -279,7 +279,7 @@ Settings live in `nitlink.json` in the working directory (normally next to the e
 - `hdr_enabled`: HDR mode. 4K Pro/X follow the source automatically; on the 4K S it's opt-in (HDR clamps to 1080p over USB).
 - `present_pacing`: how often the picture is presented (default `refresh`). `refresh` = every render iteration, subject to VSync and the present cap; this is the lowest-latency mode. `captured` = once per frame the card delivers. `unique` = follows changes in the picture and holds the measured cadence on still images, which is what a G-Sync / FreeSync display needs to follow the game, what a frame-generation tool needs to read the real frame rate, and what removes 30 fps judder. Both paced modes add up to one capture interval of latency and turn the present cap off. Cycle from the F1 panel. A `vrr_present_pacing = true` written by an earlier version is migrated to `unique`.
 
-- `present_cap_hz`: present-rate cap in Hz for display-refresh pacing (default `0` = automatic: monitor refresh minus 3 when that accommodates the source frame rate, otherwise monitor refresh). Applies with Low-Latency on or off. `30` to `1000` = fixed cap, `-1` = explicitly uncapped. VSync and source/capture pacing bypass it; `VRR_CAP.txt` overrides the configured rate.
+- `present_cap_hz`: present-rate cap in Hz for display-refresh pacing (default `0` = automatic: monitor refresh minus 3 when that accommodates the source frame rate, otherwise the physical monitor refresh, preserving fractional Hz from DisplayConfig). Unavailable or ambiguous monitor information uses a conservative 30 Hz software cap; this fallback is not a measured refresh rate. Applies with Low-Latency on or off. `30` to `1000` = fixed cap, `-1` = explicitly uncapped. VSync and source/capture pacing bypass it; `VRR_CAP.txt` overrides the configured rate.
 
 - `aspect_ratio`: `auto` (default, the ratio the card reports), `stretch` (fill the window), or a fixed ratio such as `4:3`, `16:9`, `16:10`, `21:9`. Restores 4:3 sources that a card delivers stretched inside a 16:9 frame. Cycle with `Alt+A` or from the F1 panel.
 - `no_signal_mode`: `default` (NitLink's branded page) or `image`. With `image`, choose a local PNG, JPEG/JPG, or BMP from the F1 **No Signal** section. `no_signal_image` is stored as UTF-8; `no_signal_fit` accepts `contain`, `cover`, or `stretch`, and `no_signal_dim_image` controls the optional 40% black dim layer (`true` by default). The image keeps its intrinsic aspect ratio, remains independent of the normal capture `aspect_ratio`, and is decoded into a cache instead of being read from disk every frame. Custom No Signal images must be on a local drive; UNC shares and mapped network drives are unsupported. Large photos are scaled to a bounded pixel buffer. Files above 512 MiB or 16384 pixels per side produce a visible size warning. GIF, WebP, TIFF, and HEIC are unsupported. With no image selected, the branded screen stays visible.

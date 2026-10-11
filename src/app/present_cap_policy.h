@@ -6,8 +6,12 @@
 namespace NitLink {
 
 enum class PresentCapReason {
-    VSync, SourcePacing, Marker, Manual, Off, AutoHeadroom, AutoDisplayCeiling, UnknownDisplay
+    VSync, SourcePacing, Marker, Manual, Off, AutoHeadroom, AutoDisplayCeiling, UnknownDisplayFallback
 };
+
+// Deliberately conservative software limit when the physical monitor ceiling
+// is unavailable. This is a fallback policy, never a measured refresh rate.
+inline constexpr double kUnknownDisplayPresentCapHz = 30.0;
 
 struct PresentCapInput {
     int configuredHz = 0;
@@ -38,13 +42,15 @@ inline PresentCapDecision ChoosePresentCap(const PresentCapInput& input)
         result = {static_cast<double>(input.configuredHz), 0.0, PresentCapReason::Manual};
     } else if (input.configuredHz < 0) {
         result.reason = PresentCapReason::Off;
-    } else if (!std::isfinite(input.monitorHz) || input.monitorHz < 50.0) {
-        result.reason = PresentCapReason::UnknownDisplay;
+    } else if (!std::isfinite(input.monitorHz) || input.monitorHz <= 0.0) {
+        // The DXGI queue-ready event does not itself throttle immediate tearing
+        // Presents. A failed/ambiguous display query must not silently uncap Auto.
+        result = {kUnknownDisplayPresentCapHz, 0.0, PresentCapReason::UnknownDisplayFallback};
     } else {
         const double candidate = input.monitorHz - 3.0;
         const double source = std::isfinite(input.sourceRateHint) && input.sourceRateHint > 0.0
             ? input.sourceRateHint : 0.0;
-        if (candidate >= source) {
+        if (candidate > 0.0 && candidate >= source) {
             result = {candidate, 0.0, PresentCapReason::AutoHeadroom};
         } else {
             // Equal/faster capture must not turn Auto into unlimited Present.
@@ -71,7 +77,7 @@ inline const wchar_t* PresentCapReasonName(PresentCapReason reason)
     case PresentCapReason::Off: return L"explicit uncapped";
     case PresentCapReason::AutoHeadroom: return L"auto monitor minus 3";
     case PresentCapReason::AutoDisplayCeiling: return L"auto monitor ceiling (source exceeds headroom)";
-    case PresentCapReason::UnknownDisplay: return L"monitor refresh unknown or under 50 Hz";
+    case PresentCapReason::UnknownDisplayFallback: return L"monitor refresh unknown; conservative 30 Hz fallback";
     }
     return L"unknown";
 }

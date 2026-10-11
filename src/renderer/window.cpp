@@ -550,6 +550,12 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
         return 0;
 
+    case WM_DISPLAYCHANGE:
+        // Defer DisplayConfig queries until after message dispatch; no
+        // topology query or renderer rebuild runs in the window procedure.
+        if (self) self->m_displayChanged = true;
+        return 0;
+
     case WM_SHOWWINDOW:
         if (self) {
             if (!wParam) self->m_playbackPower.SetActive(false);

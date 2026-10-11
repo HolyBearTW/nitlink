@@ -9,6 +9,7 @@
 #include "game_database.h"
 #include "localization.h"
 #include "capture_output_policy.h"
+#include "display_refresh.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
 #include "capture/elgato_hid_4ks.h"
@@ -1156,7 +1157,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     // Frame differ: detects "is this captured frame new content vs a duplicate?"
-    // Needed for real game-FPS reporting. Best-effort init.
+    // Estimates visible content-change FPS, not the game's true FPS. Best-effort init.
     m_frameDiffer = std::make_unique<FrameDiffer>();
     if (!m_frameDiffer->Initialize(m_renderer->GetDevice())) {
         AppLog(L"Initialize: FrameDiffer::Initialize FAILED (continuing without)");
@@ -1866,6 +1867,8 @@ void Application::Run()
     
     auto lastFpsUpdate = Clock::now();
     FrameRateCounters lastFpsCounters;
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
 
     MSG msg{};
     while (m_running) {
@@ -1922,6 +1925,18 @@ void Application::Run()
             }
             m_window->AcknowledgeResize();
             AppLog(L"Resize event: done");
+        }
+
+        // Query display topology only for a display notification or an actual
+        // monitor crossing. Same-monitor moves keep the cached rational rate.
+        if (m_window->WasDisplayChanged() || m_window->WasMoved()) {
+            const bool displayChanged = m_window->WasDisplayChanged();
+            m_window->AcknowledgeDisplayChange();
+            m_window->AcknowledgeMove();
+            if (displayChanged || MonitorFromWindow(m_window->GetHWND(),
+                    MONITOR_DEFAULTTONEAREST) != m_presentCapMonitor) {
+                ApplyPresentCap();
+            }
         }
 
         // HDR source auto-detect drain. Once per second, the HDR poller's
@@ -2636,8 +2651,11 @@ void Application::Run()
             m_loopDifferSumMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - differStart).count();
             isNewFrame = m_frameDiffer->WasPreviousFrameNew();
             m_sourceCadence.OnClassifiedFrame(isNewFrame);
+            if (m_frameDiffer->HasFrameClassification()) {
+                ++m_contentClassificationsSinceSample;
+                if (isNewFrame) ++m_uniqueFrameCount;
+            }
             if (isNewFrame) {
-                m_uniqueFrameCount++;
                 // Motion-recency gate: the differ saw a non-duplicate frame,
                 // so the HDMI source is producing fresh content. This is the
                 // motion half of the (motion OR content) gate consulted by
@@ -2668,10 +2686,12 @@ void Application::Run()
                     m_uniqueFrameCount, m_presentCount
                 };
                 const auto rates = SampleFrameRates(counters, lastFpsCounters,
-                                                   elapsed, m_frameDiffer != nullptr);
+                                                   elapsed, m_contentClassificationsSinceSample > 0);
                 m_currentFps        = rates.captureFps;
                 m_currentContentFps = rates.contentFps;
                 m_currentPresentFps = rates.presentFps;
+                m_currentContentAvailable = rates.contentAvailable;
+                m_contentClassificationsSinceSample = 0;
                 lastFpsCounters     = counters;
 
                 lastFpsUpdate          = now;
@@ -2706,6 +2726,7 @@ void Application::Run()
                        << L" maxTile=" << (m_frameDiffer ? m_frameDiffer->GetLastMaxTileValue() : 0.0f)
                        << L" tileThr=" << (m_frameDiffer ? m_frameDiffer->GetTileThreshold() : 0.0f)
                        << L" contentFps=" << m_currentContentFps
+                       << L" contentAvailable=" << m_currentContentAvailable
                        << L" captureFps=" << m_currentFps
                        << L" dropped=" << dropped
                        << L" totalSkipped=" << m_skippedFrameCount
@@ -2996,7 +3017,7 @@ void Application::Run()
                 stats.appIngestMs      = m_mfDeliveryLatencyMs;
                 stats.gpuMs            = m_renderer->GetLastGpuMs();
                 stats.frameRates = {m_currentFps, m_currentContentFps,
-                                    m_currentPresentFps, m_frameDiffer != nullptr};
+                                    m_currentPresentFps, m_currentContentAvailable};
                 stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
                 stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
                 stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -3150,7 +3171,7 @@ void Application::Run()
             stats.appIngestMs      = m_mfDeliveryLatencyMs;
             stats.gpuMs            = m_renderer->GetLastGpuMs();
             stats.frameRates = {m_currentFps, m_currentContentFps,
-                                m_currentPresentFps, m_frameDiffer != nullptr};
+                                m_currentPresentFps, m_currentContentAvailable};
             stats.captureWidth     = m_captureDevice->GetOutputFormat().width;
             stats.captureHeight    = m_captureDevice->GetOutputFormat().height;
             stats.deviceName       = m_captureDevice->GetDeviceName();
@@ -4140,6 +4161,8 @@ bool Application::ReconcileCaptureFormat(bool force)
     // classification can persist across the swap, leaving contentFps wedged
     // at 0 even when fresh content is arriving from the new capture session.
     if (m_frameDiffer) m_frameDiffer->Reset();
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
     // The new stream may run at another source rate, so its cadence is
     // measured again from the first new frames.
     m_sourceCadence.Reset();
@@ -4259,26 +4282,15 @@ void Application::ToggleVSync()
 // otherwise cap at the monitor rate instead of accidentally going unlimited.
 // Explicit Off, fixed caps, marker priority and source/VSync bypasses remain.
 //
-// The refresh rate is read from the current display mode of the monitor
-// under the window. A window dragged to another monitor without a resize
-// keeps the previous cap until the next resize or format change.
+// The window's GDI device name identifies its active DisplayConfig source.
+// Query failures and ambiguous clones clear the rate instead of keeping a
+// different monitor's ceiling; policy selects an explicit conservative cap.
 void Application::ApplyPresentCap()
 {
     if (!m_renderer || !m_config) return;
-    m_presentCapMonitorHz = 0.0;
-    HMONITOR monitor = m_window
-        ? MonitorFromWindow(m_window->GetHWND(), MONITOR_DEFAULTTONEAREST) : nullptr;
-    MONITORINFOEXW info{};
-    info.cbSize = sizeof(info);
-    if (monitor && GetMonitorInfoW(monitor, &info)) {
-        DEVMODEW mode{};
-        mode.dmSize = sizeof(mode);
-        // 0/1 mean hardware default; do not invent a refresh rate on query failure.
-        if (EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
-            mode.dmDisplayFrequency > 1) {
-            m_presentCapMonitorHz = static_cast<double>(mode.dmDisplayFrequency);
-        }
-    }
+    const auto refresh = QueryWindowDisplayRefresh(m_window ? m_window->GetHWND() : nullptr);
+    m_presentCapMonitor = refresh.monitor;
+    m_presentCapMonitorHz = refresh.refresh.hz;
     const uint32_t rateHint = m_captureDevice ? m_captureDevice->GetPresentPacingRateHint() : 0;
     m_presentCapDecision = ChoosePresentCap({m_config->presentCapHz, m_presentCapMonitorHz,
         static_cast<double>(rateHint), m_config->presentPacing, m_renderer->IsVSyncOn(),
@@ -4287,7 +4299,11 @@ void Application::ApplyPresentCap()
 
     std::wstringstream ss;
     ss << L"PresentCap: config=" << m_config->presentCapHz
-       << L" monitor=" << info.szDevice << L" monitorHz=" << m_presentCapMonitorHz
+       << L" monitor=" << refresh.gdiDeviceName << L" monitorHz=" << m_presentCapMonitorHz
+       << L" refreshRatio=" << refresh.refresh.rational.numerator << L"/" << refresh.refresh.rational.denominator
+       << L" refreshStatus=" << DisplayRefreshStatusName(refresh.refresh.status)
+       << L" refreshOrigin=" << DisplayRefreshOriginName(refresh.refresh.origin)
+       << L" refreshApiError=" << refresh.apiError
        << L" pacingHint=" << rateHint
        << L" requestedHz=" << m_presentCapDecision.requestedHz
        << L" storedHz=" << m_renderer->GetPresentCapHz()
@@ -4581,6 +4597,8 @@ bool Application::RecoverFromDeviceLost()
     m_gc553ProPreviousFreshFrameWasPlaceholder = false;
     m_gc553ProStartupBlackHint.Reset();
     m_frameDiffer.reset();
+    m_currentContentAvailable = false;
+    m_contentClassificationsSinceSample = 0;
     m_nisUpscaler.reset();
     // Keep the Overlay object itself so its device-independent decoded No
     // Signal pixels survive the graphics-device rebuild. Shutdown releases all

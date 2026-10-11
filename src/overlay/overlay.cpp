@@ -583,10 +583,16 @@ void Overlay::Render(const Stats& stats)
         return;
     }
 
-    // Push 0 when there's no signal so the sparkline drops to the floor.
+    // The primary number and curve share content-change semantics. Unknown
+    // clears the curve instead of inventing a measured zero or bridging a gap.
     const auto fps = stats.frameRates.HudFps();
-    m_fpsHistory.push_back(stats.signalActive ? (float)fps : 0.0f);
-    if (m_fpsHistory.size() > kHistorySize) m_fpsHistory.pop_front();
+    const bool haveContentFps = stats.signalActive && stats.frameRates.HudFpsAvailable();
+    if (haveContentFps) {
+        m_contentFpsHistory.push_back(static_cast<float>(fps));
+        if (m_contentFpsHistory.size() > kHistorySize) m_contentFpsHistory.pop_front();
+    } else {
+        m_contentFpsHistory.clear();
+    }
 
     float totalLatency = (float)(stats.captureLatencyMs + stats.renderLatencyMs);
     m_latencyHistory.push_back(stats.signalActive ? totalLatency : 0.0f);
@@ -674,16 +680,13 @@ void Overlay::Render(const Stats& stats)
     const float valueY  = panel.top + 54.0f;
     const float valueH  = 32.0f;
 
-    // Healthy values stay in plain ink like the panel; only degraded states
-    // take color. The sparkline stroke carries the accent when healthy.
+    // Static content can correctly measure zero. Its rate alone cannot
+    // indicate a degraded pipeline, so known content values stay in plain ink.
     auto fpsBrush = [&]() -> ID2D1SolidColorBrush* {
-        if (!sig)               return m_brushDim.Get();
-        if (fps >= 58)          return m_brushText.Get();
-        if (fps >= 31)          return m_brushWarn.Get();
-        return m_brushCrit.Get();
+        return haveContentFps ? m_brushText.Get() : m_brushDim.Get();
     };
     auto fpsStroke = [&]() -> ID2D1SolidColorBrush* {
-        return (sig && fps >= 58) ? m_brushAccent.Get() : fpsBrush();
+        return haveContentFps ? m_brushAccent.Get() : m_brushDim.Get();
     };
 
     // App ingest: real, live, per-frame card-driver-to-app delivery time
@@ -722,8 +725,8 @@ void Overlay::Render(const Stats& stats)
                  m_brushDim.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_FAR);
     };
 
-    drawMetric(panel.left + pad, colMid - 4.0f, Tr(L"overlay.presentRate"),
-               sig ? std::to_wstring(fps) : L"--", Tr(L"overlay.fps"), fpsBrush());
+    drawMetric(panel.left + pad, colMid - 4.0f, Tr(L"overlay.contentFps"),
+               haveContentFps ? std::to_wstring(fps) : L"--", Tr(L"overlay.fps"), fpsBrush());
     {
         std::wstring v = L"--";
         if (sig) {
@@ -802,14 +805,14 @@ void Overlay::Render(const Stats& stats)
             m_d2dContext->DrawGeometry(strokeGeom.Get(), stroke, 1.25f);
         };
 
-        const float fpsScale = std::max(70.0f,
-            *std::max_element(m_fpsHistory.begin(), m_fpsHistory.end()));
-        drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory, fpsScale, fpsStroke());
+        const float fpsScale = m_contentFpsHistory.empty() ? 70.0f : std::max(70.0f,
+            *std::max_element(m_contentFpsHistory.begin(), m_contentFpsHistory.end()));
+        drawSparkline(sparkLeftL, sparkRightL, m_contentFpsHistory, fpsScale, fpsStroke());
         drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, appIngestStroke());
     }
 
-    // Independent delivery/change rates: static content is 0; an unavailable
-    // differ is --. Neither number replaces the primary Present FPS above.
+    // Capture counts delivered frames, including duplicates. Present counts
+    // successful DXGI submissions, not physical scanout or the game's FPS.
     auto drawFpsRow = [&](const wchar_t* key, uint32_t value, bool available, float top) {
         const auto row = D2D1::RectF(panel.left + pad, panel.top + top,
                                    panel.right - pad, panel.top + top + 18.0f);
@@ -820,8 +823,7 @@ void Overlay::Render(const Stats& stats)
                  DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     };
     drawFpsRow(L"overlay.captureFps", stats.frameRates.captureFps, sig, 126.0f);
-    drawFpsRow(L"overlay.contentFps", stats.frameRates.contentFps,
-               sig && stats.frameRates.contentAvailable, 146.0f);
+    drawFpsRow(L"overlay.presentFps", stats.frameRates.presentFps, sig, 146.0f);
 
     // ---- 5. Footer: GPU time and pipeline badges ---------------------------
     {

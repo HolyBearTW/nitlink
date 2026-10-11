@@ -1816,7 +1816,10 @@ void DX11Renderer::WaitForFrameReady()
             else
                 std::this_thread::yield();
         }
-        m_presentCapDeadline = AdvancePresentCapDeadline(target, std::chrono::steady_clock::now(), interval);
+        // Rebase at the completed wait so scheduling lateness cannot pull
+        // the following release forward into a catch-up submission.
+        const auto waitCompletedAt = std::chrono::steady_clock::now();
+        m_presentCapDeadline = AdvancePresentCapDeadline(target, waitCompletedAt, interval);
     } else if (m_frameLatencyWaitable) {
         m_phaseDiagnostics.waitableWaits++;
         const DWORD result = WaitForSingleObjectEx(m_frameLatencyWaitable, 1000, TRUE);

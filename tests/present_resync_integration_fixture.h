@@ -109,8 +109,8 @@ inline void RunPresentResyncIntegration(DX11Renderer& renderer)
         auto receipt = DX11RendererTestAccess::Receipt(renderer);
         require(receipt.available && receipt.compatible, "live S_OK establishes a hold receipt");
         auto rates = SampleFrameRates(counts, {}, 1.0, true);
-        require(rates.captureFps == 120 && rates.contentFps == 60 && rates.HudFps() == 1,
-                "HUD counts submissions independently of capture/content estimates");
+        require(rates.captureFps == 120 && rates.contentFps == 60 && rates.presentFps == 1,
+                "successful submissions remain independent of capture/content estimates");
 
         const auto previous = counts;
         const auto resync = DecidePresentation(false, false, true, false, true);
@@ -120,7 +120,7 @@ inline void RunPresentResyncIntegration(DX11Renderer& renderer)
         receipt = DX11RendererTestAccess::Receipt(renderer);
         require(receipt.compatible, "cached submission retains the existing receipt");
         rates = SampleFrameRates(counts, previous, 1.0, true);
-        require(rates.captureFps == 0 && rates.contentFps == 0 && rates.HudFps() == 1,
+        require(rates.captureFps == 0 && rates.contentFps == 0 && rates.presentFps == 1,
                 "resync never switches zero capture/content to another FPS metric");
 
         for (HRESULT result : {DXGI_STATUS_OCCLUDED, DXGI_ERROR_WAS_STILL_DRAWING,
