@@ -16,6 +16,7 @@ function Get-HolyBearVersion {
     $windowsParts = @($numbers)
     if ($windowsParts.Count -eq 3) { $windowsParts += '0' }
     $fourPart = $windowsParts -join ','
+    $title = "NitLink $numeric HolyBear Edition"
     if (-not $cmake.Contains("project(NitLink VERSION $numeric LANGUAGES CXX)")) { throw 'CMake version mismatch.' }
     foreach ($field in @('FILEVERSION', 'PRODUCTVERSION')) {
         if (-not $resource.Contains("$field $fourPart")) { throw "Resource $field mismatch." }
@@ -30,12 +31,16 @@ function Get-HolyBearVersion {
     if (-not $menu.Contains('id="holy-bear-product-title"') -or
         -not $menu.Contains('id="holy-bear-last-check"') -or
         -not $menuScript.Contains("const currentTag = typeof s.current") -or
-        -not $overlay.Contains(('L"v{0}"' -f $value)) -or
+        -not $overlay.Contains(('L"{0}"' -f $value)) -or
         -not $native.Contains(('L"{0}"' -f $value))) { throw 'About/HUD/native update version mismatch.' }
+    if (-not $resource.Contains(('VALUE "ProductName", "{0}"' -f $title)) -or
+        (Get-Content -LiteralPath (Join-Path $HolyBearRoot 'README-HOLYBEAR.txt') -First 1) -cne "$title ($value)") {
+        throw 'Product title/README version mismatch.'
+    }
     [pscustomobject]@{
         Version = $value; Numeric = $numeric; Tag = "v$value"
         WindowsVersion = $windowsParts -join '.'
-        Title = "NitLink $numeric HolyBear Edition"
+        Title = $title
         ZipName = "NitLink-$numeric-HolyBear-Win64.zip"
         SetupName = "NitLink-$numeric-HolyBear-Setup-x64.exe"
         Notes = Join-Path $HolyBearRoot "release-notes-$value.md"
@@ -76,6 +81,7 @@ function Assert-HolyBearExecutable([string]$Path) {
     $file = Get-Item -LiteralPath $Path
     if ($file.VersionInfo.FileVersion -ne $info.Version -or
         $file.VersionInfo.ProductVersion -ne $info.Version -or
+        $file.VersionInfo.ProductName -ne $info.Title -or
         $file.VersionInfo.FileDescription -ne 'NitLink (HolyBear Edition)' -or
         $file.VersionInfo.OriginalFilename -ne 'NitLink.exe' -or
         $file.VersionInfo.LegalCopyright -ne 'Copyright (c) 2026 NitLink Contributors') {

@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Tag, [Parameter(Mandatory)][string]$Assets)
 . "$PSScriptRoot/holy-bear-common.ps1"
+. "$PSScriptRoot/holy-bear-release-notes.ps1"
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/nitlink' -or
     $env:GITHUB_EVENT_NAME -ne 'push' -or $env:GITHUB_REF -ne "refs/tags/$Tag") {
     throw 'Publication is restricted to a tag-push Actions run in HolyBearTW/nitlink.'
@@ -39,9 +40,11 @@ $expectedAssets = @($info.ZipName, "$($info.ZipName).asc", $info.SetupName, "$($
 $payload = $expectedAssets | ForEach-Object { Join-Path $assetRoot $_ }
 & gh release create $Tag @payload --repo $repo --verify-tag --draft --prerelease=false --title $info.Title --notes-file (Join-Path $assetRoot 'RELEASE-NOTES.md')
 if ($LASTEXITCODE -ne 0) { throw 'Draft creation/upload failed; nothing will be published.' }
-$draftJson = & gh release view $Tag --repo $repo --json isDraft,isPrerelease,assets
+$draftJson = & gh release view $Tag --repo $repo --json isDraft,isPrerelease,assets,body
 if ($LASTEXITCODE -ne 0) { throw 'Cannot verify created draft.' }
 $draft = $draftJson -join "`n" | ConvertFrom-Json
+$expectedNotes = Get-Content -LiteralPath (Join-Path $assetRoot 'RELEASE-NOTES.md') -Raw -Encoding utf8
+Assert-HolyBearReleaseNotesMatch -Expected $expectedNotes -Actual $draft.body
 $names = @($draft.assets | ForEach-Object name)
 if (-not $draft.isDraft -or $draft.isPrerelease -or $names.Count -ne $expectedAssets.Count -or
     @($names | Where-Object { $_ -notin $expectedAssets }).Count -or
@@ -56,9 +59,10 @@ foreach ($name in $expectedAssets) {
 Test-SignedRelease $download
 & gh release edit $Tag --repo $repo --draft=false --prerelease=false --latest=true
 if ($LASTEXITCODE -ne 0) { throw 'Verified draft publication failed.' }
-$publishedJson = & gh release view $Tag --repo $repo --json isDraft,isPrerelease,tagName,url,assets
+$publishedJson = & gh release view $Tag --repo $repo --json isDraft,isPrerelease,tagName,url,assets,body
 if ($LASTEXITCODE -ne 0) { throw 'Cannot verify published release.' }
 $published = $publishedJson -join "`n" | ConvertFrom-Json
+Assert-HolyBearReleaseNotesMatch -Expected $expectedNotes -Actual $published.body
 if ($published.isDraft -or $published.isPrerelease -or $published.tagName -ne $Tag -or
     @($published.assets).Count -ne $expectedAssets.Count) { throw 'Published release state is invalid.' }
 $latest = & gh api "repos/$repo/releases/latest" --jq .tag_name

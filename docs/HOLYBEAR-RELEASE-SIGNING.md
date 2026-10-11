@@ -39,20 +39,20 @@ exact final file. It is not a renamed checksum or an embedded Windows signature.
 
 ```powershell
 gpg --verify `
-  NitLink-1.2.4-HolyBear-Setup-x64.exe.asc `
-  NitLink-1.2.4-HolyBear-Setup-x64.exe
+  NitLink-1.2.4.1-HolyBear-Setup-x64.exe.asc `
+  NitLink-1.2.4.1-HolyBear-Setup-x64.exe
 if ($LASTEXITCODE -ne 0) { throw 'Setup signature failed' }
 
 gpg --verify `
-  NitLink-1.2.4-HolyBear-Win64.zip.asc `
-  NitLink-1.2.4-HolyBear-Win64.zip
+  NitLink-1.2.4.1-HolyBear-Win64.zip.asc `
+  NitLink-1.2.4.1-HolyBear-Win64.zip
 if ($LASTEXITCODE -ne 0) { throw 'ZIP signature failed' }
 
 gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
 if ($LASTEXITCODE -ne 0) { throw 'Checksum signature failed' }
 
-Get-FileHash NitLink-1.2.4-HolyBear-Setup-x64.exe -Algorithm SHA256
-Get-FileHash NitLink-1.2.4-HolyBear-Win64.zip -Algorithm SHA256
+Get-FileHash NitLink-1.2.4.1-HolyBear-Setup-x64.exe -Algorithm SHA256
+Get-FileHash NitLink-1.2.4.1-HolyBear-Win64.zip -Algorithm SHA256
 ```
 
 Compare the hashes against the **verified** SHA256SUMS.txt. Its records cover
@@ -62,7 +62,7 @@ still necessary. For maintainers, the repository provides an automated public
 key verifier that also checks every release checksum:
 
 ```powershell
-python ./scripts/release-signing.py verify --assets ./downloads --tag v1.2.4-holybear
+python ./scripts/release-signing.py verify --assets ./downloads --tag v1.2.4.1-holybear
 ```
 
 The inner ZIP/installed file manifest checks individual payload files. It does

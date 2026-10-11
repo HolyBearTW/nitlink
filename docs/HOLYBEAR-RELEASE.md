@@ -24,9 +24,9 @@ run builds/tests/packages and uploads review artifacts, without publishing a
 Release. After reviewing that run, create a new matching tag and push it:
 
 ```text
-git tag -s v1.2.4-holybear -m "NitLink 1.2.4 HolyBear Edition"
-git verify-tag v1.2.4-holybear
-git push holy-bear v1.2.4-holybear
+git tag -s v1.2.4.1-holybear -m "NitLink 1.2.4.1 HolyBear Edition"
+git verify-tag v1.2.4.1-holybear
+git push origin v1.2.4.1-holybear
 ```
 
 Tags matching `v*-holybear*` trigger a fresh build from the tag's commit and
@@ -37,6 +37,17 @@ Workflow Dispatch is restricted to `holybear/integrated`: it is build-only by
 default, or signs/verifies review artifacts when `signing_validation=true`.
 Neither manual mode creates tags, Releases or public Release attachments.
 Do not overwrite an existing tag or Release.
+
+Before relying on Workflow Dispatch, confirm that GitHub accepts the existing
+workflow on the reviewed integration ref. Registration alone is not proof of
+dispatch availability when the workflow is absent from the default branch.
+If dispatch is unavailable, record the outstanding protected signing check;
+do not modify main, create a validation tag or bypass Environment review.
+
+The commands above are formal publication steps and require explicit release
+authorization. A branch preview does not create a tag: its notes identify the
+planned version tag and BUILD.txt keeps tag_source_verified=false. Only a
+package that passed RequireTag identifies a verified formal source tag.
 
 ## Publication checks
 

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <utility>
 using namespace NitLink::HolyBear;
 int main(int argc, char** argv) {
     std::cout << std::unitbuf;
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
     unsigned checks = 0, failures = 0;
     auto check = [&](bool ok, const char* name) { ++checks; if (!ok) ++failures; std::cout << (ok ? "PASS " : "FAIL ") << name << '\n'; };
     check(ParseVersion(L"v1.2.4-holybear") == ParseVersion(L"1.2.4.0-holybear"), "three/four part equality");
+    check(ParseVersion(L"v1.2.4.1-holybear") > ParseVersion(L"1.2.4-holybear"), "1.2.4.1 update from published 1.2.4");
     check(ParseVersion(L"v1.2.4.2-holybear") > ParseVersion(L"v1.2.4.1-holybear"), "numeric revision");
     check(ParseVersion(L"v1.2.4.10-holybear") > ParseVersion(L"v1.2.4.2-holybear"), "numeric, not lexical order");
     check(ParseVersion(L"v1.2.5-holybear") > ParseVersion(L"v1.2.4.2-holybear"), "patch exceeds revision");
@@ -31,7 +33,36 @@ int main(int argc, char** argv) {
     auto response = [](std::string tag) {
         return HttpReply{200, 0, "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":false,\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/" + tag + "\",\"assets\":[],\"body\":null}"};
     };
-    check(ClassifyReply(response("v1.2.4-holybear")).status == UpdateStatus::Current, "equal version");
+    check(ClassifyReply(response("v1.2.4.1-holybear")).status == UpdateStatus::Current, "equal current revision");
+    check(ClassifyReply(response("v1.2.4.1-holybear"), L"1.2.4-holybear").status == UpdateStatus::Available,
+        "published 1.2.4 recognizes new revision tag");
+    const auto revision = ClassifyReply(response("v1.2.4.1-holybear"), L"1.2.4-holybear");
+    check(revision.tag == L"v1.2.4.1-holybear" &&
+        std::wstring(ReleasePrefix) + revision.tag == L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear" &&
+        IsReleaseUrl(std::wstring(ReleasePrefix) + revision.tag), "revision update retains the exact official v-tag URL");
+    const std::pair<const char*, const char*> invalidRevisionFields[] = {
+        {"\"draft\":false", "\"draft\":true"},
+        {"\"draft\":false", "\"draft\":\"false\""},
+        {"\"draft\":false", "\"draft\":0"},
+        {"\"prerelease\":false", "\"prerelease\":true"},
+        {"\"prerelease\":false", "\"prerelease\":null"},
+        {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":42"},
+        {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":null"},
+        {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"1.2.4.1-holybear\""},
+        {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"v1.2.4.1-holybear-beta\""},
+        {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"v1.2.4.2-holybear\""},
+        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":false"},
+        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":42"},
+        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink/releases/tag/1.2.4.1-holybear"},
+        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear?redirect=evil"},
+        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/CN115/nitlink/releases/tag/v1.2.4.1-holybear"}
+    };
+    for (const auto& [field, replacement] : invalidRevisionFields) {
+        auto reply = response("v1.2.4.1-holybear");
+        reply.body.replace(reply.body.find(field), std::string_view(field).size(), replacement);
+        check(ClassifyReply(reply, L"1.2.4-holybear").status == UpdateStatus::Invalid,
+            "revision update rejects nonformal, mismatched or incorrectly typed release data");
+    }
     check(ClassifyReply(response("v1.2.5-holybear")).status == UpdateStatus::Available, "newer version");
     check(ClassifyReply(response("v1.2.3-holybear")).status == UpdateStatus::Current, "local newer version");
     check(ClassifyReply(response("v1.2.4.2-holybear"), L"1.2.4.1-holybear").status == UpdateStatus::Available, "revision API release");

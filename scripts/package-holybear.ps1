@@ -5,6 +5,7 @@ param(
     [switch]$RequireTag
 )
 . "$PSScriptRoot/holy-bear-common.ps1"
+. "$PSScriptRoot/holy-bear-release-notes.ps1"
 $info = Get-HolyBearVersion
 $commit = Get-HolyBearCommit
 if (-not $Tag) { $Tag = $info.Tag }
@@ -33,15 +34,8 @@ Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/MSVC-RUNTIME.txt') -De
 Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/NSIS.txt') -Destination (Join-Path $stage 'licenses')
 Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/HOLYBEAR-RELEASE-PUBLIC-KEY.asc') -Destination (Join-Path $stage 'licenses')
 $notes = Get-Content -LiteralPath $info.Notes -Raw
-if (-not $notes.StartsWith("# $($info.Title)")) { throw 'Release note title mismatch.' }
-$notes += "`n## Build validation for this package`n`n"
-$notes += "- Source commit: ``$commit``; tag: ``$Tag``.`n"
-$notes += "- Clean x64 Release build: PASS; complete CTest: $($summary.passed)/$($summary.tests), skipped: $($summary.skipped).`n"
-if ($summary.failures) { $notes += "- Retained upstream baseline failure: ``$($summary.knownFailure)``. No additional failing target was accepted.`n" }
-else { $notes += "- All CTest tests passed on this runner; the documented local WebView restart issue remains a known limitation.`n" }
-if ($env:GITHUB_ACTIONS -eq 'true') {
-    $notes += "- GitHub Actions: https://github.com/HolyBearTW/nitlink/actions/runs/$env:GITHUB_RUN_ID`n"
-}
+$actionsUrl = if ($env:GITHUB_ACTIONS -eq 'true') { "https://github.com/HolyBearTW/nitlink/actions/runs/$env:GITHUB_RUN_ID" } else { '' }
+$notes = Get-HolyBearReleaseNotes -Notes $notes -Title $info.Title -Commit $commit -Tag $Tag -Summary $summary -TagSourceVerified $RequireTag.IsPresent -ActionsUrl $actionsUrl
 Set-Content -LiteralPath (Join-Path $stage 'RELEASE-NOTES.md') -Value $notes -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $stage 'RELEASE-NOTES.md') -Destination $output
 $sources = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'HOLYBEAR-SOURCES.json') -Raw | ConvertFrom-Json

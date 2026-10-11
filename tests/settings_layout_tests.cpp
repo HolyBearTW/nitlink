@@ -1,5 +1,6 @@
 #include "app/WebViewSettings.h"
 #include "app/settings_message.h"
+#include "app/holybear_version.h"
 
 #include <shlwapi.h>
 #include <array>
@@ -197,10 +198,12 @@ void Capture(ICoreWebView2* view, const std::filesystem::path& path) {
 
 void PushAboutUpdate(WebViewSettings& host, const wchar_t* side, const wchar_t* locale,
     const wchar_t* status, const wchar_t* latest, bool hasNewer, bool automatic, bool busy,
-    bool unread, const wchar_t* url, long long lastCheckUtc = 1791691200) {
+    bool unread, const wchar_t* url, long long lastCheckUtc = 1791691200,
+    std::wstring_view current = L"1.2.4-holybear") {
     PushState(host, side, locale);
     const auto timestamp = std::wstring_view(status) == L"never" ? 0 : lastCheckUtc;
-    std::wstring message = L"{\"state\":{\"holyBearUpdate\":{\"current\":\"1.2.4-holybear\",\"latest\":\"";
+    std::wstring message = L"{\"state\":{\"holyBearUpdate\":{\"current\":\"" +
+        std::wstring(current) + L"\",\"latest\":\"";
     message += latest;
     message += L"\",\"lastCheckUtc\":" + std::to_wstring(timestamp);
     message += L",\"automatic\":";
@@ -891,6 +894,16 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
                 main.scrollWidth <= main.clientWidth && document.documentElement.scrollWidth <= innerWidth;
         })())JS") == L"true", "Full About fills the released signal column without horizontal overflow");
       }
+    }
+
+    Resize(host, window, 1920, 1080, WebViewSettings::Dock::Full);
+    for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        PushAboutUpdate(host, L"Full", locale, L"available", L"v1.2.5-holybear",
+            true, false, false, false, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
+            1791691200, NitLink::HolyBear::Version);
+        const auto numeric = NitLink::HolyBear::Version.substr(0, NitLink::HolyBear::Version.size() - 9);
+        Check(Script(view, L"document.getElementById('holy-bear-product-title').textContent === 'NitLink " +
+            std::wstring(numeric) + L" HolyBear Edition'") == L"true", "About displays the native four-part product version in all languages");
     }
 
     Resize(host, window, 1920, 1080, WebViewSettings::Dock::Right);
