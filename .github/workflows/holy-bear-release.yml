@@ -48,6 +48,7 @@ jobs:
           $release = $tagPush -and $env:GITHUB_REF -ceq "refs/tags/$($info.Tag)"
           $validate = $manual -and $env:SIGNING_VALIDATION -eq 'true'
           if ($tagPush -and -not $release) { throw 'Only the matching formal HolyBear version tag may trigger a release; validation tags are forbidden.' }
+          if ($release) { Assert-HolyBearSignedTag $info.Tag (Get-HolyBearCommit) }
           "tag=$($info.Tag)" >> $env:GITHUB_OUTPUT
           "release=$($release.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "validate=$($validate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -119,8 +120,7 @@ jobs:
         run: |
           . ./scripts/holy-bear-common.ps1
           if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -ceq "refs/tags/$($env:RELEASE_TAG)") {
-            $commit = & git rev-parse "$($env:GITHUB_REF)^{commit}"
-            if ($LASTEXITCODE -ne 0 -or $commit -ne (Get-HolyBearCommit)) { throw 'Source tag mismatch.' }
+            Assert-HolyBearSignedTag $env:RELEASE_TAG (Get-HolyBearCommit)
           } elseif ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or $env:GITHUB_REF -cne 'refs/heads/holybear/integrated') {
             throw 'Signing requires a formal tag push or a manual run on holybear/integrated.'
           }

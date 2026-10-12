@@ -24,6 +24,38 @@ proof of publisher identity. If you do not already trust this identity, confirm
 the fingerprint with the maintainer through a separate trusted channel first.
 Do not rely on an 8- or 16-character key ID.
 
+## Verify the formal Git source tag
+
+Git source-tag authentication is separate from the ZIP/Setup detached
+signatures below. The existing `v1.2.4-holybear` annotated tag was verified
+with only the pinned repository public key: its actual OpenPGP signer is
+`B96A785DE4C5083A0DFF15EA8925D54ECCF3EADF`, bound to primary key
+`5DA247A5EFA2AACB4EB1A3A2D278ED91B6F2C0BA`. This observed, approved signer is
+listed independently in `HOLYBEAR-TAG-SIGNING.json`; it is not inferred from
+the Commit key or artifact Secret. Changing artifact signing policy does not
+automatically authorize a different Git Tag signer.
+
+After explicit formal-release authorization and creating the signed tag, use:
+
+```powershell
+. ./scripts/holy-bear-common.ps1
+Assert-HolyBearSignedTag 'v1.2.4.1-holybear' (Get-HolyBearCommit)
+```
+
+The check requires the exact VERSION tag, an annotated object directly targeting
+checkout HEAD, and ancestry within `origin/holybear/integrated`. Public key and
+approved full fingerprints come from that resolved reviewed branch, not the
+tag's working files. `git verify-tag --raw` runs in a temporary public-only
+keyring; its exit code, unique VALIDSIG signer/primary fingerprints, SHA-2,
+signature expiration and key signing capability/revocation/expiry/disabled state
+are checked. GOODSIG alone, a global trusted key or GitHub's Verified badge is
+insufficient. Missing tags/tools/public keys fail closed.
+
+These gates run before formal build, during RequireTag packaging, before using
+signing Secrets, and before Draft Release creation. Branch previews and both
+manual dispatch modes do not require a formal tag. Their existing preview
+metadata and validation-only artifact publication restrictions remain intact.
+
 Install GnuPG, then use PowerShell to inspect and import the public key:
 
 ```powershell

@@ -47,7 +47,7 @@ $formal = Get-HolyBearReleaseNotes -Notes $notes -Title $info.Title -Commit $oth
 Assert-Notes ($formal.Contains('已驗證的正式 Git 標籤') -and -not $formal.Contains('預定版本標籤')) 'verified formal tag fixture has distinct wording'
 Assert-Notes ($formal.Contains($otherCommit) -and $formal.Contains('6/7') -and $formal.Contains($baseline.knownFailure) -and
     -not $formal.Contains($actions)) 'formal fixture retains exact baseline failure and optional Actions URL'
-# Exercise the unchanged source-tag guard using only a scoped git mock.
+# Exercise the structural source-tag guard using only a scoped git mock.
 function Get-FormalTagFixture([string]$Tag, [string]$Resolved, [int]$ExitCode) {
     $script:fixtureResolved = $Resolved
     $script:fixtureExit = $ExitCode
@@ -104,7 +104,8 @@ Assert-Notes ($script:publications -eq 1) 'mismatched mock never reaches publica
 
 $package = Get-Content -LiteralPath "$PSScriptRoot/package-holybear.ps1" -Raw
 $publisher = Get-Content -LiteralPath "$PSScriptRoot/publish-holybear.ps1" -Raw
-Assert-Notes ($package.IndexOf('Assert-HolyBearTag $Tag $commit', [StringComparison]::Ordinal) -lt
+Assert-Notes ($package.IndexOf('Assert-HolyBearSignedTag $Tag $commit', [StringComparison]::Ordinal) -gt 0 -and
+    $package.IndexOf('Assert-HolyBearSignedTag $Tag $commit', [StringComparison]::Ordinal) -lt
     $package.IndexOf('Get-HolyBearReleaseNotes -Notes', [StringComparison]::Ordinal) -and
     $package.Contains('-TagSourceVerified $RequireTag.IsPresent') -and
     $package.Contains('"tag_source_verified=$($RequireTag.IsPresent.ToString().ToLowerInvariant())"')) 'RequireTag guard and machine verification field remain authoritative'

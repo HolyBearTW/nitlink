@@ -1,0 +1,7 @@
+{
+  "primary_fingerprint": "5DA247A5EFA2AACB4EB1A3A2D278ED91B6F2C0BA",
+  "allowed_signing_fingerprints": [
+    "B96A785DE4C5083A0DFF15EA8925D54ECCF3EADF"
+  ],
+  "public_key": "licenses/HOLYBEAR-RELEASE-PUBLIC-KEY.asc"
+}

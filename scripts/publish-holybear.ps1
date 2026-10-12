@@ -8,7 +8,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/ni
 $repo = 'HolyBearTW/nitlink'
 $info = Get-HolyBearVersion
 $commit = Get-HolyBearCommit
-Assert-HolyBearTag $Tag $commit
+Assert-HolyBearSignedTag $Tag $commit
 & git -C $HolyBearRoot merge-base --is-ancestor HEAD origin/holybear/integrated
 if ($LASTEXITCODE -ne 0) { throw 'Release tag is not part of the reviewed integration branch.' }
 $assetRoot = (Resolve-Path -LiteralPath (Join-Path $HolyBearRoot $Assets)).ProviderPath

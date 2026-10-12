@@ -196,6 +196,10 @@ if(BUILD_TESTING)
     find_program(HOLYBEAR_PWSH NAMES pwsh REQUIRED)
     add_test(NAME holybear_release_notes
         COMMAND ${HOLYBEAR_PWSH} -NoProfile -File ${CMAKE_SOURCE_DIR}/scripts/test-holybear-release-notes.ps1)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME holybear_tag_security
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test-holybear-tag.py)
+    set_tests_properties(holybear_tag_security PROPERTIES TIMEOUT 180)
     add_executable(NitLinkHolyBearUpdateTests tests/holybear_update_tests.cpp src/app/update_checker.cpp)
     target_include_directories(NitLinkHolyBearUpdateTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(NitLinkHolyBearUpdateTests PRIVATE winhttp windowsapp)

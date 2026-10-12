@@ -55,9 +55,15 @@ function Get-HolyBearCommit {
 
 function Assert-HolyBearTag([string]$Tag, [string]$Commit) {
     $info = Get-HolyBearVersion
-    if ($Tag -ne $info.Tag) { throw 'Tag does not match VERSION.' }
+    if ($Tag -cne $info.Tag) { throw 'Tag does not match VERSION.' }
     $resolved = & git -C $HolyBearRoot rev-parse --verify "refs/tags/$Tag^{commit}" 2>$null
-    if ($LASTEXITCODE -ne 0 -or $resolved -ne $Commit) { throw 'Tag does not resolve to the built source commit.' }
+    if ($LASTEXITCODE -ne 0 -or $resolved -cne $Commit) { throw 'Tag does not resolve to the built source commit.' }
+}
+
+function Assert-HolyBearSignedTag([string]$Tag, [string]$Commit) {
+    Assert-HolyBearTag $Tag $Commit
+    & python "$PSScriptRoot/verify-holybear-tag.py" --repository $HolyBearRoot --tag $Tag --commit $Commit
+    if ($LASTEXITCODE -ne 0) { throw 'Formal source tag GPG verification failed; publication blocked.' }
 }
 
 function Initialize-HolyBearToolchain {

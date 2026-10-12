@@ -10,7 +10,7 @@ $info = Get-HolyBearVersion
 $commit = Get-HolyBearCommit
 if (-not $Tag) { $Tag = $info.Tag }
 if ($Tag -ne $info.Tag) { throw 'Requested package tag does not match VERSION.' }
-if ($RequireTag) { Assert-HolyBearTag $Tag $commit }
+if ($RequireTag) { Assert-HolyBearSignedTag $Tag $commit }
 $status = & git -C $HolyBearRoot status --porcelain=v1
 if ($LASTEXITCODE -ne 0 -or $status) { throw 'Package source checkout must be clean and committed.' }
 $build = [IO.Path]::GetFullPath((Join-Path $HolyBearRoot $BuildDirectory))

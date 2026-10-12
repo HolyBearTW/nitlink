@@ -33,6 +33,20 @@ Tags matching `v*-holybear*` trigger a fresh build from the tag's commit and
 automatic **official Latest Release** publication (`prerelease=false`). Future
 versions, including four numeric components, need corresponding source version
 updates; a mismatched tag or a commit outside the integration branch is rejected.
+Formal sources must be annotated OpenPGP-signed tags authorized by
+`HOLYBEAR-TAG-SIGNING.json`. `Assert-HolyBearSignedTag` checks the exact VERSION,
+direct built Commit, reviewed integration ancestry, cryptographic signature,
+approved signing/primary fingerprints, key validity and SHA-2 digest. It reads
+the public trust policy/key from the resolved `origin/holybear/integrated` tree
+and uses an isolated public-only keyring. The tag checkout and global keyring
+cannot supply a different trusted signer.
+
+The formal build job checks this before building; RequireTag packaging, the
+protected signing job before Secrets, and the publisher before creating a
+draft each repeat the check. A lightweight/unsigned/invalid/unapproved tag,
+missing object/tool/public key or unreviewed Commit stops the flow. GitHub's
+Verified badge and `gh release create --verify-tag` are not signature gates.
+
 Workflow Dispatch is restricted to `holybear/integrated`: it is build-only by
 default, or signs/verifies review artifacts when `signing_validation=true`.
 Neither manual mode creates tags, Releases or public Release attachments.
