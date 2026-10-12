@@ -237,6 +237,7 @@ window.NitLinkLocales['en-US'] = {
   'about.holyBearName': 'HolyBear',
   'about.holyBearHandle': '(@HolyBearTW)',
   'about.cn115Handle': '(@CN115)',
+  'about.n810kHandle': '(@n810K)',
   'source.captureDevice': 'Capture Device',
   'source.manualFormat': 'Manual Capture Format',
   'source.resolution': 'Resolution',

@@ -236,6 +236,7 @@ window.NitLinkLocales['zh-CN'] = {
   'about.holyBearName': '圣小熊',
   'about.holyBearHandle': '(@HolyBearTW)',
   'about.cn115Handle': '(@CN115)',
+  'about.n810kHandle': '(@n810K)',
   'source.captureDevice': '采集设备',
   'source.manualFormat': '手动采集格式',
   'source.resolution': '分辨率',
