@@ -233,8 +233,30 @@
     .about-source-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
     .about-contributors { color: var(--ink2); font-size: 12px; line-height: 1.55; }
     .about-contributor { margin-top: 4px; }
-    .about-contributor a { color: var(--accent-text); font-weight: 500; transition: color .12s ease; }
+    .about-contributor a { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; color: var(--accent-text); font-weight: 500; text-decoration: none; transition: color .12s ease; }
+    .about-contributor-name { text-decoration: underline; }
+    .about-contributor-logo { flex: none; width: 13px; height: 13px; fill: var(--ink2); transition: fill .12s ease; }
     .about-contributor a:hover { color: var(--accent); }
+    .about-contributor a:hover .about-contributor-logo, .about-contributor a:focus-visible .about-contributor-logo { fill: var(--accent-text); }
+
+    #contributor-preview { position: fixed; z-index: 110; width: 360px; max-width: calc(100vw - 24px); border: 1px solid var(--hair2); border-radius: 8px; background: #373737; color: var(--ink); box-shadow: 0 8px 28px #0008; overflow: hidden; }
+    #contributor-preview[hidden] { display: none; }
+    .contributor-preview-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--hair); color: var(--ink2); font-size: 12px; }
+    .contributor-preview-site { display: inline-flex; align-items: center; gap: 9px; }
+    .contributor-preview-site svg { width: 15px; height: 15px; fill: currentColor; }
+    .contributor-preview-open { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-weight: 500; text-decoration: none; }
+    .contributor-preview-open:hover { color: var(--accent-text); }
+    .contributor-preview-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .contributor-preview-open svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+    .contributor-preview-body { display: flex; align-items: flex-start; gap: 12px; padding: 14px; }
+    .contributor-preview-avatar { flex: none; width: 80px; height: 80px; border-radius: 5px; overflow: hidden; background: var(--accent-soft); }
+    .contributor-preview-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .contributor-preview-avatar img[hidden], .contributor-preview-avatar span[hidden] { display: none; }
+    .contributor-preview-avatar span { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--accent-text); font-size: 24px; font-weight: 600; }
+    .contributor-preview-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    #contributor-preview-title { font-size: 13px; font-weight: 600; line-height: 1.5; }
+    #contributor-preview-handle { margin-top: 2px; color: var(--ink2); font-size: 12px; }
+    .contributor-preview-description { margin-top: 7px; color: var(--ink2); font-size: 12px; line-height: 1.5; }
 
     /* Source picker: HDMI identity, device list and capture-format cascade. */
     .source-popover {
@@ -796,9 +818,9 @@
           <details class="about-details" id="about-contributors" open>
             <summary id="about-contributors-summary" aria-controls="about-contributors-body" aria-expanded="true" data-i18n="about.contributors"></summary>
             <div class="about-details-body about-contributors" id="about-contributors-body">
-              <div class="about-contributor"><a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-i18n="about.holyBearName"></a> <span data-i18n="about.holyBearHandle"></span></div>
-              <div class="about-contributor"><a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer">CN_115</a> <span data-i18n="about.cn115Handle"></span></div>
-              <div class="about-contributor"><a href="https://github.com/n810K" target="_blank" rel="noopener noreferrer">Nathan K.</a> <span data-i18n="about.n810kHandle"></span></div>
+              <div class="about-contributor"><a href="https://github.com/HolyBearTW" target="_blank" rel="noopener noreferrer" data-contributor="HolyBearTW" aria-haspopup="dialog" aria-controls="contributor-preview" aria-expanded="false"><svg class="about-contributor-logo" viewBox="0 0 16 16" aria-hidden="true"><use href="#contributor-github-mark"/></svg><span class="about-contributor-name" data-i18n="about.holyBearName"></span></a> <span data-i18n="about.holyBearHandle"></span></div>
+              <div class="about-contributor"><a href="https://github.com/CN115" target="_blank" rel="noopener noreferrer" data-contributor="CN115" aria-haspopup="dialog" aria-controls="contributor-preview" aria-expanded="false"><svg class="about-contributor-logo" viewBox="0 0 16 16" aria-hidden="true"><use href="#contributor-github-mark"/></svg><span class="about-contributor-name">CN_115</span></a> <span data-i18n="about.cn115Handle"></span></div>
+              <div class="about-contributor"><a href="https://github.com/n810K" target="_blank" rel="noopener noreferrer" data-contributor="n810K" aria-haspopup="dialog" aria-controls="contributor-preview" aria-expanded="false"><svg class="about-contributor-logo" viewBox="0 0 16 16" aria-hidden="true"><use href="#contributor-github-mark"/></svg><span class="about-contributor-name">Nathan K.</span></a> <span data-i18n="about.n810kHandle"></span></div>
             </div>
           </details>
         </section>
@@ -807,6 +829,29 @@
     </div>
   </div>
 
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute;overflow:hidden;pointer-events:none"><defs>
+    <path id="contributor-github-mark" d="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656"/>
+  </defs></svg>
+  <aside id="contributor-preview" role="dialog" aria-modal="false" aria-labelledby="contributor-preview-title" hidden>
+    <div class="contributor-preview-header">
+      <span class="contributor-preview-site">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><use href="#contributor-github-mark"/></svg>
+        github.com
+      </span>
+      <a id="contributor-preview-open" class="contributor-preview-open" target="_blank" rel="noopener noreferrer">
+        <span data-i18n="about.profileOpen"></span>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 2h5v5M14 2 7 9M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9"/></svg>
+      </a>
+    </div>
+    <div class="contributor-preview-body">
+      <div class="contributor-preview-avatar"><img id="contributor-preview-avatar" alt="" width="80" height="80"><span id="contributor-preview-fallback" aria-hidden="true" hidden></span></div>
+      <div class="contributor-preview-text">
+        <h3 id="contributor-preview-title"></h3>
+        <p id="contributor-preview-handle"></p>
+        <p class="contributor-preview-description" data-i18n="about.profileDescription"></p>
+      </div>
+    </div>
+  </aside>
   <div id="audio-tooltip" role="tooltip" hidden></div>
   <script src="assets/menu/menu.js"></script>
 </body>

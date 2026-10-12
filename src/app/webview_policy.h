@@ -31,6 +31,9 @@ inline constexpr Resource Resources[] = {
     {L"https://nitlink.invalid/assets/menu/Archivo-500.ttf", L"assets/menu/Archivo-500.ttf", L"font/ttf", ResourceKind::Font},
     {L"https://nitlink.invalid/assets/menu/Archivo-600.ttf", L"assets/menu/Archivo-600.ttf", L"font/ttf", ResourceKind::Font},
     {L"https://nitlink.invalid/assets/menu/kofi-cup.png", L"assets/menu/kofi-cup.png", L"image/png", ResourceKind::Image},
+    {L"https://nitlink.invalid/assets/menu/contributors/holybear.png", L"assets/menu/contributors/holybear.png", L"image/png", ResourceKind::Image},
+    {L"https://nitlink.invalid/assets/menu/contributors/cn115.jpg", L"assets/menu/contributors/cn115.jpg", L"image/jpeg", ResourceKind::Image},
+    {L"https://nitlink.invalid/assets/menu/contributors/n810k.png", L"assets/menu/contributors/n810k.png", L"image/png", ResourceKind::Image},
 };
 
 // The menu has no query or fragment navigation. Exact serialized URLs reject

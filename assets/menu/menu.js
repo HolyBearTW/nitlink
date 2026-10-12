@@ -29,6 +29,7 @@
     let currentLocale = 'en-US';
     let holyBearUpdateState = {};
     let renderHolyBearUpdate = () => {};
+    let renderContributorPreview = () => {};
     const t = key => {
       const selected = localeResources[currentLocale] || {};
       const value = selected[key] || englishLocale[key];
@@ -84,6 +85,7 @@
         language.value = 'system';
       }
       renderHolyBearUpdate();
+      renderContributorPreview();
     };
     const localizeValue = value => ({
       Auto: 'value.auto', Stretch: 'value.stretch',
@@ -238,6 +240,107 @@
       document.getElementById('audio-diagnostics').hidden = !e.target.checked;
       e.target.setAttribute('aria-expanded', String(e.target.checked));
     });
+
+    // Contributor cards use only packaged images and fixed profile links.
+    (() => {
+      const card = document.getElementById('contributor-preview');
+      if (!card) return;
+      const profiles = {
+        HolyBearTW: 'assets/menu/contributors/holybear.png',
+        CN115: 'assets/menu/contributors/cn115.jpg',
+        n810K: 'assets/menu/contributors/n810k.png'
+      };
+      const title = document.getElementById('contributor-preview-title');
+      const handle = document.getElementById('contributor-preview-handle');
+      const avatar = document.getElementById('contributor-preview-avatar');
+      const fallback = document.getElementById('contributor-preview-fallback');
+      const open = document.getElementById('contributor-preview-open');
+      let anchor = null, hoveredLink = null, showTimer, hideTimer;
+      const hide = () => {
+        clearTimeout(showTimer);
+        clearTimeout(hideTimer);
+        if (anchor) anchor.setAttribute('aria-expanded', 'false');
+        card.hidden = true;
+        anchor = null;
+      };
+      const hideSoon = () => {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          const focused = document.activeElement;
+          if (!hoveredLink && !card.matches(':hover') && focused !== anchor && !card.contains(focused)) hide();
+        }, 160);
+      };
+      const position = () => {
+        if (!anchor || card.hidden) return;
+        const rect = anchor.getBoundingClientRect();
+        const box = card.getBoundingClientRect();
+        const group = anchor.closest('.about-contributors');
+        const groupBox = group.getBoundingClientRect();
+        const namesRight = Math.max(...Array.from(group.querySelectorAll('.about-contributor > a, .about-contributor > span'),
+          element => element.getBoundingClientRect().right));
+        const beside = namesRight + box.width + 24 <= window.innerWidth;
+        const left = Math.max(12, Math.min(beside ? namesRight + 12 : rect.left, window.innerWidth - box.width - 12));
+        const below = groupBox.bottom + 8;
+        const top = beside ? rect.top - 11 :
+          (below + box.height <= window.innerHeight - 12 ? below : groupBox.top - box.height - 8);
+        card.style.left = `${left}px`;
+        card.style.top = `${Math.max(12, Math.min(top, window.innerHeight - box.height - 12))}px`;
+      };
+      renderContributorPreview = () => {
+        if (anchor) {
+          title.textContent = anchor.textContent.trim();
+          position();
+        }
+      };
+      const show = link => {
+        clearTimeout(showTimer);
+        clearTimeout(hideTimer);
+        const username = link.dataset.contributor;
+        if (!Object.hasOwn(profiles, username) || link.href !== `https://github.com/${username}` ||
+            document.documentElement.dataset.activePane !== 'pane-about' || !link.closest('details').open) return;
+        if (anchor && anchor !== link) anchor.setAttribute('aria-expanded', 'false');
+        anchor = link;
+        anchor.setAttribute('aria-expanded', 'true');
+        title.textContent = link.textContent.trim();
+        handle.textContent = `@${username}`;
+        open.href = link.href;
+        fallback.textContent = username.slice(0, 2).toUpperCase();
+        fallback.hidden = true;
+        avatar.hidden = false;
+        avatar.src = profiles[username];
+        card.hidden = false;
+        position();
+      };
+      avatar.addEventListener('error', () => { avatar.hidden = true; fallback.hidden = false; });
+      document.querySelectorAll('#about-contributors-body a[data-contributor]').forEach(link => {
+        link.addEventListener('mouseenter', () => {
+          hoveredLink = link;
+          clearTimeout(hideTimer);
+          clearTimeout(showTimer);
+          showTimer = setTimeout(() => show(link), 180);
+        });
+        link.addEventListener('mouseleave', () => {
+          if (hoveredLink === link) hoveredLink = null;
+          clearTimeout(showTimer);
+          hideSoon();
+        });
+        link.addEventListener('focus', () => show(link));
+        link.addEventListener('blur', hideSoon);
+      });
+      card.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+      card.addEventListener('mouseleave', hideSoon);
+      card.addEventListener('focusin', () => clearTimeout(hideTimer));
+      card.addEventListener('focusout', hideSoon);
+      document.addEventListener('keydown', event => { if (event.key === 'Escape') { hoveredLink = null; hide(); } });
+      document.addEventListener('click', event => {
+        if (anchor && !anchor.contains(event.target) && !card.contains(event.target)) hide();
+      });
+      document.addEventListener('scroll', () => { hoveredLink = null; hide(); }, true);
+      document.getElementById('about-contributors').addEventListener('toggle', event => { if (!event.target.open) hide(); });
+      window.addEventListener('resize', hide);
+      window.addEventListener('blur', hide);
+      document.addEventListener('visibilitychange', () => { if (document.hidden) hide(); });
+    })();
 
     // Small help buttons support pointer hover, keyboard focus and touch/click.
     // A fixed tooltip stays inside the viewport even in the narrow side panel.

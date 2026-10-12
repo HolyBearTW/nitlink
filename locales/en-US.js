@@ -238,6 +238,8 @@ window.NitLinkLocales['en-US'] = {
   'about.holyBearHandle': '(@HolyBearTW)',
   'about.cn115Handle': '(@CN115)',
   'about.n810kHandle': '(@n810K)',
+  'about.profileOpen': 'Open',
+  'about.profileDescription': 'View their GitHub profile and public repositories.',
   'source.captureDevice': 'Capture Device',
   'source.manualFormat': 'Manual Capture Format',
   'source.resolution': 'Resolution',

@@ -8,6 +8,7 @@ $required = @(
     'NitLink.exe', 'nitlink-menu.html', 'locales/en-US.js', 'locales/zh-TW.js',
     'assets/menu/menu.js', 'assets/menu/Archivo-400.ttf', 'assets/menu/Archivo-500.ttf',
     'assets/menu/Archivo-600.ttf', 'assets/menu/Archivo-OFL.txt', 'assets/menu/kofi-cup.png',
+    'assets/menu/contributors/holybear.png', 'assets/menu/contributors/cn115.jpg', 'assets/menu/contributors/n810k.png',
     'third_party/nis/NIS_Scaler.h', 'third_party/nis/LICENSE.txt',
     'LICENSE', 'LICENSES.md', 'ACKNOWLEDGMENTS.md'
 )

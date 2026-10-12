@@ -228,3 +228,40 @@ attribution requirements:
   the stated LZMA exception. The generated installer contains NSIS runtime code;
   the compiler is not distributed in the application package.
 - **Used for:** HolyBear Edition's branded multilingual Windows installer.
+
+## Contributor profile images
+
+- **Source:** The public GitHub avatars of [HolyBearTW](https://github.com/HolyBearTW),
+  [CN115](https://github.com/CN115) and [n810K](https://github.com/n810K).
+- **Used for:** Local profile previews in About. The images remain attributed
+  to their respective contributors; NitLink's MIT license does not relicense them.
+
+## GitHub Mark icon (Primer Octicons)
+
+- **Source:** https://github.com/primer/octicons/blob/main/icons/mark-github-16.svg
+- **Used for:** The GitHub profile preview header in About.
+- **License:** MIT, reproduced below.
+
+```text
+MIT License
+
+Copyright (c) 2026 GitHub Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

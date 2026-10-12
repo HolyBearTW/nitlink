@@ -69,3 +69,12 @@ project authorship or maintainership.
 - **Traditional Chinese (zh-TW):** [HolyBear（聖小熊）](https://github.com/HolyBearTW)
   (`@HolyBearTW`) — translation and localization review with real-device
   validation.
+
+## About contributor cards
+
+- Contributor profile images are sourced from the public GitHub avatars of
+  [HolyBearTW](https://github.com/HolyBearTW), [CN115](https://github.com/CN115)
+  and [n810K](https://github.com/n810K). The images remain attributed to their
+  respective contributors.
+- The GitHub Mark icon is from [Primer Octicons](https://github.com/primer/octicons),
+  copyright GitHub Inc., under the MIT license reproduced in `LICENSES.md`.

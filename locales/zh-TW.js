@@ -237,6 +237,8 @@ window.NitLinkLocales['zh-TW'] = {
   'about.holyBearHandle': '(@HolyBearTW)',
   'about.cn115Handle': '(@CN115)',
   'about.n810kHandle': '(@n810K)',
+  'about.profileOpen': '開啟',
+  'about.profileDescription': '查看 GitHub 個人檔案與公開專案。',
   'source.captureDevice': '擷取裝置',
   'source.manualFormat': '手動擷取格式',
   'source.resolution': '解析度',
