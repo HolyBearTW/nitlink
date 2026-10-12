@@ -830,9 +830,9 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
             !!document.querySelector('#about-contributors-body a[href="https://github.com/HolyBearTW"]') &&
             !!document.querySelector('#about-contributors-body a[href="https://github.com/CN115"]') &&
             !!document.querySelector('#about-details-body a[href="https://github.com/nitlink-dev/nitlink"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSE"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/LICENSES.md"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/main/ACKNOWLEDGMENTS.md"]');
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSE"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSES.md"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/ACKNOWLEDGMENTS.md"]');
     })())JS") == L"true", "separate sections preserve technical text, all license links and original contributor names and handles");
     Check(Script(view, LR"JS((() => {
         const main = document.querySelector('main');

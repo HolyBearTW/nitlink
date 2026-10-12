@@ -48,6 +48,10 @@ inline bool CanOpenExternal(std::wstring_view current, std::wstring_view target,
         (target == L"https://tally.so/r/EkZjNr" ||
          target == L"https://ko-fi.com/klosed89" ||
          target == L"https://github.com/HolyBearTW" || target == L"https://github.com/CN115" ||
+         target == L"https://github.com/nitlink-dev/nitlink" ||
+         target == L"https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSE" ||
+         target == L"https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSES.md" ||
+         target == L"https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/ACKNOWLEDGMENTS.md" ||
          HolyBear::IsReleaseUrl(target));
 }
 inline bool IsLocalScreenshotPath(std::wstring_view path) {
