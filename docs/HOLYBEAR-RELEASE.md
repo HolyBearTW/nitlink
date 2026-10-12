@@ -12,6 +12,28 @@ versions, src/app/holybear_version.h, the existing HUD version tag, About build 
 and `release-notes-<VERSION>.md`. The package script checks their agreement.
 Keep original source attribution in HOLYBEAR-SOURCES.json and docs/cn115.
 
+### Release note writing style
+
+Use the maintainer-edited [1.2.4.1 Release](https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear)
+as the writing/style reference for future versions:
+
+- Write primarily in Traditional Chinese, with a short English Summary.
+- Open the body with `**非官方社群整合版（Unofficial Community Edition）**`.
+- Explain changes in concise, user-facing language, grouped under the existing
+  update, compatibility, validation, known limitations and attribution sections.
+- Credit people/projects with `@nitlink-dev`, `@CN115` and `@HolyBearTW`, while
+  retaining direct links to the actual source repositories, PRs, licenses and notices.
+- Describe only changes since the previous release and actual validation results;
+  do not present existing features as new or old hardware evidence as a new test.
+
+The source `release-notes-<VERSION>.md` must still begin with the exact
+`# NitLink <numeric version> HolyBear Edition` heading required by packaging.
+The generator validates that heading, then omits it from the final body so the
+GitHub Release title is not repeated. ZIP, Setup and GitHub all receive the same
+generated `RELEASE-NOTES.md`; the dynamic validation footer and strict body
+comparison remain unchanged. Do not revise published artifacts or overwrite
+maintainer-edited release text to apply this style retroactively.
+
 From PowerShell 7 on a Windows x64 development machine with Visual Studio
 2022 C++ tools, CMake, Ninja, Node, Python, 7-Zip and WebView2 Runtime:
 

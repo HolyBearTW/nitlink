@@ -41,8 +41,10 @@ Assert-Notes ($preview.Contains('預定版本標籤') -and $preview.Contains('�
     -not $preview.Contains('已驗證的正式 Git 標籤')) 'preview never claims a verified source tag'
 Assert-Notes ($preview.Contains($commit) -and $preview.Contains($info.Tag) -and $preview.Contains('7/7') -and
     $preview.Contains('失敗 0 項，略過 0 項') -and $preview.Contains($actions)) 'preview retains dynamic identity, test counts and Actions URL'
-Assert-Notes ($preview.StartsWith($notes, [StringComparison]::Ordinal) -and
-    $preview.Contains('## 此發布套件的建置驗證結果')) 'generated notes preserve the complete original body'
+$notesBody = ($notes -split '\r?\n', 2)[1] -replace '^\r?\n', ''
+Assert-Notes ($preview.StartsWith($notesBody, [StringComparison]::Ordinal) -and
+    -not $preview.StartsWith("# $($info.Title)", [StringComparison]::Ordinal) -and
+    $preview.Contains('## 此發布套件的建置驗證結果')) 'generated notes retain the complete body without repeating the product title'
 $formal = Get-HolyBearReleaseNotes -Notes $notes -Title $info.Title -Commit $otherCommit -Tag $info.Tag -Summary $baseline -TagSourceVerified $true
 Assert-Notes ($formal.Contains('已驗證的正式 Git 標籤') -and -not $formal.Contains('預定版本標籤')) 'verified formal tag fixture has distinct wording'
 Assert-Notes ($formal.Contains($otherCommit) -and $formal.Contains('6/7') -and $formal.Contains($baseline.knownFailure) -and

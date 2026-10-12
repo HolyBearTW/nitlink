@@ -16,7 +16,10 @@ function Get-HolyBearReleaseNotes {
         ($Summary.failures -eq 0 -and $Summary.knownFailure)) {
         throw 'Missing or inconsistent validated test summary.'
     }
-    $result = $Notes + "`n## 此發布套件的建置驗證結果`n`n"
+    # Keep the validated title in the source Markdown for packaging checks.
+    # The generated notes/body share the content below it; GitHub supplies the title.
+    $body = ($Notes -split '\r?\n', 2)[1] -replace '^\r?\n', ''
+    $result = $body + "`n## 此發布套件的建置驗證結果`n`n"
     $result += "- 原始碼 Commit：``$Commit``。`n"
     if ($TagSourceVerified) {
         $result += "- 已驗證的正式 Git 標籤：``$Tag``（已核對來源 Commit）。`n"
