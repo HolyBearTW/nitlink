@@ -23,10 +23,15 @@ Commit the reviewed source and push only `holybear/integrated`. Its Actions
 run builds/tests/packages and uploads review artifacts, without publishing a
 Release. After reviewing that run, create a new matching tag and push it:
 
-```text
-git tag -s v1.2.4.1-holybear -m "NitLink 1.2.4.1 HolyBear Edition"
-git verify-tag v1.2.4.1-holybear
-git push origin v1.2.4.1-holybear
+```powershell
+. ./scripts/holy-bear-common.ps1
+$info = Get-HolyBearVersion
+$commit = Get-HolyBearCommit
+git tag -s -u 'B96A785DE4C5083A0DFF15EA8925D54ECCF3EADF!' -m $info.Title $info.Tag $commit
+if ($LASTEXITCODE -ne 0) { throw 'Tag signing failed; do not push.' }
+Assert-HolyBearSignedTag $info.Tag $commit
+git -c push.followTags=false push origin "refs/tags/$($info.Tag):refs/tags/$($info.Tag)"
+if ($LASTEXITCODE -ne 0) { throw 'Tag push failed; inspect before retrying.' }
 ```
 
 Tags matching `v*-holybear*` trigger a fresh build from the tag's commit and
@@ -47,33 +52,10 @@ draft each repeat the check. A lightweight/unsigned/invalid/unapproved tag,
 missing object/tool/public key or unreviewed Commit stops the flow. GitHub's
 Verified badge and `gh release create --verify-tag` are not signature gates.
 
-Without the explicit recovery input below, Workflow Dispatch is restricted to
-`holybear/integrated`: it is build-only by default, or signs/verifies review
-artifacts when `signing_validation=true`. Neither of these preview modes creates
-tags, Releases or public Release attachments.
+Workflow Dispatch is restricted to `holybear/integrated`: it is build-only by
+default, or signs/verifies review artifacts when `signing_validation=true`.
+Neither manual mode creates tags, Releases or public Release attachments.
 Do not overwrite an existing tag or Release.
-
-### Existing 1.2.4.1 Tag recovery (requires separate publication authorization)
-
-The original Tag remains `v1.2.4.1-holybear`, object
-`fffadac90dcf48690956fbf42c3fb66df1350a0c`, source Commit
-`af98e1eccc6835b9661555501c5e9bf63da493ec`. Do not move or recreate it.
-After explicit authorization, dispatch this existing workflow from the reviewed
-`holybear/integrated` control Commit with `recover_1241=true` and
-`signing_validation=false`. This is a formal publication request, not a preview.
-It refuses an existing Draft/Release and any other Tag object/source Commit.
-
-The control checkout contains the repaired workflow and signing/publishing
-guards; `recovery-source` is a separate immutable Tag checkout. All original
-Build/CTest/RequireTag packaging and installer checks run from that source.
-Recovery requires 43/43 CTest targets passed, zero failures and zero skips.
-The protected `release` Environment still requires its existing approval.
-Signing/publishing use the control code, repeat the original signature gates,
-and record the actual Tag `source_ref` separately from `recovery_control_commit`
-and `recovery_control_ref`; GitHub event/ref metadata is never replaced.
-No preview artifacts are reused, and publication still verifies the Draft,
-notes, signatures and downloaded bytes before exposure. Once a Draft/Release
-exists, this recovery entry refuses another attempt; failures require review.
 
 Before relying on Workflow Dispatch, confirm that GitHub accepts the existing
 workflow on the reviewed integration ref. Registration alone is not proof of

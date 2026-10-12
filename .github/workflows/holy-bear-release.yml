@@ -10,10 +10,6 @@ on:
         description: 'Sign and verify only; never create or publish a Release'
         type: boolean
         default: false
-      recover_1241:
-        description: 'Formal recovery of the existing signed 1.2.4.1 Tag; publishes after release Environment approval'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -27,25 +23,14 @@ jobs:
     if: github.repository == 'HolyBearTW/nitlink'
     runs-on: windows-2022
     timeout-minutes: 30
-    env:
-      RECOVER_1241: ${{ github.event_name == 'workflow_dispatch' && inputs.recover_1241 && 'true' || 'false' }}
     outputs:
       tag: ${{ steps.operation.outputs.tag }}
       release: ${{ steps.operation.outputs.release }}
       validate: ${{ steps.operation.outputs.validate }}
-      recovery: ${{ steps.operation.outputs.recovery }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Checkout immutable recovery source separately from control code
-        if: github.event_name == 'workflow_dispatch' && inputs.recover_1241 && github.ref == 'refs/heads/holybear/integrated'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: refs/tags/v1.2.4.1-holybear
-          path: recovery-source
           fetch-depth: 0
           persist-credentials: false
       - name: Select build, signing validation or formal release
@@ -53,7 +38,6 @@ jobs:
         shell: pwsh
         env:
           SIGNING_VALIDATION: ${{ inputs.signing_validation }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           . ./scripts/holy-bear-common.ps1
           $info = Get-HolyBearVersion
@@ -65,23 +49,10 @@ jobs:
           $release = $tagPush -and $env:GITHUB_REF -ceq "refs/tags/$($info.Tag)"
           $validate = $manual -and $env:SIGNING_VALIDATION -eq 'true'
           if ($tagPush -and -not $release) { throw 'Only the matching formal HolyBear version tag may trigger a release; validation tags are forbidden.' }
-          $recovery = $env:RECOVER_1241 -eq 'true'
-          if ($recovery) {
-            if ($validate) { throw 'Formal recovery cannot be combined with signing validation.' }
-            $identity = & python ./scripts/holybear_release_recovery.py --check-release-absent
-            if ($LASTEXITCODE -ne 0) { throw 'Existing Tag recovery source/control checks failed.' }
-            $identity = $identity -join "`n" | ConvertFrom-Json
-            $HolyBearRoot = $identity.source_root
-            $info = Get-HolyBearVersion
-            $release = $true
-            Write-Output "Recovery control Commit: $($identity.control_commit); immutable build Commit: $($identity.source_commit); Tag object: $($identity.tag_object)"
-          }
           if ($release) { Assert-HolyBearSignedTag $info.Tag (Get-HolyBearCommit) }
           "tag=$($info.Tag)" >> $env:GITHUB_OUTPUT
           "release=$($release.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "validate=$($validate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "recovery=$($recovery.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          "source=$(if ($recovery) { 'recovery-source' } else { '.' })" >> $env:GITHUB_OUTPUT
       - name: Ensure WebView2 Runtime on the CI runner
         shell: pwsh
         run: |
@@ -98,70 +69,50 @@ jobs:
           }
       - name: Build x64 Release and run complete CTest
         shell: pwsh
-        working-directory: ${{ steps.operation.outputs.source }}
-        run: |
-          ./scripts/build-holybear.ps1
-          if ($env:RECOVER_1241 -eq 'true') {
-            $summary = Get-Content -LiteralPath build/holy-bear/test-summary.json -Raw | ConvertFrom-Json
-            if ($summary.tests -ne 43 -or $summary.passed -ne 43 -or $summary.failures -ne 0 -or $summary.skipped -ne 0) {
-              throw 'Pinned 1.2.4.1 recovery requires all original 43 CTest targets to pass without failure or skip.'
-            }
-          }
+        run: ./scripts/build-holybear.ps1
       - name: Package and verify fresh portable ZIP and branded Setup
         shell: pwsh
-        working-directory: ${{ steps.operation.outputs.source }}
         run: |
           if ('${{ steps.operation.outputs.release }}' -eq 'true') {
-            ./scripts/package-holybear.ps1 -Tag '${{ steps.operation.outputs.tag }}' -RequireTag
+            ./scripts/package-holybear.ps1 -Tag $env:GITHUB_REF_NAME -RequireTag
           } else {
             ./scripts/package-holybear.ps1
           }
       - name: Verify install, upgrade and uninstall on the disposable CI runner
         shell: pwsh
-        working-directory: ${{ steps.operation.outputs.source }}
         run: ./scripts/test-installer.ps1 -Assets build/holy-bear-dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: holy-bear-portable
           path: |
-            ${{ steps.operation.outputs.source }}/build/holy-bear-dist/*.zip
-            ${{ steps.operation.outputs.source }}/build/holy-bear-dist/*Setup-x64.exe
-            ${{ steps.operation.outputs.source }}/build/holy-bear-dist/SHA256SUMS.txt
-            ${{ steps.operation.outputs.source }}/build/holy-bear-dist/RELEASE-NOTES.md
+            build/holy-bear-dist/*.zip
+            build/holy-bear-dist/*Setup-x64.exe
+            build/holy-bear-dist/SHA256SUMS.txt
+            build/holy-bear-dist/RELEASE-NOTES.md
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: holy-bear-validation
           path: |
-            ${{ steps.operation.outputs.source || '.' }}/build/holy-bear/ctest-results.xml
-            ${{ steps.operation.outputs.source || '.' }}/build/holy-bear/ctest-output.log
-            ${{ steps.operation.outputs.source || '.' }}/build/holy-bear/test-summary.json
+            build/holy-bear/ctest-results.xml
+            build/holy-bear/ctest-output.log
+            build/holy-bear/test-summary.json
           if-no-files-found: warn
 
   sign:
     name: Protected signing, verification and optional publication
-    if: github.repository == 'HolyBearTW/nitlink' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.build.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/holybear/integrated' && (needs.build.outputs.validate == 'true' || needs.build.outputs.recovery == 'true')))
+    if: github.repository == 'HolyBearTW/nitlink' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.build.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/holybear/integrated' && needs.build.outputs.validate == 'true'))
     needs: build
     environment: release
     runs-on: windows-2022
     timeout-minutes: 15
     permissions:
       contents: write
-    env:
-      RECOVER_1241: ${{ needs.build.outputs.recovery }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Checkout immutable recovery source separately from control code
-        if: needs.build.outputs.recovery == 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: refs/tags/v1.2.4.1-holybear
-          path: recovery-source
           fetch-depth: 0
           persist-credentials: false
       - name: Require a trusted source and locate GPG
@@ -170,17 +121,12 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
           . ./scripts/holy-bear-common.ps1
-          if ($env:RECOVER_1241 -eq 'true') {
-            $identity = & python ./scripts/holybear_release_recovery.py
-            if ($LASTEXITCODE -ne 0) { throw 'Existing Tag recovery source/control checks failed.' }
-            $HolyBearRoot = ($identity -join "`n" | ConvertFrom-Json).source_root
-            Assert-HolyBearSignedTag $env:RELEASE_TAG (Get-HolyBearCommit)
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -ceq "refs/tags/$($env:RELEASE_TAG)") {
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -ceq "refs/tags/$($env:RELEASE_TAG)") {
             Assert-HolyBearSignedTag $env:RELEASE_TAG (Get-HolyBearCommit)
           } elseif ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or $env:GITHUB_REF -cne 'refs/heads/holybear/integrated') {
             throw 'Signing requires a formal tag push or a manual run on holybear/integrated.'
           }
-          & git -C $HolyBearRoot merge-base --is-ancestor HEAD origin/holybear/integrated
+          & git merge-base --is-ancestor HEAD origin/holybear/integrated
           if ($LASTEXITCODE -ne 0) { throw 'Source is outside the reviewed integration branch.' }
           if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
             $tools = Join-Path $env:ProgramFiles 'Git/usr/bin'
@@ -203,7 +149,6 @@ jobs:
         run: |
           $options = @('scripts/release-signing.py', 'sign', '--assets', 'release-assets', '--tag', $env:RELEASE_TAG)
           if ($env:SIGNING_VALIDATION -eq 'true') { $options += '--validation-only' }
-          if ($env:RECOVER_1241 -eq 'true') { $options += '--recover-1241' }
           & python @options
           if ($LASTEXITCODE -ne 0) { throw 'GPG unlock, signature or hash verification failed; publication blocked.' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -218,11 +163,8 @@ jobs:
             release-assets/SIGNING-VERIFICATION.txt
           if-no-files-found: error
       - name: Verify uploaded draft assets and publish official Latest Release
-        if: needs.build.outputs.release == 'true' && needs.build.outputs.validate != 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/holybear/integrated' && needs.build.outputs.recovery == 'true'))
+        if: needs.build.outputs.release == 'true' && needs.build.outputs.validate != 'true' && github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $options = @{Tag = '${{ needs.build.outputs.tag }}'; Assets = 'release-assets'}
-          if ($env:RECOVER_1241 -eq 'true') { $options.Recover1241 = $true }
-          ./scripts/publish-holybear.ps1 @options
+        run: ./scripts/publish-holybear.ps1 -Tag $env:GITHUB_REF_NAME -Assets release-assets

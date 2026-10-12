@@ -1,15 +1,7 @@
-param([Parameter(Mandatory)][string]$Tag, [Parameter(Mandatory)][string]$Assets, [switch]$Recover1241)
+param([Parameter(Mandatory)][string]$Tag, [Parameter(Mandatory)][string]$Assets)
 . "$PSScriptRoot/holy-bear-common.ps1"
 . "$PSScriptRoot/holy-bear-release-notes.ps1"
-$controlRoot = $HolyBearRoot
-$recovery = $null
-if ($Recover1241) {
-    $identity = & python "$PSScriptRoot/holybear_release_recovery.py"
-    if ($LASTEXITCODE -ne 0) { throw 'Existing Tag recovery source/control checks failed.' }
-    $recovery = $identity -join "`n" | ConvertFrom-Json
-    if ($Tag -cne $recovery.tag) { throw 'Recovery only permits the pinned 1.2.4.1 Tag.' }
-    $HolyBearRoot = $recovery.source_root
-} elseif ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/nitlink' -or
+if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/nitlink' -or
     $env:GITHUB_EVENT_NAME -ne 'push' -or $env:GITHUB_REF -ne "refs/tags/$Tag") {
     throw 'Publication is restricted to a tag-push Actions run in HolyBearTW/nitlink.'
 }
@@ -19,13 +11,11 @@ $commit = Get-HolyBearCommit
 Assert-HolyBearSignedTag $Tag $commit
 & git -C $HolyBearRoot merge-base --is-ancestor HEAD origin/holybear/integrated
 if ($LASTEXITCODE -ne 0) { throw 'Release tag is not part of the reviewed integration branch.' }
-$assetRoot = (Resolve-Path -LiteralPath (Join-Path $controlRoot $Assets)).ProviderPath
+$assetRoot = (Resolve-Path -LiteralPath (Join-Path $HolyBearRoot $Assets)).ProviderPath
 $signingReport = Get-Content -LiteralPath (Join-Path $assetRoot 'SIGNING-VERIFICATION.txt')
 if ($signingReport -cnotcontains 'validation_only=false' -or
     $signingReport -cnotcontains "source_ref=refs/tags/$Tag" -or
     $signingReport -cnotcontains 'environment=release') { throw 'Signing-validation artifacts cannot be published.' }
-if ($recovery -and ($signingReport -cnotcontains "recovery_control_commit=$($recovery.control_commit)" -or
-    $signingReport -cnotcontains "recovery_control_ref=$($recovery.control_ref)")) { throw 'Recovery signing control identity mismatch.' }
 if (-not (Get-Command gpg -ErrorAction SilentlyContinue)) {
     $gitGpg = Join-Path $env:ProgramFiles 'Git/usr/bin/gpg.exe'
     if (-not (Test-Path -LiteralPath $gitGpg)) { throw 'GPG verification tools are missing.' }

@@ -188,20 +188,12 @@ def verify(home, assets, names, config):
 
 
 def main():
-    global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("sign", "verify"))
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--validation-only", action="store_true", help="Explicit trusted signing check; publication is forbidden")
-    parser.add_argument("--recover-1241", action="store_true", help="Only the pinned existing 1.2.4.1 source Tag recovery")
     args = parser.parse_args()
-    recovery = None
-    if args.recover_1241:
-        require(args.mode == "sign" and not args.validation_only, "Recovery cannot use signing validation artifacts.")
-        from holybear_release_recovery import require_recovery
-        recovery = require_recovery()
-        ROOT = Path(recovery["source_root"])
     names = identity(args.tag)
     config, public = pinned_key()
     assets = args.assets.resolve(strict=True)
@@ -216,7 +208,7 @@ def main():
         if args.validation_only:
             require(event == "workflow_dispatch" and ref == "refs/heads/holybear/integrated",
                     "Signing validation requires Workflow Dispatch on holybear/integrated; tags are forbidden.")
-        elif not recovery:
+        else:
             require(event == "push" and ref == "refs/tags/" + args.tag,
                     "Release signing is restricted to the matching formal tag push.")
         private, passphrase, fingerprint = (os.environ.pop(name, "") for name in SECRET_NAMES)
@@ -248,12 +240,9 @@ def main():
     if args.mode == "sign":
         report = ["Verified actual GPG signing and public-key-only verification.",
                   f"validation_only={str(args.validation_only).lower()}",
-                  "environment=release", f"source_ref={recovery['source_ref'] if recovery else os.environ['GITHUB_REF']}",
+                  "environment=release", f"source_ref={os.environ['GITHUB_REF']}",
                   "signing_subkey=" + config["signing_subkey_fingerprint"],
                   "primary_key=" + config["primary_fingerprint"]]
-        if recovery:
-            report += ["recovery_control_commit=" + recovery["control_commit"],
-                       "recovery_control_ref=" + recovery["control_ref"]]
         for name in [names[0], names[0] + ".asc", names[1], names[1] + ".asc", names[2], names[2] + ".asc", "RELEASE-NOTES.md"]:
             with (assets / name).open("rb") as stream:
                 report.append(hashlib.file_digest(stream, "sha256").hexdigest() + "  " + name)
