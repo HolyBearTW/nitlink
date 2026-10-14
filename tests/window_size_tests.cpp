@@ -36,6 +36,18 @@ static void CheckClose(CloseState state, const std::filesystem::path& configPath
         desc.width = 640;
         desc.height = 360;
         Require(window.Create(instance, desc), "Window creates");
+        window.AcknowledgeDisplayChange();
+        window.AcknowledgeMove();
+        SendMessageW(window.GetHWND(), WM_DISPLAYCHANGE, 32, MAKELPARAM(1920, 1080));
+        Require(window.WasDisplayChanged() && !window.WasMoved(),
+                "Display-mode changes invalidate refresh metadata without inventing a move");
+        window.AcknowledgeDisplayChange();
+        Require(!window.WasDisplayChanged(), "Display-change notifications acknowledge once");
+        SendMessageW(window.GetHWND(), WM_MOVE, 0, MAKELPARAM(100, 100));
+        Require(window.WasMoved() && !window.WasDisplayChanged(),
+                "Same-size moves schedule monitor-crossing detection");
+        window.AcknowledgeMove();
+        Require(!window.WasMoved(), "Move notifications acknowledge once");
         ResizeClient(window.GetHWND(), 800, 500);
         ResizeClient(window.GetHWND(), expected.first, expected.second);
         Require(window.GetClientSize() == expected, "Resize produces the requested client dimensions");

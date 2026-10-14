@@ -173,6 +173,27 @@ int main(int argc, char** argv) {
         host.PostMessage(LR"({"state":{"configWarning":""}})");
         Check(PumpUntil([&] { return Script(view, L"document.getElementById('config-warning').hidden") == L"true"; }),
               "resolved config warning clears");
+        // Keep metadata readback checks separate from the HDMI source picker in #25.
+        for (const auto* locale : {L"en-US", L"zh-TW"}) {
+            const std::wstring prefix = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
+                L"\",\"negotiatedWidth\":1920,\"negotiatedHeight\":1080,";
+            host.PostMessage((prefix + L"\"negotiatedFps\":120,\"negotiatedFpsNumerator\":120,"
+                              L"\"negotiatedFpsDenominator\":1}}").c_str());
+            Check(PumpUntil([&] { return Script(view,
+                L"document.getElementById('meta-resolution').textContent === '1920x1080 / 120 FPS'") == L"true"; }),
+                "negotiated integer rate displays in both languages");
+            host.PostMessage((prefix + L"\"negotiatedFps\":119,\"negotiatedFpsNumerator\":120000,"
+                              L"\"negotiatedFpsDenominator\":1001}}").c_str());
+            Check(PumpUntil([&] { return Script(view,
+                L"document.getElementById('meta-resolution').textContent === '1920x1080 / 119.88 FPS'") == L"true"; }),
+                "negotiated fractional rate displays without integer truncation");
+            host.PostMessage((prefix + L"\"negotiatedFps\":0,\"negotiatedFpsNumerator\":0,"
+                              L"\"negotiatedFpsDenominator\":1}}").c_str());
+            Check(PumpUntil([&] { return Script(view,
+                L"document.getElementById('meta-resolution').textContent === '1920x1080 / -- FPS'") == L"true"; }),
+                "missing negotiated rate remains unknown while resolution stays visible");
+        }
+
         const size_t count = messages.size();
         Script(view, L"document.querySelector('[data-action=toggleHDR]').click()");
         Check(PumpUntil([&] { return messages.size() > count; }), "menu control posts through native bridge");
@@ -302,6 +323,7 @@ int main(int argc, char** argv) {
               "native close commits only the two pending final slider values");
         std::wstring failure;
         host.SetFailureHandler([&](const std::wstring& reason) { failure = reason; });
+        const auto messagesBeforeCrash = messages.size();
         UINT32 browserPid = 0;
         Hr(view->get_BrowserProcessId(&browserPid));
         Check(browserPid != 0 && browserPid != GetCurrentProcessId(), "isolated test browser PID");
@@ -317,9 +339,36 @@ int main(int argc, char** argv) {
         Check(PumpUntil([&] { host.CheckHealth(); return host.IsReady(); }),
               "browser crash automatically restarts the secured host");
         auto* recovered = WebViewSettingsTestAccess::View(host);
-        Check(recovered && host.InitializationError().empty() &&
-              Script(recovered, L"document.documentElement.lang") == L"\"en-US\"",
-              "restarted host reloads the packaged menu");
+        Check(recovered && host.InitializationError().empty(), "restarted host has no initialization error");
+        wil::unique_cotaskmem_string recoveredSource;
+        Hr(recovered->get_Source(&recoveredSource));
+        Check(recoveredSource && NitLink::WebViewPolicy::IsTrustedDocument(recoveredSource.get()),
+              "restarted host reloads the trusted packaged menu");
+        Check(PumpUntil([&] {
+            return Script(recovered, L"document.readyState === 'complete' && !!document.querySelector('h1') && "
+                L"!!window.NitLinkLocales['en-US'] && !!window.NitLinkLocales['zh-TW'] && "
+                L"!!(window.chrome && window.chrome.webview && window.chrome.webview.postMessage)") == L"true";
+        }), "restarted packaged DOM, locale resources and JavaScript bridge finish loading");
+        const auto initialLocale = Script(recovered, L"document.documentElement.lang");
+        std::wcout << L"Restart locale and browser languages: " <<
+            Script(recovered, L"[document.documentElement.lang,navigator.languages]") << L'\n';
+        Check(initialLocale == L"\"en-US\"" || initialLocale == L"\"zh-TW\"",
+              "restarted menu starts in a supported system locale");
+        bool readyReceived = false;
+        for (size_t i = messagesBeforeCrash; i < messages.size(); ++i) {
+            const auto message = NitLink::ParseSettingsMessage(messages[i]);
+            if (message && message->action == L"ready") readyReceived = true;
+        }
+        Check(readyReceived, "restarted menu sends a fresh ready through the native bridge");
+        for (const auto* locale : {L"zh-TW", L"en-US"}) {
+            host.PostMessage(std::wstring(L"{\"state\":{\"locale\":\"") + locale +
+                L"\",\"languagePreference\":\"" + locale + L"\"}}");
+            const auto translated = std::wstring(L"document.documentElement.lang === '") + locale +
+                L"' && document.querySelector('[data-i18n=\"nav.video\"]').textContent === "
+                L"window.NitLinkLocales['" + locale + L"']['nav.video']";
+            Check(PumpUntil([&] { return Script(recovered, translated.c_str()) == L"true"; }),
+                  "restarted bridge applies the native language preference");
+        }
         wil::com_ptr<ICoreWebView2Settings> recoveredSettings;
         Hr(recovered->get_Settings(&recoveredSettings));
         Hr(recoveredSettings->get_AreHostObjectsAllowed(&enabled));

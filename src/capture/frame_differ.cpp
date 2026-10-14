@@ -309,6 +309,7 @@ void FrameDiffer::Reset()
     m_havePrev    = false;
     m_firstFrame  = true;
     m_wasNew      = true;
+    m_classificationAvailable = false;
     m_lastDiff    = 0.0f;
     m_recentIdx   = 0;
     m_recentCount = 0;
@@ -318,6 +319,7 @@ void FrameDiffer::Reset()
 
 void FrameDiffer::Shutdown()
 {
+    m_classificationAvailable = false;
     for (auto& slot : m_resultStaging) slot.Reset();
     m_stagingWrite   = 0;
     m_stagingWritten = 0;
@@ -338,6 +340,7 @@ void FrameDiffer::Shutdown()
 
 void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* inputSRV)
 {
+    m_classificationAvailable = false;
     if (!m_diffCS || !inputSRV) return;
 
     // ---- Read back the previous frame's diff result, if any ----
@@ -362,6 +365,7 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
         if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
             m_readbackSkips++;
         } else if (SUCCEEDED(hr)) {
+            m_classificationAvailable = true;
             // Read the kTilesX x kTilesY grid of per-tile mean SADs. Take the
             // max (localized-motion rescue signal) and the average. Because the
             // tiles are equal-size, the average IS the old frame-global mean,

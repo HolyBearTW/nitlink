@@ -583,20 +583,27 @@ void Overlay::Render(const Stats& stats)
         return;
     }
 
-    // Push 0 when there's no signal so the sparkline drops to the floor.
-    m_fpsHistory.push_back(stats.signalActive ? (float)stats.fps : 0.0f);
-    if (m_fpsHistory.size() > kHistorySize) m_fpsHistory.pop_front();
+    // The primary number and curve share content-change semantics. Unknown
+    // clears the curve instead of inventing a measured zero or bridging a gap.
+    const auto fps = stats.frameRates.HudFps();
+    const bool haveContentFps = stats.signalActive && stats.frameRates.HudFpsAvailable();
+    if (haveContentFps) {
+        m_contentFpsHistory.push_back(static_cast<float>(fps));
+        if (m_contentFpsHistory.size() > kHistorySize) m_contentFpsHistory.pop_front();
+    } else {
+        m_contentFpsHistory.clear();
+    }
 
     float totalLatency = (float)(stats.captureLatencyMs + stats.renderLatencyMs);
     m_latencyHistory.push_back(stats.signalActive ? totalLatency : 0.0f);
     if (m_latencyHistory.size() > kHistorySize) m_latencyHistory.pop_front();
 
-    // HUD layout, matched to the F1 panel: a 280 x 160 card with square
+    // HUD layout, matched to the F1 panel: a 280 x 202 card with square
     // corners, a title band on top, two metric columns with sparklines,
     // and a footer with the GPU time and the pipeline badges. Sizes are
     // in DIPs at the 96 DPI the Direct2D target was created with.
     const float panelW = 280.0f;
-    const float panelH = 160.0f;
+    const float panelH = 202.0f;
     const float margin = 16.0f;
     const float pad    = 14.0f;
     const float bandH  = 30.0f;
@@ -673,16 +680,13 @@ void Overlay::Render(const Stats& stats)
     const float valueY  = panel.top + 54.0f;
     const float valueH  = 32.0f;
 
-    // Healthy values stay in plain ink like the panel; only degraded states
-    // take color. The sparkline stroke carries the accent when healthy.
+    // Static content can correctly measure zero. Its rate alone cannot
+    // indicate a degraded pipeline, so known content values stay in plain ink.
     auto fpsBrush = [&]() -> ID2D1SolidColorBrush* {
-        if (!sig)               return m_brushDim.Get();
-        if (stats.fps >= 58)    return m_brushText.Get();
-        if (stats.fps >= 31)    return m_brushWarn.Get();
-        return m_brushCrit.Get();
+        return haveContentFps ? m_brushText.Get() : m_brushDim.Get();
     };
     auto fpsStroke = [&]() -> ID2D1SolidColorBrush* {
-        return (sig && stats.fps >= 58) ? m_brushAccent.Get() : fpsBrush();
+        return haveContentFps ? m_brushAccent.Get() : m_brushDim.Get();
     };
 
     // App ingest: real, live, per-frame card-driver-to-app delivery time
@@ -721,8 +725,8 @@ void Overlay::Render(const Stats& stats)
                  m_brushDim.Get(), DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_FAR);
     };
 
-    drawMetric(panel.left + pad, colMid - 4.0f, Tr(L"overlay.frameRate"),
-               sig ? std::to_wstring(stats.fps) : L"--", Tr(L"overlay.fps"), fpsBrush());
+    drawMetric(panel.left + pad, colMid - 4.0f, Tr(L"overlay.contentFps"),
+               haveContentFps ? std::to_wstring(fps) : L"--", Tr(L"overlay.fps"), fpsBrush());
     {
         std::wstring v = L"--";
         if (sig) {
@@ -801,19 +805,35 @@ void Overlay::Render(const Stats& stats)
             m_d2dContext->DrawGeometry(strokeGeom.Get(), stroke, 1.25f);
         };
 
-        drawSparkline(sparkLeftL, sparkRightL, m_fpsHistory,     70.0f,  fpsStroke());
+        const float fpsScale = m_contentFpsHistory.empty() ? 70.0f : std::max(70.0f,
+            *std::max_element(m_contentFpsHistory.begin(), m_contentFpsHistory.end()));
+        drawSparkline(sparkLeftL, sparkRightL, m_contentFpsHistory, fpsScale, fpsStroke());
         drawSparkline(sparkLeftR, sparkRightR, m_latencyHistory, 100.0f, appIngestStroke());
     }
 
+    // Capture counts delivered frames, including duplicates. Present counts
+    // successful DXGI submissions, not physical scanout or the game's FPS.
+    auto drawFpsRow = [&](const wchar_t* key, uint32_t value, bool available, float top) {
+        const auto row = D2D1::RectF(panel.left + pad, panel.top + top,
+                                   panel.right - pad, panel.top + top + 18.0f);
+        drawText(Tr(key), m_smallTextFormat.Get(), row, m_brushDim.Get(),
+                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        drawText(available ? std::to_wstring(value) : L"--", m_smallTextFormat.Get(),
+                 row, m_brushInk2.Get(), DWRITE_TEXT_ALIGNMENT_TRAILING,
+                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    };
+    drawFpsRow(L"overlay.captureFps", stats.frameRates.captureFps, sig, 126.0f);
+    drawFpsRow(L"overlay.presentFps", stats.frameRates.presentFps, sig, 146.0f);
+
     // ---- 5. Footer: GPU time and pipeline badges ---------------------------
     {
-        const float ruleY = panel.top + 128.0f + 0.5f;
+        const float ruleY = panel.top + 170.0f + 0.5f;
         m_d2dContext->DrawLine(D2D1::Point2F(panel.left + pad,  ruleY),
                                D2D1::Point2F(panel.right - pad, ruleY),
                                hairBrush.Get(), 1.0f);
 
-        const D2D1_RECT_F footer = D2D1::RectF(panel.left + pad, panel.top + 130.0f,
-                                               panel.right - pad, panel.top + 152.0f);
+        const D2D1_RECT_F footer = D2D1::RectF(panel.left + pad, panel.top + 172.0f,
+                                               panel.right - pad, panel.top + 194.0f);
 
         // Real per-frame GPU work from the renderer's timestamp queries.
         // Shows "GPU --" until the query ring has filled, or permanently if
