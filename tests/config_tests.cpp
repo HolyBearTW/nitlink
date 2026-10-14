@@ -18,7 +18,7 @@ int main()
     }
     NitLink::Config legacyLoaded;
     if (!legacyLoaded.Load(path.string())) return 1;
-    if (legacyLoaded.audioFifoMs != 12 || legacyLoaded.audioRenderMs != 10 || !legacyLoaded.audioDrift || legacyLoaded.audioExclusive) return 19;
+    if (legacyLoaded.audioFifoMs != 40 || legacyLoaded.audioRenderMs != 30 || !legacyLoaded.audioDrift || legacyLoaded.audioExclusive) return 19;
     if (legacyLoaded.noSignalMode != "default" ||
         !legacyLoaded.noSignalImage.empty() ||
         legacyLoaded.noSignalFit != "contain" ||
