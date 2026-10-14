@@ -78,8 +78,8 @@ struct Config {
     std::wstring audioOutputDevice = L""; // Empty = system default
     float        audioVolume       = 1.0f;
     bool         audioMuted        = false;
-    int          audioFifoMs       = 12;
-    int          audioRenderMs     = 10;
+    int          audioFifoMs       = 40;
+    int          audioRenderMs     = 30;
     bool         audioDrift        = true;
     bool         audioExclusive    = false;
 
