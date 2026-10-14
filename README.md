@@ -1,3 +1,7 @@
+> **CN115 v0.1.2-audio1 test build:** device clock drift estimation and threshold-based audio reloads; FIFO targets remain fixed.
+
+> **CN115 v0.1.1:** Simplified Chinese UI (settings, HUD and notifications), automatic system language selection, and audio latency fork with optional minimum-period exclusive output and automatic shared-mode fallback on focus loss. See [AUDIO_TESTING.txt](AUDIO_TESTING.txt) for settings, pipeline details, limitations and Windows testing. Upstream performance and hardware validation below do not validate this fork.
+
 <p align="center">
   <img src="docs/images/readme-hero.png" alt="NitLink" width="900">
 </p>

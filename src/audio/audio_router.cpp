@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <memory>
 #include <sstream>
 
 #pragma comment(lib, "Ole32.lib")
@@ -24,15 +25,10 @@ static constexpr REFERENCE_TIME REFTIMES_PER_MILLISEC = 10000;
 // How long to wait before re-attempting an endpoint that failed to open.
 static constexpr int kRetryIntervalMs = 500;
 
-// Pump geometry. kFifoCapacityMs bounds how far capture may run ahead before
-// the oldest audio is discarded; kFifoTargetMs is the fill the drift control
-// steers toward and kFifoDeadbandMs the band it leaves alone. kRenderQueueMs
-// is how much audio stays queued inside the render endpoint: enough to ride
-// out scheduling jitter, small enough not to add noticeable latency.
+// Fixed allocation bounds pathological packet bursts; configured targets and
+// emergency trimming keep normal latency far below this capacity.
 static constexpr int   kFifoCapacityMs  = 400;
-static constexpr int   kFifoTargetMs    = 40;
-static constexpr int   kFifoDeadbandMs  = 10;
-static constexpr int   kRenderQueueMs   = 30;
+
 static constexpr int   kStatsIntervalMs = 5000;
 static constexpr DWORD kPumpWaitMs      = 200;
 
@@ -48,6 +44,46 @@ static const GUID kSubtypeUnknown = {0,0,0,{0,0,0,0,0,0,0,0}};
 
 static void AudioLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/Audio] " + msg + L"\n").c_str());
+}
+
+struct LowPeriodResult {
+    HRESULT hr = E_NOTIMPL;
+    const wchar_t* stage = L"activate IAudioClient3";
+    UINT32 minimum = 0, normal = 0, requested = 0, selected = 0;
+};
+
+// Query the engine using its native mix format on render. A new client is
+// used for each attempt; a failed Initialize never gets reused.
+static bool TryLowPeriod(IMMDevice* device, const WAVEFORMATEX* format,
+                         HANDLE event, int requestedMs, ComPtr<IAudioClient>& client,
+                         UINT32& periodFrames, LowPeriodResult* result = nullptr) {
+    LowPeriodResult d;
+    const auto finish = [&](HRESULT hr, const wchar_t* stage) {
+        d.hr=hr; d.stage=stage; if (result) *result=d; return SUCCEEDED(hr);
+    };
+    ComPtr<IAudioClient3> low;
+    HRESULT hr=device->Activate(__uuidof(IAudioClient3), CLSCTX_ALL, nullptr,
+                               reinterpret_cast<void**>(low.GetAddressOf()));
+    if (FAILED(hr)) return finish(hr,L"activate IAudioClient3");
+    UINT32 fundamental=0, maximum=0;
+    hr=low->GetSharedModeEnginePeriod(format,&d.normal,&fundamental,&d.minimum,&maximum);
+    if (FAILED(hr)) return finish(hr,L"query native engine period");
+    d.requested=UINT32(uint64_t(format->nSamplesPerSec)*requestedMs/1000);
+    d.selected=AudioConvert::SelectPeriod(d.requested,fundamental,d.minimum,maximum);
+    if (!d.selected) return finish(E_INVALIDARG,L"invalid driver period range");
+    hr=low->InitializeSharedAudioStream(AUDCLNT_STREAMFLAGS_EVENTCALLBACK,d.selected,format,nullptr);
+    if (FAILED(hr)) return finish(hr,L"initialize native short-period stream");
+    hr=low->SetEventHandle(event);
+    if (FAILED(hr)) return finish(hr,L"set event handle");
+    hr=low.As(&client);
+    if (FAILED(hr)) return finish(hr,L"get audio client");
+    periodFrames=d.selected;
+    WAVEFORMATEX* current=nullptr;
+    UINT32 currentPeriod=0;
+    if (SUCCEEDED(low->GetCurrentSharedModeEnginePeriod(&current,&currentPeriod)) && current &&
+        current->nSamplesPerSec==format->nSamplesPerSec && currentPeriod) periodFrames=currentPeriod;
+    CoTaskMemFree(current);
+    return finish(S_OK,L"native short-period stream active");
 }
 
 static std::wstring HrString(HRESULT hr) {
@@ -112,27 +148,25 @@ static bool SameWaveFormat(const WAVEFORMATEX* a, const WAVEFORMATEX* b) {
     return IsEqualGUID(EffectiveSubFormat(a), EffectiveSubFormat(b)) != 0;
 }
 
-// Applies volume in place. Only the two encodings WASAPI actually hands back
-// for a shared-mode mix format are handled; anything else plays at unity
-// rather than being reinterpreted as the wrong sample type.
-static bool ScaleInPlace(BYTE* data, UINT32 frames, const WAVEFORMATEX* fmt, float vol) {
-    if (!data || !ValidWaveFormat(fmt) || !std::isfinite(vol)) return false;
-    const GUID sub = EffectiveSubFormat(fmt);
-    const size_t sampleCount = (size_t)frames * fmt->nChannels;
+static AudioConvert::Format PcmDescription(const WAVEFORMATEX* fmt) {
+    AudioConvert::Format f;
+    if (!ValidWaveFormat(fmt)) return f;
+    f.channels=fmt->nChannels; f.bits=fmt->wBitsPerSample; f.validBits=f.bits;
+    f.floating=EffectiveSubFormat(fmt)==kSubtypeIeeeFloat;
+    if (fmt->wFormatTag==WAVE_FORMAT_EXTENSIBLE) {
+        const auto* ext=reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(fmt);
+        if (ext->Samples.wValidBitsPerSample) f.validBits=ext->Samples.wValidBitsPerSample;
+        f.mask=ext->dwChannelMask;
+    }
+    return f;
+}
 
-    if (IsEqualGUID(sub, kSubtypeIeeeFloat) && fmt->wBitsPerSample == 32) {
-        float* s = reinterpret_cast<float*>(data);
-        for (size_t i = 0; i < sampleCount; i++) s[i] *= vol;
-        return true;
-    }
-    if (IsEqualGUID(sub, kSubtypePcm) && fmt->wBitsPerSample == 16) {
-        int16_t* s = reinterpret_cast<int16_t*>(data);
-        for (size_t i = 0; i < sampleCount; i++) {
-            s[i] = (int16_t)std::clamp((int)lrintf(s[i] * vol), -32768, 32767);
-        }
-        return true;
-    }
-    return false;
+static bool ScaleInPlace(BYTE* data, UINT32 frames, const WAVEFORMATEX* fmt, float vol) {
+    const auto f=PcmDescription(fmt);
+    if (!data || !AudioConvert::Valid(f) || !std::isfinite(vol)) return false;
+    const size_t count=size_t(frames)*f.channels, bytes=f.bits/8;
+    for (size_t i=0;i<count;++i) AudioConvert::Write(data+i*bytes,f,AudioConvert::Read(data+i*bytes,f)*vol);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +304,9 @@ bool AudioRouter::Initialize(const std::wstring& nameHint)
     // exactly that); make sure the previous worker is gone first.
     Shutdown();
 
+    m_focusGate = {};
+    m_exclusivePermitted = false;
+    m_exclusiveFailure.clear();
     m_nameHint = nameHint.empty() ? std::wstring(L"Elgato") : nameHint;
     m_setupFailureLogged = false;
     {
@@ -362,7 +399,10 @@ bool AudioRouter::SetupCapture()
     hr = m_captureClient->GetMixFormat(&m_captureFormat);
     if (FAILED(hr) || !ValidWaveFormat(m_captureFormat)) { AudioLog(L"capture GetMixFormat failed " + HrString(hr)); return false; }
 
-    // Initialize with shared mode, 100ms buffer for safety
+    UINT32 capturePeriod = 0;
+    if (!TryLowPeriod(captureDevice.Get(), m_captureFormat, m_captureEvent, 3,
+                      m_captureClient, capturePeriod)) {
+    // Capacity for delayed scheduling; DrainCapture consumes packets immediately.
     hr = m_captureClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
@@ -373,6 +413,7 @@ bool AudioRouter::SetupCapture()
     if (FAILED(hr)) { AudioLog(L"capture Initialize failed " + HrString(hr)); m_lastCaptureError = hr; return false; }
     hr = m_captureClient->SetEventHandle(m_captureEvent);
     if (FAILED(hr)) { AudioLog(L"capture SetEventHandle failed " + HrString(hr)); return false; }
+    }
     if (!FifoReset(m_captureFormat->nBlockAlign, m_captureFormat->nSamplesPerSec)) return false;
 
     hr = m_captureClient->GetBufferSize(&m_captureBufferFrames);
@@ -389,92 +430,260 @@ bool AudioRouter::SetupCapture()
     return true;
 }
 
+struct ExclusiveResult {
+    HRESULT hr = E_NOTIMPL;
+    const wchar_t* stage = L"activate exclusive client";
+    REFERENCE_TIME minimum = 0, requested = 0;
+    UINT32 frames = 0;
+    bool aligned = false;
+};
+
+// A failed Initialize client is discarded before the alignment retry.
+static bool OpenExclusive(IMMDevice* device, const WAVEFORMATEX* format, HANDLE event,
+                          ComPtr<IAudioClient>& client, ExclusiveResult& d) {
+    const auto step=[&](HRESULT hr, const wchar_t* stage) { d.hr=hr; d.stage=stage; return SUCCEEDED(hr); };
+    const auto activate=[&]() {
+        return device->Activate(__uuidof(IAudioClient),CLSCTX_ALL,nullptr,
+            reinterpret_cast<void**>(client.ReleaseAndGetAddressOf()));
+    };
+    if (!step(activate(),L"activate exclusive client")) return false;
+    REFERENCE_TIME normal=0;
+    if (!step(client->GetDevicePeriod(&normal,&d.minimum),L"query exclusive minimum")) return false;
+    if (d.minimum<=0 || d.minimum>2*REFTIMES_PER_SEC)
+        return step(E_INVALIDARG,L"invalid exclusive minimum");
+    d.requested=d.minimum;
+    HRESULT hr=client->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE,AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+        d.requested,d.requested,format,nullptr);
+    if (hr==AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+        UINT32 alignedFrames=0;
+        if (!step(client->GetBufferSize(&alignedFrames),L"query aligned exclusive buffer")) return false;
+        if (!alignedFrames || alignedFrames>format->nSamplesPerSec*2)
+            return step(E_INVALIDARG,L"invalid aligned exclusive buffer");
+        // Round to the nearest 100 ns, as required by the WASAPI alignment recipe.
+        d.requested=REFERENCE_TIME((uint64_t(alignedFrames)*REFTIMES_PER_SEC+format->nSamplesPerSec/2)/format->nSamplesPerSec);
+        d.requested=std::max(d.minimum,d.requested);
+        d.aligned=true;
+        if (!step(activate(),L"reactivate aligned exclusive client")) return false;
+        hr=client->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE,AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+            d.requested,d.requested,format,nullptr);
+    }
+    if (!step(hr,L"initialize exclusive minimum")) return false;
+    if (!step(client->SetEventHandle(event),L"set exclusive event")) return false;
+    if (!step(client->GetBufferSize(&d.frames),L"query exclusive buffer")) return false;
+    if (!d.frames || d.frames>format->nSamplesPerSec*2)
+        return step(E_INVALIDARG,L"invalid exclusive buffer size");
+    return true;
+}
+
+bool AudioRouter::SetupExclusive(IMMDevice* device, const WAVEFORMATEX* native, std::wstring& failure) {
+    ExclusiveResult d;
+    const auto fail=[&](HRESULT hr,const wchar_t* stage) {
+        std::wstringstream text;
+        text << stage << L" " << HrString(hr);
+        if (d.minimum) text << L" | exclusive min " << d.minimum/10000.0 << L" ms";
+        if (d.requested) text << L", requested " << d.requested/10000.0 << L" ms";
+        failure=text.str(); return false;
+    };
+    ComPtr<IAudioClient> probe;
+    HRESULT hr=device->Activate(__uuidof(IAudioClient),CLSCTX_ALL,nullptr,
+        reinterpret_cast<void**>(probe.GetAddressOf()));
+    if (FAILED(hr)) return fail(hr,L"activate exclusive format probe");
+    std::vector<WAVEFORMATEXTENSIBLE> candidates;
+    const auto append=[&](const WAVEFORMATEX* fmt) {
+        if (!ValidWaveFormat(fmt)) return;
+        const double ratio=double(m_captureFormat->nSamplesPerSec)/fmt->nSamplesPerSec;
+        if (ratio<0.125 || ratio>8 || !AudioConvert::CanMap(PcmDescription(m_captureFormat),PcmDescription(fmt))) return;
+        WAVEFORMATEXTENSIBLE copy{};
+        memcpy(&copy,fmt,sizeof(WAVEFORMATEX)+fmt->cbSize);
+        candidates.push_back(copy);
+    };
+    append(native); append(m_captureFormat);
+    // Shared mix formats are often float even when the hardware only accepts PCM.
+    for (DWORD rate : std::array<DWORD,5>{native->nSamplesPerSec,m_captureFormat->nSamplesPerSec,48000,44100,96000}) {
+        for (WORD channels : {native->nChannels,WORD(2)}) {
+            for (WORD bits : {WORD(32),WORD(24),WORD(16)}) {
+                for (WORD valid : {bits,WORD(24)}) {
+                    if (valid>bits || (valid!=bits && bits!=32)) continue;
+                    WAVEFORMATEXTENSIBLE fmt{};
+                    fmt.Format={WAVE_FORMAT_EXTENSIBLE,channels,rate,rate*channels*(bits/8),WORD(channels*(bits/8)),bits,22};
+                    fmt.Samples.wValidBitsPerSample=valid;
+                    fmt.dwChannelMask=channels==2 ? 3 : PcmDescription(native).mask;
+                    fmt.SubFormat=kSubtypePcm;
+                    append(&fmt.Format);
+                    if (valid==bits && channels<=2) {
+                        fmt.Format.wFormatTag=WAVE_FORMAT_PCM; fmt.Format.cbSize=0;
+                        append(&fmt.Format);
+                    }
+                }
+            }
+        }
+    }
+    const WAVEFORMATEX* chosen=nullptr;
+    for (const auto& candidate : candidates) {
+        hr=probe->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE,&candidate.Format,nullptr);
+        if (hr==S_OK) { chosen=&candidate.Format; break; }
+        if (hr!=AUDCLNT_E_UNSUPPORTED_FORMAT && hr!=S_FALSE)
+            return fail(hr,L"probe exclusive format");
+    }
+    if (!chosen) return fail(AUDCLNT_E_UNSUPPORTED_FORMAT,L"no convertible exclusive PCM format");
+    probe.Reset();
+    if (!OpenExclusive(device,chosen,m_renderEvent,m_renderClient,d)) return fail(d.hr,d.stage);
+    m_renderFormat=CloneWaveFormat(chosen);
+    if (!m_renderFormat) return fail(E_OUTOFMEMORY,L"copy exclusive format");
+    m_renderBufferFrames=m_renderPeriodFrames=d.frames;
+    hr=m_renderClient->GetService(IID_PPV_ARGS(&m_renderService));
+    if (FAILED(hr)) return fail(hr,L"get exclusive render service");
+    m_conversionReady=PrepareConversion();
+    if (!m_conversionReady) return fail(E_FAIL,L"prepare exclusive conversion");
+    m_fifoHead=m_fifoBytes=0; m_fifoPrimed=false; ResetDrift();
+    // Prime one WHOLE ping-pong buffer before Start, without consuming stale FIFO.
+    BYTE* data=nullptr;
+    hr=m_renderService->GetBuffer(m_renderBufferFrames,&data);
+    if (FAILED(hr)) return fail(hr,L"prime exclusive buffer");
+    hr=m_renderService->ReleaseBuffer(m_renderBufferFrames,AUDCLNT_BUFFERFLAGS_SILENT);
+    if (FAILED(hr)) return fail(hr,L"release exclusive prime");
+    ResetEvent(m_renderEvent);
+    // Activation can change while the driver is being initialized.
+    if (m_ownerWindow.load() && (!m_running.load() || !m_exclusiveRequested.load() || !OwnerIsForeground()))
+        return fail(E_ABORT,L"exclusive suspended before start (window inactive or closing)");
+    hr=m_renderClient->Start();
+    if (FAILED(hr)) return fail(hr,L"start exclusive stream");
+    SetupRenderClock();
+    m_lastRenderEvent=std::chrono::steady_clock::now();
+    m_periodUs=UINT32(uint64_t(d.frames)*1000000/chosen->nSamplesPerSec);
+    m_effectiveQueueUs=m_periodUs.load();
+    m_adaptiveSupported=true; m_exclusiveActive=true;
+    REFERENCE_TIME latency=0;
+    const HRESULT latencyHr=m_renderClient->GetStreamLatency(&latency);
+    std::wstringstream status;
+    status << L"Exclusive event | exclusive min " << d.minimum/10000.0
+           << L" ms | requested " << d.requested/10000.0 << L" ms"
+           << L" | actual block " << m_periodUs.load()/1000.0 << L" ms (" << d.frames << L" frames)"
+           << (d.aligned ? L" | driver alignment applied" : L"")
+           << L" | driver stream latency ";
+    if (SUCCEEDED(latencyHr)) status << latency/10000.0 << L" ms"; else status << L"unknown";
+    status << L" | capture " << DescribeFormat(m_captureFormat) << L" -> stream " << DescribeFormat(chosen);
+    { std::lock_guard<std::mutex> lock(m_endpointInfoMutex); m_endpointInfo=status.str(); }
+    AudioLog(status.str());
+    return true;
+}
+
 bool AudioRouter::SetupRender()
 {
-    ComPtr<IMMDevice> renderDevice;
-    HRESULT hr = m_enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &renderDevice);
-    if (FAILED(hr)) { AudioLog(L"GetDefaultAudioEndpoint failed " + HrString(hr)); return false; }
-
-    LPWSTR id = nullptr;
-    if (SUCCEEDED(renderDevice->GetId(&id)) && id) {
-        m_renderDeviceId = id;
-        CoTaskMemFree(id);
-    }
-
-    // Open the render side in the CAPTURE format and let the audio engine do
-    // the channel matrix and sample-rate conversion.
-    //
-    // The endpoint's own mix format is not usable as-is: a headset running a
-    // virtual surround driver reports 8 channels while the card's capture
-    // endpoint is 2, and the two rates need not agree either. Copying between
-    // mismatched formats is what produced the smeared, hollow audio this
-    // replaces -- it read past the end of the capture buffer and scattered
-    // stereo samples across eight channels. AUTOCONVERTPCM hands that problem
-    // to the engine's own resampler, which is both correct and better than a
-    // hand-rolled one.
-    const DWORD kConvertFlags =
-        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-
-    hr = renderDevice->Activate(
-        __uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-        (void**)m_renderClient.ReleaseAndGetAddressOf());
-    if (FAILED(hr)) { AudioLog(L"render Activate failed " + HrString(hr)); return false; }
-
-    hr = m_renderClient->Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        kConvertFlags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-        100 * REFTIMES_PER_MILLISEC,
-        0,
-        m_captureFormat,
-        nullptr);
-
-    if (SUCCEEDED(hr)) {
-        m_renderFormat = CloneWaveFormat(m_captureFormat);
-        if (!m_renderFormat) return false;
-    } else {
-        // A failed Initialize leaves the client unusable, so the fallback needs
-        // a fresh one rather than a second Initialize on the same object.
-        AudioLog(L"render Initialize with format conversion failed " + HrString(hr) +
-                 L"; falling back to the endpoint mix format");
-
-        hr = renderDevice->Activate(
-            __uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-            (void**)m_renderClient.ReleaseAndGetAddressOf());
-        if (FAILED(hr)) return false;
-
-        hr = m_renderClient->GetMixFormat(&m_renderFormat);
-        if (FAILED(hr) || !ValidWaveFormat(m_renderFormat)) { AudioLog(L"render GetMixFormat failed " + HrString(hr)); return false; }
-
-        // Without the engine converting, the only safe case is formats that
-        // already agree. Refusing here is deliberate: emitting a mismatched
-        // copy is a buffer over-read, and it sounds broken anyway.
-        if (!SameWaveFormat(m_captureFormat, m_renderFormat)) {
-            AudioLog(L"Cannot route audio: capture is " + DescribeFormat(m_captureFormat) +
-                     L" but render endpoint is " + DescribeFormat(m_renderFormat) +
-                     L" and this system rejected format conversion");
-            return false;
+    ComPtr<IMMDevice> device;
+    HRESULT hr=m_enumerator->GetDefaultAudioEndpoint(eRender,eConsole,&device);
+    if (FAILED(hr)) { AudioLog(L"GetDefaultAudioEndpoint failed "+HrString(hr)); return false; }
+    LPWSTR id=nullptr;
+    if (SUCCEEDED(device->GetId(&id)) && id) { m_renderDeviceId=id; CoTaskMemFree(id); }
+    const auto activate=[&]() {
+        return device->Activate(__uuidof(IAudioClient),CLSCTX_ALL,nullptr,
+            reinterpret_cast<void**>(m_renderClient.ReleaseAndGetAddressOf()));
+    };
+    if (FAILED(activate())) return false;
+    WAVEFORMATEX* native=nullptr;
+    hr=m_renderClient->GetMixFormat(&native);
+    if (FAILED(hr) || !ValidWaveFormat(native)) { CoTaskMemFree(native); return false; }
+    const auto freeNative=[](WAVEFORMATEX* p) { CoTaskMemFree(p); };
+    std::unique_ptr<WAVEFORMATEX,decltype(freeNative)> nativeOwner(native,freeNative);
+    std::wstring exclusiveFailure;
+    if (m_exclusiveRequested.load() && m_exclusivePermitted.load()) {
+        if (m_failedExclusiveDeviceId!=m_renderDeviceId) m_exclusiveFailure.clear();
+        exclusiveFailure=m_exclusiveFailure;
+        if (exclusiveFailure.empty()) {
+            // Release the mix-format query client before taking exclusive access.
+            m_renderClock.Reset(); m_renderClockFrequency=0;
+            m_renderClient.Reset();
+            if (SetupExclusive(device.Get(),native,exclusiveFailure)) return true;
+            const auto deviceId=m_renderDeviceId;
+            TeardownRender(); // release a partly initialized exclusive stream before shared fallback
+            m_renderDeviceId=deviceId;
+            if (!m_running.load()) return false;
+            if (FAILED(activate())) return false;
         }
-
-        hr = m_renderClient->Initialize(
-            AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-            100 * REFTIMES_PER_MILLISEC, 0, m_renderFormat, nullptr);
-        if (FAILED(hr)) { AudioLog(L"render Initialize failed " + HrString(hr)); return false; }
+        AudioLog(L"Exclusive fallback: "+exclusiveFailure);
     }
-
-    hr = m_renderClient->SetEventHandle(m_renderEvent);
-    if (FAILED(hr)) { AudioLog(L"render SetEventHandle failed " + HrString(hr)); return false; }
-    hr = m_renderClient->GetBufferSize(&m_renderBufferFrames);
-    if (FAILED(hr) || !m_renderBufferFrames || m_renderBufferFrames > m_renderFormat->nSamplesPerSec * 2) return false;
-
-    hr = m_renderClient->GetService(IID_PPV_ARGS(&m_renderService));
+    const double rateRatio=double(m_captureFormat->nSamplesPerSec)/native->nSamplesPerSec;
+    const bool nativeConvertible=AudioConvert::CanMap(PcmDescription(m_captureFormat),PcmDescription(native)) &&
+        rateRatio>=0.125 && rateRatio<=8;
+    LowPeriodResult probe;
+    m_renderPeriodFrames=0;
+    bool lowPeriod=false;
+    if (nativeConvertible) {
+        lowPeriod=TryLowPeriod(device.Get(),native,m_renderEvent,
+            std::max(1,m_renderQueueTargetMs.load()/2),m_renderClient,m_renderPeriodFrames,&probe);
+    } else {
+        probe.hr=AUDCLNT_E_UNSUPPORTED_FORMAT;
+        probe.stage=L"native channel layout / PCM encoding / rate ratio is not supported by converter";
+        // Still report driver capability even when conversion cannot use it.
+        ComPtr<IAudioClient3> query;
+        if (SUCCEEDED(m_renderClient.As(&query))) {
+            UINT32 fundamental=0, maximum=0;
+            query->GetSharedModeEnginePeriod(native,&probe.normal,&fundamental,&probe.minimum,&maximum);
+        }
+    }
+    if (lowPeriod) {
+        m_renderFormat=CloneWaveFormat(native);
+    } else {
+        AudioLog(std::wstring(L"Low-period fallback: ")+probe.stage+L" "+HrString(probe.hr));
+        if (FAILED(activate())) return false;
+        hr=m_renderClient->Initialize(AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY |
+            AUDCLNT_STREAMFLAGS_EVENTCALLBACK,100*REFTIMES_PER_MILLISEC,0,m_captureFormat,nullptr);
+        if (FAILED(hr)) {
+            // Legacy no-conversion retry is safe only for an identical format.
+            if (!SameWaveFormat(m_captureFormat,native) || FAILED(activate())) return false;
+            hr=m_renderClient->Initialize(AUDCLNT_SHAREMODE_SHARED,AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                100*REFTIMES_PER_MILLISEC,0,m_captureFormat,nullptr);
+        }
+        if (FAILED(hr)) { AudioLog(L"render Initialize failed "+HrString(hr)); return false; }
+        m_renderFormat=CloneWaveFormat(m_captureFormat);
+        if (!m_renderFormat) return false;
+        if (FAILED(m_renderClient->SetEventHandle(m_renderEvent))) return false;
+        REFERENCE_TIME period=0;
+        if (SUCCEEDED(m_renderClient->GetDevicePeriod(&period,nullptr)))
+            m_renderPeriodFrames=UINT32((uint64_t(period)*m_renderFormat->nSamplesPerSec+REFTIMES_PER_SEC-1)/REFTIMES_PER_SEC);
+        if (!m_renderPeriodFrames) m_renderPeriodFrames=m_renderFormat->nSamplesPerSec/100;
+    }
+    if (!m_renderFormat) return false;
+    hr=m_renderClient->GetBufferSize(&m_renderBufferFrames);
+    if (FAILED(hr) || !m_renderBufferFrames || m_renderBufferFrames>m_renderFormat->nSamplesPerSec*2) return false;
+    hr=m_renderClient->GetService(IID_PPV_ARGS(&m_renderService));
     if (FAILED(hr)) return false;
-
-    hr = m_renderClient->Start();
-    if (FAILED(hr)) { AudioLog(L"renderClient->Start failed " + HrString(hr)); return false; }
-
-    AudioLog(L"Render format: " + DescribeFormat(m_renderFormat) +
-             L" (endpoint conversion handled by the audio engine)");
+    m_conversionReady=PrepareConversion();
+    // Native format cannot be copied if converter allocation/setup failed.
+    if (lowPeriod && !m_conversionReady) { AudioLog(L"native format converter setup failed"); return false; }
+    m_adaptiveSupported=m_conversionReady;
+    m_periodUs=UINT32(uint64_t(m_renderPeriodFrames)*1000000/m_renderFormat->nSamplesPerSec);
+    std::wstringstream status;
+    status << (lowPeriod ? L"Native shared low-period" : L"Compatibility shared (Windows conversion)")
+           << L" | native min " << (probe.minimum ? std::to_wstring(double(probe.minimum)*1000/native->nSamplesPerSec) : L"unknown")
+           << L" ms, default " << (probe.normal ? std::to_wstring(double(probe.normal)*1000/native->nSamplesPerSec) : L"unknown")
+           << L" ms | actual " << m_periodUs.load()/1000.0 << L" ms"
+           << L" | capture " << DescribeFormat(m_captureFormat) << L" -> stream " << DescribeFormat(m_renderFormat);
+    if (m_exclusiveRequested.load() && !m_exclusivePermitted.load())
+        status << L" | exclusive suspended: window inactive, hidden, minimized or regaining focus";
+    if (!exclusiveFailure.empty()) status << L" | exclusive fallback: " << exclusiveFailure;
+    if (!lowPeriod) status << L" | fallback: " << probe.stage << L" " << HrString(probe.hr);
+    { std::lock_guard<std::mutex> lock(m_endpointInfoMutex); m_endpointInfo=status.str(); }
+    AudioLog(status.str());
+    m_fifoHead=m_fifoBytes=0; m_fifoPrimed=false;
+    ResetDrift();
+    SetupRenderClock();
+    hr=m_renderClient->Start();
+    if (FAILED(hr)) { AudioLog(L"render Start failed "+HrString(hr)); return false; }
     return true;
+}
+
+std::wstring AudioRouter::EndpointInfo() const {
+    std::lock_guard<std::mutex> lock(m_endpointInfoMutex);
+    return m_endpointInfo;
+}
+
+bool AudioRouter::PrepareConversion() {
+    m_inputPcm=PcmDescription(m_captureFormat);
+    m_outputPcm=PcmDescription(m_renderFormat);
+    if (!AudioConvert::CanMap(m_inputPcm,m_outputPcm)) return false;
+    return m_sinc.Initialize(double(m_captureFormat->nSamplesPerSec)/m_renderFormat->nSamplesPerSec);
 }
 
 void AudioRouter::TeardownCapture()
@@ -491,9 +700,18 @@ void AudioRouter::TeardownRender()
 {
     if (m_renderClient) m_renderClient->Stop();
     m_renderService.Reset();
+    m_renderClock.Reset(); m_renderClockFrequency=0;
     m_renderClient.Reset();
     if (m_renderFormat) { CoTaskMemFree(m_renderFormat); m_renderFormat = nullptr; }
     m_renderBufferFrames = 0;
+    m_queueMs = 0;
+    m_periodUs = 0;
+    m_adaptiveSupported = false;
+    m_conversionReady = false;
+    m_exclusiveActive = false;
+    m_queueSnapshot = 0; m_effectiveQueueUs = 0;
+    m_fifoAverageUs = 0; m_fifoMinUs = 0; m_fifoMaxUs = 0;
+    { std::lock_guard<std::mutex> lock(m_endpointInfoMutex); m_endpointInfo=L"Waiting for playback endpoint"; }
     m_renderDeviceId.clear();
 }
 
@@ -527,6 +745,7 @@ bool AudioRouter::EnsureEndpoints()
         TeardownCapture();
         TeardownRender();
     }
+    if (m_retryExclusive.exchange(false)) m_exclusiveFailure.clear();
     if (m_restartRender.exchange(false)) {
         TeardownRender();
     }
@@ -579,6 +798,12 @@ void AudioRouter::HandleStreamError(HRESULT hr, const wchar_t* what, bool captur
     AudioLog(std::wstring(what) + L" failed " + HrString(hr) +
              (fatal ? L"; rebuilding endpoint" : L""));
 
+    if (!captureSide && m_exclusiveActive.load()) {
+        m_exclusiveFailure=std::wstring(what)+L" "+HrString(hr);
+        m_failedExclusiveDeviceId=m_renderDeviceId;
+        m_restartRender=true;
+        return;
+    }
     if (!fatal) return;
     if (captureSide) m_restartCapture = true;
     else             m_restartRender = true;
@@ -611,6 +836,8 @@ void AudioRouter::RouteLoop()
     bool firstAttemptReported = false;
 
     while (m_running) {
+        // Run on the audio worker, even while the UI is in a modal move/size loop.
+        UpdateExclusiveFocus(OwnerIsForeground(),std::chrono::steady_clock::now());
         const bool ready = EnsureEndpoints();
 
         if (!firstAttemptReported) {
@@ -625,25 +852,36 @@ void AudioRouter::RouteLoop()
 
         if (!ready) {
             m_streaming = false;
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+            WaitForSingleObject(m_stopEvent,kRetryIntervalMs);
             continue;
         }
         m_streaming = true;
 
         // Sleep until either endpoint has something to do, or the stop event
-        // fires. Both sides are serviced on every wake, whichever event set
-        // it: capture may have queued more than one packet, and the render
-        // side is topped up from the FIFO regardless of which clock ticked.
+        // fires. Always drain capture. Shared output may be topped up on
+        // either wake; exclusive output writes exactly one full block only
+        // when its own render event is signaled.
         HANDLE waits[3] = { m_stopEvent, m_captureEvent, m_renderEvent };
         const DWORD wake = WaitForMultipleObjects(3, waits, FALSE, kPumpWaitMs);
         if (wake == WAIT_OBJECT_0) break;
         if (wake == WAIT_FAILED) {
             AudioLog(L"WaitForMultipleObjects failed; retrying");
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+            WaitForSingleObject(m_stopEvent,kRetryIntervalMs);
             continue;
         }
+        // Release exclusive access before pumping again after an activation change.
+        UpdateExclusiveFocus(OwnerIsForeground(),std::chrono::steady_clock::now());
+        if (m_restartRender.load()) continue;
         if (!DrainCapture()) continue;
-        if (!FillRender())   continue;
+        const bool renderReady=wake==WAIT_OBJECT_0+2;
+        if (m_exclusiveActive.load()) {
+            if (renderReady) m_lastRenderEvent=std::chrono::steady_clock::now();
+            else if (std::chrono::steady_clock::now()-m_lastRenderEvent>std::chrono::seconds(2)) {
+                HandleStreamError(HRESULT_FROM_WIN32(ERROR_TIMEOUT),L"exclusive render event timeout",false);
+                continue;
+            }
+        }
+        if (!FillRender(renderReady)) continue;
         LogStatsIfDue();
     }
 
@@ -678,6 +916,7 @@ bool AudioRouter::FifoReset(UINT32 bytesPerFrame, UINT32 samplesPerSec)
     m_fifoHead   = 0;
     m_fifoBytes  = 0;
     m_fifoPrimed = false;
+    ResetDrift();
     m_winStart   = std::chrono::steady_clock::now();
     m_winIn = m_winOut = m_winUnderrun = m_winOverrun = m_winSlipDrop = m_winSlipDup = 0;
     m_winFillMin = 0xFFFFFFFFu;
@@ -691,6 +930,8 @@ void AudioRouter::FifoPush(const BYTE* data, UINT32 frames, bool silent)
     size_t bytes = (size_t)frames * m_bytesPerFrame;
     const size_t cap = m_fifo.size();
     if (bytes > cap) {
+        m_overrunFrames += (bytes - cap) / m_bytesPerFrame;
+        m_winOverrun += (bytes - cap) / m_bytesPerFrame;
         if (!silent) data += (bytes - cap);
         bytes  = cap;
     }
@@ -707,8 +948,8 @@ void AudioRouter::FifoPush(const BYTE* data, UINT32 frames, bool silent)
     const size_t tail  = (m_fifoHead + m_fifoBytes) % cap;
     const size_t first = (std::min)(bytes, cap - tail);
     if (silent) {
-        memset(m_fifo.data() + tail, 0, first);
-        if (bytes > first) memset(m_fifo.data(), 0, bytes - first);
+        memset(m_fifo.data() + tail, m_captureFormat && m_captureFormat->wBitsPerSample == 8 ? 128 : 0, first);
+        if (bytes > first) memset(m_fifo.data(), m_captureFormat && m_captureFormat->wBitsPerSample == 8 ? 128 : 0, bytes - first);
     } else {
         memcpy(m_fifo.data() + tail, data, first);
         if (bytes > first) memcpy(m_fifo.data(), data + first, bytes - first);
@@ -747,13 +988,25 @@ bool AudioRouter::DrainCapture()
         BYTE*  data   = nullptr;
         UINT32 frames = 0;
         DWORD  flags  = 0;
-        hr = m_captureService->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+        UINT64 devicePosition=0, qpcPosition=0;
+        hr = m_captureService->GetBuffer(&data, &frames, &flags, &devicePosition, &qpcPosition);
         if (FAILED(hr)) { HandleStreamError(hr, L"capture GetBuffer", true); return false; }
         if (frames > m_captureBufferFrames || (!data && frames && !(flags & AUDCLNT_BUFFERFLAGS_SILENT))) {
             const HRESULT release = m_captureService->ReleaseBuffer(frames);
             HandleStreamError(FAILED(release) ? release : E_INVALIDARG, L"invalid capture packet", true);
             return false;
         }
+        if ((flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) && m_fifoPrimed) {
+            m_fifoHead = m_fifoBytes = 0;
+            m_fifoPrimed = false;
+            ++m_resyncs;
+            ResetDrift();
+        }
+        if (flags & (AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR | AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY))
+            m_captureClockRate.Reset();
+        else if (frames)
+            m_captureClockRate.Sample(devicePosition, qpcPosition, m_samplesPerSec,
+                std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
         FifoPush(data, frames, (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
         m_winIn += frames;
         hr = m_captureService->ReleaseBuffer(frames);
@@ -764,100 +1017,246 @@ bool AudioRouter::DrainCapture()
     return true;
 }
 
-bool AudioRouter::FillRender()
-{
-    if (m_bytesPerFrame == 0 || m_samplesPerSec == 0) return true;
-    UINT32 padding = 0;
-    HRESULT hr = m_renderClient->GetCurrentPadding(&padding);
-    if (FAILED(hr)) { HandleStreamError(hr, L"GetCurrentPadding", false); return false; }
+void AudioRouter::ResetDrift(bool preserveClock) {
+    if (preserveClock) m_drift.Reprime();
+    else {
+        m_drift.Reset(); m_driftPpm=0;
+        m_captureClockRate.Reset(); m_renderClockRate.Reset();
+        m_estimatedPpm=0; m_clockEstimateValid=false;
+        m_recoveryGuard.ClearWindow();
+    }
+    m_slipBudget=0;
+    m_phase=m_conversionReady ? m_sinc.History() : 1.0;
+    m_lastDrift=std::chrono::steady_clock::now();
+    m_occupancyStart=m_occupancyLast=m_lastDrift;
+    m_occupancyIntegral=m_occupancySeconds=0;
+    m_occupancyPrevious=0; m_occupancyMin=UINT32_MAX; m_occupancyMax=0;
+}
 
-    const auto msToFrames = [this](int ms) {
-        return (UINT32)((uint64_t)m_samplesPerSec * (uint64_t)ms / 1000ull);
-    };
-    const UINT32 queueTarget = (std::min)(m_renderBufferFrames, msToFrames(kRenderQueueMs));
-    if (padding >= queueTarget) return true;
-    const UINT32 want = queueTarget - padding;
+void AudioRouter::SetupRenderClock() {
+    m_renderClock.Reset(); m_renderClockFrequency=0;
+    if (FAILED(m_renderClient->GetService(IID_PPV_ARGS(&m_renderClock))) ||
+        !m_renderClock || FAILED(m_renderClock->GetFrequency(&m_renderClockFrequency)) ||
+        !m_renderClockFrequency) {
+        m_renderClock.Reset(); m_renderClockFrequency=0;
+    }
+}
 
-    UINT32 fill = (UINT32)(m_fifoBytes / m_bytesPerFrame);
-    const uint32_t fillMs = (uint32_t)((uint64_t)fill * 1000ull / m_samplesPerSec);
-    m_fillMs = fillMs;
-    const UINT32 target = msToFrames(kFifoTargetMs);
-    const UINT32 band   = msToFrames(kFifoDeadbandMs);
+double AudioRouter::ReadClockEstimate(double now) {
+    if (m_renderClock) {
+        UINT64 position=0, qpc=0;
+        // S_FALSE reports an imprecise measurement; never feed it to the estimator.
+        if (m_renderClock->GetPosition(&position,&qpc)==S_OK)
+            m_renderClockRate.Sample(position,qpc,double(m_renderClockFrequency),now);
+    }
+    const bool valid=m_captureClockRate.Valid(now) && m_renderClockRate.Valid(now);
+    const double estimate=valid ? (m_captureClockRate.Rate()/m_renderClockRate.Rate()-1)*1e6 : 0;
+    m_clockEstimateValid=valid;
+    m_estimatedPpm=int(std::lround(estimate));
+    return valid ? std::clamp(estimate,-2000.0,2000.0) : 0;
+}
 
-    // Priming: play silence until the FIFO holds the target once, so steady
-    // state starts with headroom instead of climbing to it one slip at a time.
-    if (!m_fifoPrimed) {
-        if (fill < target) {
-            BYTE* out = nullptr;
-            hr = m_renderService->GetBuffer(want, &out);
-            if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
-            m_renderService->ReleaseBuffer(want, AUDCLNT_BUFFERFLAGS_SILENT);
-            return true;
+void AudioRouter::ObserveRecovery(double now, double error, double missing, double block) {
+    if (!m_driftEnabled.load()) { m_recoveryGuard.ClearWindow(); return; }
+    if (m_recoveryGuard.Observe(now,error,missing,block)) {
+        ++m_automaticReloads;
+        // EnsureEndpoints rebuilds both clients on the next worker iteration.
+        // No fault latch: the preferred exclusive mode can be opened again.
+        m_restartCapture=true;
+        AudioLog(L"audio recovery threshold exceeded; reloading endpoints (10 s cooldown, FIFO target unchanged)");
+    }
+}
+
+UINT32 AudioRouter::FifoResample(BYTE* out, UINT32 frames, double ratio) {
+    if (!out || !m_conversionReady || !std::isfinite(ratio) || ratio<=0) return 0;
+    const UINT32 fill=UINT32(m_fifoBytes/m_bytesPerFrame);
+    const UINT32 history=m_sinc.History(), taps=m_sinc.Taps();
+    const UINT32 inBytes=m_inputPcm.bits/8, outBytes=m_outputPcm.bits/8;
+    UINT32 written=0;
+    for (;written<frames;++written) {
+        const UINT32 k=UINT32(m_phase);
+        if (k<history || k-history+taps>fill) break;
+        const double phase=(m_phase-k)*AudioConvert::SincKernel::Phases;
+        const unsigned p=std::min(unsigned(phase),AudioConvert::SincKernel::Phases-1);
+        const double fraction=phase-p;
+        const float *a=m_sinc.Phase(p), *b=m_sinc.Phase(p+1);
+        std::array<double,32> input{}, output{};
+        for (unsigned tap=0;tap<taps;++tap) {
+            const double weight=a[tap]+fraction*(b[tap]-a[tap]);
+            const size_t at=(m_fifoHead+size_t(k-history+tap)*m_bytesPerFrame)%m_fifo.size();
+            for (unsigned ch=0;ch<m_inputPcm.channels;++ch)
+                input[ch]+=weight*AudioConvert::Read(m_fifo.data()+at+ch*inBytes,m_inputPcm);
         }
-        m_fifoPrimed = true;
+        AudioConvert::Map(input.data(),m_inputPcm,output.data(),m_outputPcm);
+        for (unsigned ch=0;ch<m_outputPcm.channels;++ch)
+            AudioConvert::Write(out+size_t(written)*m_renderFormat->nBlockAlign+ch*outBytes,m_outputPcm,output[ch]);
+        m_phase+=ratio;
     }
-    m_winFillMin = (std::min)(m_winFillMin, fillMs);
-    m_winFillMax = (std::max)(m_winFillMax, fillMs);
+    // Retain FIR history plus the fractional phase across arbitrary packets.
+    const UINT32 consumed=UINT32(m_phase)-history;
+    FifoSkip(consumed); m_phase-=consumed;
+    return written;
+}
 
-    // Drift control, decided on the fill before this wake consumes anything.
-    // Above the band: drop one frame this wake. At or below its lower edge,
-    // repeat one frame so the next clock deficit has a frame of headroom.
-    // Correction remains active while the endpoint clocks differ; the
-    // deadband limits how often frames are slipped near the target fill.
-    bool dup = false;
-    if (fill > target + band && fill > 1) {
-        FifoSkip(1);
-        fill--;
-        m_winSlipDrop++;
-        m_slipCount++;
-    } else if (fill > 0 && fill + band <= target) {
-        dup = true;
+void AudioRouter::PublishQueue(UINT32 padding) {
+    const UINT32 history=m_conversionReady ? m_sinc.History() : 0;
+    const UINT32 fill=UINT32(m_fifoBytes/m_bytesPerFrame);
+    const UINT32 fifoUs=UINT32(uint64_t(fill>history ? fill-history : 0)*1000000/m_samplesPerSec);
+    const UINT32 queueUs=UINT32(uint64_t(padding)*1000000/m_renderFormat->nSamplesPerSec);
+    m_queueSnapshot=(uint64_t(fifoUs)<<32)|queueUs;
+    m_fillMs=fifoUs/1000; m_queueMs=queueUs/1000;
+    const auto now=std::chrono::steady_clock::now();
+    const double dt=std::chrono::duration<double>(now-m_occupancyLast).count();
+    m_occupancyLast=now;
+    m_occupancyIntegral+=m_occupancyPrevious*dt; m_occupancySeconds+=dt;
+    m_occupancyPrevious=fifoUs;
+    m_occupancyMin=std::min(m_occupancyMin,fifoUs); m_occupancyMax=std::max(m_occupancyMax,fifoUs);
+    if (now-m_occupancyStart>=std::chrono::seconds(1)) {
+        m_fifoAverageUs=m_occupancySeconds>0 ? UINT32(m_occupancyIntegral/m_occupancySeconds) : fifoUs;
+        m_fifoMinUs=m_occupancyMin; m_fifoMaxUs=m_occupancyMax;
+        m_occupancyStart=now; m_occupancyIntegral=m_occupancySeconds=0;
+        m_occupancyMin=UINT32_MAX; m_occupancyMax=0;
     }
+}
 
-    const UINT32 toWrite = (std::min)(want, fill + (dup ? 1u : 0u));
-    if (toWrite == 0) {
-        // Nothing buffered: keep the engine fed with silence so the stream
-        // never stops, and count the gap.
-        BYTE* out = nullptr;
-        hr = m_renderService->GetBuffer(want, &out);
-        if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
-        m_renderService->ReleaseBuffer(want, AUDCLNT_BUFFERFLAGS_SILENT);
-        m_winUnderrun   += want;
-        m_underrunFrames += want;
-        return true;
+bool AudioRouter::FillRender(bool renderReady)
+{
+    if (!m_bytesPerFrame || !m_samplesPerSec || !m_renderFormat) return true;
+    const bool exclusive=m_exclusiveActive.load();
+    // Capture notifications/timeouts must never write an exclusive ping-pong buffer.
+    if (exclusive && !renderReady) return true;
+    UINT32 padding=0;
+    HRESULT hr=S_OK;
+    if (!exclusive) {
+        hr=m_renderClient->GetCurrentPadding(&padding);
+        if (FAILED(hr)) { HandleStreamError(hr,L"GetCurrentPadding",false); return false; }
     }
-    BYTE* out = nullptr;
-    hr = m_renderService->GetBuffer(toWrite, &out);
-    if (FAILED(hr)) { HandleStreamError(hr, L"render GetBuffer", false); return false; }
-    // A repeat must consume one fewer FIFO frame than the render request
-    // so the fill can recover toward the lower band. Single-frame requests
-    // need their one source frame because no earlier output exists to repeat.
-    const UINT32 toRead = (dup && toWrite > 1) ? toWrite - 1 : toWrite;
-    UINT32 written = FifoPop(out, (std::min)(toRead, fill));
-    if (dup && written > 0 && written < toWrite) {
-        memcpy(out + (size_t)written * m_bytesPerFrame,
-               out + (size_t)(written - 1) * m_bytesPerFrame, m_bytesPerFrame);
-        written++;
-        m_winSlipDup++;
-        m_slipCount++;
+    const UINT32 renderRate=m_renderFormat->nSamplesPerSec;
+    const double baseRatio=double(m_samplesPerSec)/renderRate;
+    const auto sourceFrames=[this](int ms) { return UINT32(uint64_t(m_samplesPerSec)*ms/1000); };
+    const auto renderFrames=[renderRate](int ms) { return UINT32(uint64_t(renderRate)*ms/1000); };
+    const UINT32 queue=exclusive ? m_renderBufferFrames : std::min(m_renderBufferFrames,std::max(renderFrames(m_renderQueueTargetMs.load()),
+        m_renderPeriodFrames+renderFrames(1)));
+    m_effectiveQueueUs=UINT32(uint64_t(queue)*1000000/renderRate);
+    if (padding>=queue) { PublishQueue(padding); return true; }
+    const UINT32 want=queue-padding;
+    const auto pumpNow=std::chrono::steady_clock::now();
+    const double nowSeconds=std::chrono::duration<double>(pumpNow.time_since_epoch()).count();
+    const double clockPpm=ReadClockEstimate(nowSeconds);
+    UINT32 fill=UINT32(m_fifoBytes/m_bytesPerFrame);
+    const UINT32 history=m_conversionReady ? m_sinc.History() : 0;
+    const UINT32 lookahead=m_conversionReady ? m_sinc.Taps()-history : 0;
+    // All FIFO/controller math is in SOURCE frames. Padding and requests are
+    // in RENDER frames and must be converted when nominal rates differ.
+    const UINT32 need=UINT32(std::ceil(want*baseRatio*1.002))+lookahead+1;
+    const UINT32 reserve=std::max(sourceFrames(m_fifoTargetMs.load()),lookahead+1);
+    const double target=reserve+queue*baseRatio;
+    const double error=(double(fill)-history+padding*baseRatio-target)/m_samplesPerSec;
+    if (double(fill)+padding*baseRatio>history+target+sourceFrames(std::max(20,m_fifoTargetMs.load()))) {
+        const UINT32 keep=history+reserve+need;
+        if (fill>keep) {
+            const UINT32 drop=fill-keep; FifoSkip(drop); fill-=drop;
+            m_overrunFrames+=drop; m_winOverrun+=drop; ++m_resyncs; ResetDrift(true);
+        }
     }
-    if (written < toWrite) {
-        memset(out + (size_t)written * m_bytesPerFrame, 0,
-               (size_t)(toWrite - written) * m_bytesPerFrame);
-        m_winUnderrun    += toWrite - written;
-        m_underrunFrames += toWrite - written;
+    if (!m_fifoPrimed) {
+        if (fill<history+reserve+need) {
+            if (exclusive) {
+                BYTE* silent=nullptr;
+                hr=m_renderService->GetBuffer(want,&silent);
+                if (SUCCEEDED(hr)) hr=m_renderService->ReleaseBuffer(want,AUDCLNT_BUFFERFLAGS_SILENT);
+                if (FAILED(hr)) { HandleStreamError(hr,L"exclusive priming silence",false); return false; }
+            }
+            PublishQueue(exclusive ? queue : padding); return true;
+        }
+        m_fifoPrimed=true; ResetDrift(true);
     }
-    DWORD releaseFlags = 0;
-    if (m_muted.load()) {
-        releaseFlags = AUDCLNT_BUFFERFLAGS_SILENT;
+    const auto now=std::chrono::steady_clock::now();
+    const double dt=std::chrono::duration<double>(now-m_lastDrift).count(); m_lastDrift=now;
+    // Count only samples available to the converter, not its FIR history or
+    // future taps. Observe the trough across packets before speeding up input.
+    const double headroom=(double(fill)-(m_conversionReady ? m_phase+lookahead : 0)
+        -want*baseRatio)/m_samplesPerSec;
+    const double ppm=m_driftEnabled.load() ? m_drift.Update(
+        (double(fill)-history+padding*baseRatio-target)/m_samplesPerSec,dt,clockPpm,headroom) : 0;
+    m_driftPpm=int(std::lround(ppm));
+    BYTE* out=nullptr;
+    hr=m_renderService->GetBuffer(want,&out);
+    if (FAILED(hr)) { HandleStreamError(hr,L"render GetBuffer",false); return false; }
+    UINT32 written=0;
+    if (m_conversionReady) {
+        // Nominal format conversion stays active even when drift is disabled.
+        written=FifoResample(out,want,baseRatio*(1+ppm/1000000));
     } else {
-        const float vol = m_volume.load();
-        if (vol < 0.999f) ScaleInPlace(out, toWrite, m_renderFormat, vol);
+        // Only the legacy path reaches here: identical capture/render format.
+        m_slipBudget+=want*ppm/1000000;
+        const UINT32 drop=m_slipBudget>=1 ? std::min(UINT32(m_slipBudget),fill) : 0;
+        if (drop) { FifoSkip(drop); fill-=drop; m_slipBudget-=drop; m_slipCount+=drop; m_winSlipDrop+=drop; }
+        const UINT32 dup=m_slipBudget<=-1 && want>1 && fill ? std::min(UINT32(-m_slipBudget),want-1) : 0;
+        written=FifoPop(out,std::min(want-dup,fill));
+        if (written && dup) {
+            for (UINT32 i=0;i<dup;++i) memcpy(out+size_t(written+i)*m_bytesPerFrame,
+                out+size_t(written-1)*m_bytesPerFrame,m_bytesPerFrame);
+            written+=dup; m_slipBudget+=dup; m_slipCount+=dup; m_winSlipDup+=dup;
+        }
     }
-    hr = m_renderService->ReleaseBuffer(toWrite, releaseFlags);
-    if (FAILED(hr)) { HandleStreamError(hr, L"render ReleaseBuffer", false); return false; }
-    m_winOut += toWrite;
+    if (written<want) {
+        memset(out+size_t(written)*m_renderFormat->nBlockAlign,
+            m_renderFormat->wBitsPerSample==8 ? 128 : 0,size_t(want-written)*m_renderFormat->nBlockAlign);
+        m_underrunFrames+=want-written; m_winUnderrun+=want-written;
+        ++m_underrunEvents;
+        m_fifoPrimed=false; ResetDrift(true);
+    }
+    const bool silent=m_muted.load() || written==0;
+    const float volume=m_volume.load();
+    if (!silent && volume<0.999f) ScaleInPlace(out,want,m_renderFormat,volume);
+    hr=m_renderService->ReleaseBuffer(want,silent ? AUDCLNT_BUFFERFLAGS_SILENT : 0);
+    if (FAILED(hr)) { HandleStreamError(hr,L"render ReleaseBuffer",false); return false; }
+    ObserveRecovery(nowSeconds,error,double(want-written)/renderRate,double(want)/renderRate);
+    m_winOut+=want;
+    // Refresh actual padding after release, rather than reporting the target.
+    if (!exclusive) {
+        hr=m_renderClient->GetCurrentPadding(&padding);
+        if (FAILED(hr)) { HandleStreamError(hr,L"post-render padding",false); return false; }
+    }
+    // In exclusive mode this is the submitted block size, NOT measured padding.
+    PublishQueue(exclusive ? want : padding);
+    m_winFillMin=std::min(m_winFillMin,m_fillMs.load()); m_winFillMax=std::max(m_winFillMax,m_fillMs.load());
     return true;
+}
+
+static bool IsAudioWindowForeground(HWND owner, HWND foreground) {
+    if (!owner || !IsWindow(owner) || !IsWindowVisible(owner) || IsIconic(owner)) return false;
+    // Includes hosted WebView controls and owned settings/dialog windows.
+    return foreground && (foreground==owner || IsChild(owner,foreground) ||
+                           GetAncestor(foreground,GA_ROOTOWNER)==owner);
+}
+
+bool AudioRouter::OwnerIsForeground() const {
+    return IsAudioWindowForeground(m_ownerWindow.load(),GetForegroundWindow());
+}
+
+void AudioRouter::UpdateExclusiveFocus(bool foreground, ExclusiveFocusGate::Clock::time_point now) {
+    const bool allowed=m_focusGate.Update(foreground,now);
+    if (m_exclusivePermitted.exchange(allowed)==allowed || !m_exclusiveRequested.load()) return;
+    if (allowed) m_retryExclusive=true; // a new foreground session may retry a previous fallback
+    m_restartRender=true;
+}
+
+void AudioRouter::SetExclusive(bool enabled) {
+    if (m_exclusiveRequested.exchange(enabled)!=enabled) {
+        m_retryExclusive=true;
+        m_restartRender=true;
+    }
+}
+
+void AudioRouter::SetLatency(int fifoMs, int renderMs, bool drift) {
+    fifoMs = std::clamp(fifoMs, 3, 100);
+    renderMs = std::clamp(renderMs, 3, 100);
+    const bool fifoChanged = m_fifoTargetMs.exchange(fifoMs) != fifoMs;
+    const bool queueChanged = m_renderQueueTargetMs.exchange(renderMs) != renderMs;
+    const bool driftChanged = m_driftEnabled.exchange(drift) != drift;
+    if (fifoChanged || queueChanged || driftChanged) m_restartRender = true;
 }
 
 void AudioRouter::LogStatsIfDue()
@@ -869,6 +1268,10 @@ void AudioRouter::LogStatsIfDue()
        << (m_winFillMin == 0xFFFFFFFFu ? 0u : m_winFillMin) << L", max " << m_winFillMax
        << L"), in " << m_winIn << L", out " << m_winOut
        << L", underrun " << m_winUnderrun << L", overrun " << m_winOverrun
+       << L", render " << m_queueMs.load() << L" ms, drift " << m_driftPpm.load()
+       << L" ppm, estimate " << m_estimatedPpm.load() << L" ppm (valid " << m_clockEstimateValid.load()
+       << L"), underrun events " << m_underrunEvents.load() << L", automatic reloads " << m_automaticReloads.load()
+       << L", resync " << m_resyncs.load()
        << L", slip +" << m_winSlipDrop << L"/-" << m_winSlipDup;
     AudioLog(ss.str());
     m_winStart = now;

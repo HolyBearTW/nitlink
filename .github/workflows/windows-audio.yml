@@ -1,0 +1,96 @@
+name: Windows audio lab
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish release v0.1.2 after tests pass
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate localization resources
+        run: node scripts/validate-locales.js
+      - name: Configure x64 Release
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DNITLINK_TEST_WEBVIEW_RUNTIME=OFF
+      - name: Compile application and tests
+        run: cmake --build build --config Release --parallel 4
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure --timeout 90
+      - name: Package portable Windows build
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --prefix staging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item AUDIO_TESTING.txt staging/bin/
+          Copy-Item RELEASE_NOTES.txt staging/bin/
+          if (-not (Test-Path staging/bin/locales/zh-CN.js)) { throw 'Simplified Chinese resource is missing' }
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'VC runtime folder not found' }
+          Copy-Item "$($crt.FullName)/*.dll" staging/bin/
+          "commit=$env:GITHUB_SHA`nupstream=d522bdc`nvariant=CN115 v0.1.2" | Set-Content staging/bin/BUILD.txt
+          Get-ChildItem staging/bin -File -Recurse | ForEach-Object {
+            $relative = [IO.Path]::GetRelativePath((Resolve-Path staging/bin), $_.FullName)
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $relative"
+          } | Set-Content staging/bin/SHA256SUMS.txt
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Compress-Archive -Path staging/bin/* -DestinationPath release-assets/NitLink-CN115-v0.1.2-win64.zip
+          $zip = Get-FileHash release-assets/NitLink-CN115-v0.1.2-win64.zip -Algorithm SHA256
+          "$($zip.Hash.ToLower())  NitLink-CN115-v0.1.2-win64.zip" | Set-Content release-assets/SHA256SUMS.txt
+          Copy-Item AUDIO_TESTING.txt release-assets/
+          # Verify packaged file bytes before any publication.
+          Expand-Archive release-assets/NitLink-CN115-v0.1.2-win64.zip package-check
+          $build = Get-Content package-check/BUILD.txt -Raw
+          if (-not $build.Contains("commit=$env:GITHUB_SHA")) { throw 'Packaged commit mismatch' }
+          Get-Content package-check/SHA256SUMS.txt | ForEach-Object {
+            $hash, $relative = $_ -split '  ', 2
+            if ((Get-FileHash (Join-Path package-check $relative) -Algorithm SHA256).Hash.ToLower() -ne $hash) {
+              throw "Packaged checksum mismatch: $relative"
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NitLink-CN115-v0.1.2-win64
+          path: release-assets/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-test-results
+          path: build/Testing/Temporary/LastTest.log
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: NitLink-CN115-v0.1.2-win64
+          path: release-assets
+      - name: Verify and publish v0.1.2
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $hash, $name = (Get-Content release-assets/SHA256SUMS.txt) -split '  ', 2
+          if ((Get-FileHash (Join-Path release-assets $name) -Algorithm SHA256).Hash.ToLower() -ne $hash) {
+            throw 'Downloaded release artifact checksum mismatch'
+          }
+          # Create a draft with all assets first; an existing tag/release is never overwritten.
+          $existing = git ls-remote --tags origin refs/tags/v0.1.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($existing) { throw 'v0.1.2 tag already exists; inspect before retrying publication' }
+          gh release create v0.1.2 release-assets/NitLink-CN115-v0.1.2-win64.zip release-assets/SHA256SUMS.txt release-assets/AUDIO_TESTING.txt --target "$env:GITHUB_SHA" --title "NitLink CN115 v0.1.2" --notes-file RELEASE_NOTES.txt --draft
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit v0.1.2 --draft=false --prerelease=false --latest=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

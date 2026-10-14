@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NitLink VERSION 1.2.3 LANGUAGES CXX)
+project(NitLink VERSION 0.1.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -168,11 +168,30 @@ add_custom_target(NitLinkRuntimeResources
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/locales/zh-TW.js
         $<TARGET_FILE_DIR:NitLink>/locales/zh-TW.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/locales/zh-CN.js
+        $<TARGET_FILE_DIR:NitLink>/locales/zh-CN.js
 )
 add_dependencies(NitLink NitLinkRuntimeResources)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(NitLinkAudioConversionTests tests/audio_conversion_tests.cpp)
+    target_include_directories(NitLinkAudioConversionTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_native_conversion COMMAND NitLinkAudioConversionTests)
+
+    add_executable(NitLinkAudioClockRecoveryTests tests/audio_clock_recovery_tests.cpp)
+    target_include_directories(NitLinkAudioClockRecoveryTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_clock_recovery COMMAND NitLinkAudioClockRecoveryTests)
+
+    add_executable(NitLinkAudioPacketDriftTests tests/audio_packet_drift_tests.cpp)
+    target_include_directories(NitLinkAudioPacketDriftTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_packet_drift COMMAND NitLinkAudioPacketDriftTests)
+
+    add_executable(NitLinkAudioDriftTests tests/audio_drift_tests.cpp)
+    target_include_directories(NitLinkAudioDriftTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME audio_clock_drift COMMAND NitLinkAudioDriftTests)
+
     add_executable(NitLinkNativeSecurityTests tests/native_security_tests.cpp
         src/app/config.cpp src/capture/frame_buffer.cpp src/overlay/no_signal_image.cpp)
     target_include_directories(NitLinkNativeSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)

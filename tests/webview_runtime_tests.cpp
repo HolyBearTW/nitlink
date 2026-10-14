@@ -155,6 +155,9 @@ int main(int argc, char** argv) {
         std::wcout << L"CSP observations " << Script(view, L"JSON.stringify({injected:window.__injected,violations:window.__violations})") << L'\n';
         Check(Script(view, L"!window.__injected && __violations.some(x=>x.startsWith('script-src')) && __violations.includes('frame-src') && __violations.includes('connect-src') && __violations.includes('worker-src')") == L"true",
               "CSP blocks inline injection, frames, connections and workers");
+        host.PostMessage(LR"({"state":{"locale":"zh-CN","languagePreference":"zh-CN"}})");
+        Check(PumpUntil([&] { return Script(view, L"document.documentElement.lang === 'zh-CN' && document.querySelector('[data-i18n=\"nav.video\"]').textContent === window.NitLinkLocales['zh-CN']['nav.video']") == L"true"; }),
+              "Simplified Chinese resource loads through the native resource allowlist");
         host.PostMessage(LR"({"state":{"locale":"zh-TW","languagePreference":"zh-TW","audioVolume":0.75}})");
         Check(PumpUntil([&] { return Script(view, L"document.documentElement.lang") == L"\"zh-TW\""; }),
               "native state reaches trusted page");

@@ -53,7 +53,7 @@ enum PresentPacing {
 };
 
 struct Config {
-    // UI language preference: system, en-US, or zh-TW. The effective locale
+    // UI language preference: system, en-US, zh-TW, or zh-CN. The effective locale
     // is resolved by Localization; unsupported system locales use en-US.
     std::string  language = "system";
 
@@ -78,6 +78,10 @@ struct Config {
     std::wstring audioOutputDevice = L""; // Empty = system default
     float        audioVolume       = 1.0f;
     bool         audioMuted        = false;
+    int          audioFifoMs       = 12;
+    int          audioRenderMs     = 10;
+    bool         audioDrift        = true;
+    bool         audioExclusive    = false;
 
     // Capture
     std::wstring preferredDevice = L""; // Empty = first available

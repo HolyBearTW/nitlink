@@ -1,0 +1,3 @@
+Experimental audio latency fork based on nitlink-dev/nitlink.
+Upstream base: d522bdc.
+Work in progress: adjustable FIFO and render buffering, adaptive drift correction, Windows test package.
