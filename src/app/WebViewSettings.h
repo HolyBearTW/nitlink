@@ -88,6 +88,15 @@ private:
     std::shared_ptr<int> m_callbackLifetime;
     HWND m_parent  = nullptr;
     bool m_visible = false;
+    void HideBrowserSurfaces();
+    void ShowBrowserSurfaces();
+    void RefreshComposition();
+    struct BrowserSurface {
+        HWND window;
+        DWORD process;
+        DWORD thread;
+    };
+    std::vector<BrowserSurface> m_hiddenSurfaces;
     Dock m_dock = Dock::Full;
     int  m_widthDip = 420;
     bool m_transparent = false;

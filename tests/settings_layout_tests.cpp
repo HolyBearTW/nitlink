@@ -4,6 +4,7 @@
 
 #include <shlwapi.h>
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -20,6 +21,7 @@ using Microsoft::WRL::Callback;
 struct WebViewSettingsTestAccess {
     static ICoreWebView2* View(WebViewSettings& host) { return host.m_webview.get(); }
     static ICoreWebView2Controller* Controller(WebViewSettings& host) { return host.m_controller.get(); }
+    static size_t HiddenSurfaces(const WebViewSettings& host) { return host.m_hiddenSurfaces.size(); }
 };
 
 namespace {
@@ -926,8 +928,84 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
 }
 }
 
+// Exercises the production controller and window lifecycle. This hidden,
+// software-rendered fixture cannot prove the compositor's visible pixels.
+void TestF1Visibility(WebViewSettings& host, HWND window) {
+    auto* controller = WebViewSettingsTestAccess::Controller(host);
+    const auto bounds = [&] { RECT rc{}; Hr(controller->get_Bounds(&rc)); return rc; };
+    const auto collapsed = [&] { const RECT rc = bounds(); return IsRectEmpty(&rc) != FALSE; };
+    Check(!host.IsVisible() && collapsed(), "new hidden controller starts collapsed");
+    WNDCLASSW cls{};
+    cls.lpfnWndProc = DefWindowProcW;
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = L"Intermediate D3D Window";
+    const ATOM registered = RegisterClassW(&cls);
+    Check(registered != 0, "test-only browser surface class registered");
+    HWND surface = CreateWindowExW(0, cls.lpszClassName, L"fixture surface", WS_CHILD | WS_VISIBLE,
+        0, 0, 20, 20, window, nullptr, cls.hInstance, nullptr);
+    HWND unrelated = CreateWindowExW(0, L"STATIC", L"unrelated child", WS_CHILD | WS_VISIBLE,
+        0, 0, 20, 20, window, nullptr, cls.hInstance, nullptr);
+    Check(surface && unrelated, "isolated browser and unrelated child fixtures");
+    for (int cycle = 0; cycle < 6; ++cycle) {
+        const auto dock = cycle % 3 == 0 ? WebViewSettings::Dock::Full :
+            cycle % 3 == 1 ? WebViewSettings::Dock::Left : WebViewSettings::Dock::Right;
+        host.SetDock(dock, 420); host.Show(true);
+        Check(host.IsVisible() && !collapsed(), "F1 reopens with restored bounds in Full/Left/Right");
+        RECT before{}, after{}; GetWindowRect(window, &before);
+        host.Show(false); GetWindowRect(window, &after);
+        BOOL visible = TRUE; Hr(controller->get_IsVisible(&visible));
+        Check(!visible && !host.IsVisible() && collapsed() && EqualRect(&before, &after),
+            "F1 close collapses the controller and composition refresh preserves parent geometry");
+        Check(!(GetWindowLongW(surface, GWL_STYLE) & WS_VISIBLE) &&
+            (GetWindowLongW(unrelated, GWL_STYLE) & WS_VISIBLE), "only browser drawing surfaces are hidden");
+        const size_t retained = WebViewSettingsTestAccess::HiddenSurfaces(host);
+        host.Show(false);
+        Check(retained > 0 && WebViewSettingsTestAccess::HiddenSurfaces(host) >= retained,
+            "repeated close retains asynchronously hidden surfaces for the next show");
+        SetWindowPos(window, nullptr, 0, 0, 800 + cycle * 30, 600 + cycle * 20,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        host.Resize(); host.SetDock(WebViewSettings::Dock::Full, 420);
+        Check(collapsed(), "resize and dock changes cannot expand a hidden controller");
+        host.SetDock(dock, 420); host.Show(true);
+        RECT client{}; GetClientRect(window, &client); const RECT actual = bounds();
+        const LONG strip = (std::min<LONG>)(client.right, MulDiv(420, GetDpiForWindow(window), 96));
+        Check(actual.bottom == client.bottom && actual.top == 0 &&
+            (dock == WebViewSettings::Dock::Full ? EqualRect(&actual, &client) :
+                actual.right - actual.left == strip && (dock == WebViewSettings::Dock::Left ?
+                    actual.left == 0 : actual.right == client.right)),
+            "reopened bounds follow resized parent and selected dock");
+        Check((GetWindowLongW(surface, GWL_STYLE) & WS_VISIBLE) &&
+            WebViewSettingsTestAccess::HiddenSurfaces(host) == 0, "show restores tracked surfaces once");
+    }
+    MONITORINFO monitor{sizeof(monitor)};
+    Check(GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor), "monitor fixture bounds");
+    SetWindowPos(window, nullptr, monitor.rcMonitor.left, monitor.rcMonitor.top,
+        monitor.rcMonitor.right - monitor.rcMonitor.left, monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+    host.Show(false); RECT full{}; GetWindowRect(window, &full);
+    Check(EqualRect(&full, &monitor.rcMonitor) && collapsed(), "fullscreen close stays collapsed without moving the window");
+    DestroyWindow(surface);
+    HWND replacement = CreateWindowExW(0, L"STATIC", L"replacement", WS_CHILD,
+        0, 0, 20, 20, window, nullptr, cls.hInstance, nullptr);
+    host.Show(true);
+    Check(!(GetWindowLongW(replacement, GWL_STYLE) & WS_VISIBLE), "destroyed browser HWND cannot restore an unrelated replacement");
+    DestroyWindow(replacement);
+    surface = CreateWindowExW(0, cls.lpszClassName, L"reparented", WS_CHILD | WS_VISIBLE,
+        0, 0, 20, 20, window, nullptr, cls.hInstance, nullptr);
+    HWND otherParent = CreateWindowExW(0, L"STATIC", L"other parent", WS_POPUP,
+        0, 0, 100, 100, nullptr, nullptr, cls.hInstance, nullptr);
+    host.Show(false); SetParent(surface, otherParent); host.Show(true);
+    Check(!(GetWindowLongW(surface, GWL_STYLE) & WS_VISIBLE), "reparented browser surface is never restored");
+    DestroyWindow(otherParent); DestroyWindow(unrelated);
+    host.Show(false); host.Shutdown();
+    Check(WebViewSettingsTestAccess::HiddenSurfaces(host) == 0 && !host.IsVisible(),
+        "shutdown forgets old-process surface handles before a restart");
+    UnregisterClassW(cls.lpszClassName, cls.hInstance);
+}
+
 int main(int argc, char** argv) {
     const bool captureOnly = argc == 3 && std::string(argv[1]) == "--capture-layout";
+    const bool visibilityOnly = argc == 2 && std::string(argv[1]) == "--visibility-only";
     const auto profile = std::filesystem::temp_directory_path() /
         (L"NitLink-Settings-layout-test-" + std::to_wstring(GetCurrentProcessId()));
     SetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER", profile.c_str());
@@ -956,7 +1034,8 @@ int main(int argc, char** argv) {
             Script(view, L"[document.documentElement.lang, navigator.languages]") << L'\n';
         Script(view, L"window.__fontsReady = false; document.fonts.ready.then(() => __fontsReady = true)");
         Check(PumpUntil([&] { return Script(view, L"window.__fontsReady") == L"true"; }), "bundled fonts loaded");
-        if (captureOnly) CaptureLayouts(host, window, std::filesystem::path(argv[2]));
+        if (visibilityOnly) TestF1Visibility(host, window);
+        else if (captureOnly) CaptureLayouts(host, window, std::filesystem::path(argv[2]));
         else {
             TestLayouts(host, window, messages);
             TestAbout(host, window, messages);

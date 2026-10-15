@@ -334,6 +334,8 @@ if(BUILD_TESTING)
             ${CMAKE_SOURCE_DIR}/third_party/webview2/lib/x64/WebView2LoaderStatic.lib)
         add_dependencies(NitLinkSettingsLayoutTests NitLinkRuntimeResources)
         add_test(NAME webview_settings_layout COMMAND NitLinkSettingsLayoutTests)
+        add_test(NAME webview_f1_visibility COMMAND NitLinkSettingsLayoutTests --visibility-only)
+        set_tests_properties(webview_f1_visibility PROPERTIES TIMEOUT 60)
         set_tests_properties(webview_settings_layout PROPERTIES TIMEOUT 60)
         add_test(NAME webview_missing_assets
             COMMAND ${CMAKE_COMMAND}
