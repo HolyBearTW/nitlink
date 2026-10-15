@@ -19,6 +19,17 @@
     "commit": "240f1b0a91620bdf287eb57863136624a6b87b14",
     "license": "MIT"
   },
+  "selectivePorts": {
+    "repository": "nitlink-dev/nitlink",
+    "tag": "v1.2.4",
+    "commit": "0a093cc8e41fd04ffe13196122dc1a03dc9a0d6a",
+    "features": [
+      {"feature": "adaptive duplicate noise floor", "commit": "f49ecd0123d4756d61cb130f1e6e332205e2feb8"},
+      {"feature": "4K X negotiated-format tone mapping", "commit": "05ad330ff5146146f4c5f8f378859e94f271692a"},
+      {"feature": "F1 WebView composition refresh", "commit": "4267ef61661084e55861e0e5e50a7114ffb1d55c"}
+    ],
+    "note": "Selected fixes, not a wholesale upstream merge. HolyBear audio defaults remain 12/10."
+  },
   "integration": "HolyBearTW",
   "note": "Selected source changes; manual HDMI identity and Discord functionality shared with PR #25 are included once."
 }

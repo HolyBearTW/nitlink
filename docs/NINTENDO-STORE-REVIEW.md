@@ -53,7 +53,7 @@ HTTP 只讀 GET；商品頁面 12 秒／2 MiB，圖片 8 秒／8 MiB；不接受
 
 瀏覽器已實際選取、保存、重新整理還原香港圖，確認名稱與計時不變；Full、Docked、三語可操作。
 香港商店加工圖也經實際 PNG 檔案檢查；這些是瀏覽器／本機 Host 證據。
-原生程式碼與回歸測試來源已修改，但未編譯、未執行 CTest。
+整合後已完成 1.2.5 乾淨 x64 Release 編譯與 48／48 CTest；原生真實商品搜尋／選圖／WIC 的完整手動流程仍待測試版驗收。
 原有四張官方 HTTPS 圖的獨立 Discord IPC 接受證據不適用於新增香港／時之笛圖片。
 新的遠端圖片尚未經 Discord 客戶端顯示確認；加工圖仍只在本機，沒有上傳。
-未修改 Worker v5，未 Commit、Push 或建立 PR。
+未修改 Worker v5；修改分功能提交於本機，未 Push、建立 PR、Tag 或發布。詳見 `UPSTREAM-1.2.4-PORT-AUDIT.md`。

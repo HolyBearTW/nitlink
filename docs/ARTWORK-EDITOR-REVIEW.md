@@ -102,6 +102,8 @@ upload is included.
 
 ## Validation boundary
 
-Browser/JS/Python, public-image validation and isolated IPC checks only.
-No full Windows build, no CTest, no commit, push or PR. Native code and regression
-test sources are implemented but remain uncompiled/unexecuted until UI approval.
+Browser/JS/Python, public-image validation and isolated IPC checks were the initial review evidence.
+The combined 1.2.5 code now compiles in a clean x64 Release build and passes all 48 CTest checks.
+Native live artwork/WIC interaction, physical HDMI and real Discord client rendering still need manual review.
+Functional commits remain local; no push, PR, tag, release or formal artifact signature was created.
+See `UPSTREAM-1.2.4-PORT-AUDIT.md` for source SHAs, baseline evidence and validation boundaries.

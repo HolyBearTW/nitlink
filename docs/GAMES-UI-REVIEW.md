@@ -6,7 +6,7 @@
 
 新增的「官方多尺寸素材／正方形製作」操作、實際檔案與安全發布方案，請見
 [`ARTWORK-EDITOR-REVIEW.md`](ARTWORK-EDITOR-REVIEW.md)。三種模式、拖曳縮放、
-84／64px 預覽及每遊戲儲存已接入正式介面；原生 WIC 路徑仍未編譯。
+84／64px 預覽及每遊戲儲存已接入正式介面；原生 WIC 路徑已納入 1.2.5 Release 編譯；完整原生操作仍待測試版驗收。
 
 預覽入口：<http://127.0.0.1:8765/nitlink-menu.html?preview=games>。
 建議使用 `scripts/open-game-preview.ps1` 啟動可操作的 Chrome／Edge 預覽。
@@ -77,8 +77,9 @@ Discord IPC 實測接受並回傳 `mp:external/...`，證據在 `out/discord-art
 
 輕量檢查包含真實 API／官方圖片下載與解碼、URL 拒絕案例、互動瀏覽器流程、
 延遲圖片回應的取消行為、收藏還原、三語資源完整性及 JavaScript/Python 語法。
-瀏覽器 Host 的 Config 與硬體狀態仍是模擬；Windows 原生程式碼已整合但尚未編譯。
-**沒有執行 Windows Build 或 CTest，也沒有 Commit、Push 或 PR。**
+瀏覽器 Host 的 Config 與硬體狀態仍是模擬；Windows 原生程式碼已通過 1.2.5 Release 編譯及完整 48／48 CTest。
+**本機功能已獨立提交；沒有 Push、PR、Tag 或發布。**
+完整來源、基準對照與硬體待測項目見 [`UPSTREAM-1.2.4-PORT-AUDIT.md`](UPSTREAM-1.2.4-PORT-AUDIT.md)。
 
 ## 主要修改檔案
 
@@ -95,7 +96,7 @@ Discord IPC 實測接受並回傳 `mp:external/...`，證據在 `out/discord-art
 - `scripts/{check-artwork-preview.cjs,check-game-live-preview.cjs,check-game-preview.cjs,probe-discord-activity-name.ps1,validate-package.ps1}`
 - `scripts/{check-game-i18n.cjs,check-game-artwork-failures.cjs}`
 - `scripts/{artwork_processing.py,check-artwork-editor.cjs}`
-- `tests/{game_selection_tests.cpp,settings_layout_tests.cpp,webview_runtime_tests.cpp}`（來源更新，尚未執行）
+- `tests/{game_selection_tests.cpp,settings_layout_tests.cpp,webview_runtime_tests.cpp}`（已隨完整 CTest 執行）
 - `docs/game-search-provider-contract.md`、本文件
 
 完整修改／新增清單：`out/game-preview/modified-files.txt`。
