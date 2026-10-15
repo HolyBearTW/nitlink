@@ -28,7 +28,8 @@ function Get-HolyBearVersion {
     $menuScript = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'assets/menu/menu.js') -Raw
     $overlay = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/overlay/overlay.cpp') -Raw
     $native = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'src/app/holybear_version.h') -Raw
-    if (-not $menu.Contains('id="holy-bear-product-title"') -or
+    if (-not $menu.Contains(('name="nitlink-version" content="{0}"' -f $value)) -or
+        -not $menu.Contains('id="holy-bear-product-title"') -or
         -not $menu.Contains('id="holy-bear-last-check"') -or
         -not $menuScript.Contains("const currentTag = typeof s.current") -or
         -not $overlay.Contains(('L"{0}"' -f $value)) -or

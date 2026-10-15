@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tag_verifier", ROOT / "scripts/verify-holybear-tag.py")
 verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
-TAG = "v1.2.4.1-holybear"
+TAG = "v" + (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
 
 
 class TagSecurityTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-NitLink 1.2.4.1 HolyBear Edition (1.2.4.1-holybear)
+NitLink 1.2.5 HolyBear Edition (1.2.5-holybear)
 Unofficial community integration build based on NitLink 1.2.3.
 Not an official nitlink-dev release.
 

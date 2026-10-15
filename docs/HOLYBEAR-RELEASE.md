@@ -8,7 +8,7 @@ HDMI identity implementation. No upstream PR branch is changed by this flow.
 ## Preparing a version
 
 Update VERSION, CMake's numeric version, app.rc's four-part numeric/string
-versions, src/app/holybear_version.h, the existing HUD version tag, About build text, README-HOLYBEAR.txt
+versions, src/app/holybear_version.h, the existing HUD version tag, the HTML nitlink-version metadata, README-HOLYBEAR.txt
 and `release-notes-<VERSION>.md`. The package script checks their agreement.
 Keep original source attribution in HOLYBEAR-SOURCES.json and docs/cn115.
 

@@ -33,7 +33,11 @@ int main(int argc, char** argv) {
     auto response = [](std::string tag) {
         return HttpReply{200, 0, "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":false,\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/" + tag + "\",\"assets\":[],\"body\":null}"};
     };
-    check(ClassifyReply(response("v1.2.4.1-holybear")).status == UpdateStatus::Current, "equal current revision");
+    std::string currentTag = "v";
+    for (auto c : Version) currentTag.push_back(static_cast<char>(c));
+    check(ClassifyReply(response(currentTag)).status == UpdateStatus::Current, "equal current revision");
+    check(ClassifyReply(response("v1.2.5-holybear"), L"1.2.4.1-holybear").status == UpdateStatus::Available,
+        "published 1.2.4.1 upgrades to 1.2.5");
     check(ClassifyReply(response("v1.2.4.1-holybear"), L"1.2.4-holybear").status == UpdateStatus::Available,
         "published 1.2.4 recognizes new revision tag");
     const auto revision = ClassifyReply(response("v1.2.4.1-holybear"), L"1.2.4-holybear");
@@ -63,7 +67,7 @@ int main(int argc, char** argv) {
         check(ClassifyReply(reply, L"1.2.4-holybear").status == UpdateStatus::Invalid,
             "revision update rejects nonformal, mismatched or incorrectly typed release data");
     }
-    check(ClassifyReply(response("v1.2.5-holybear")).status == UpdateStatus::Available, "newer version");
+    check(ClassifyReply(response("v1.2.6-holybear")).status == UpdateStatus::Available, "newer version");
     check(ClassifyReply(response("v1.2.3-holybear")).status == UpdateStatus::Current, "local newer version");
     check(ClassifyReply(response("v1.2.4.2-holybear"), L"1.2.4.1-holybear").status == UpdateStatus::Available, "revision API release");
     auto invalid = response("v1.2.5-holybear");
@@ -108,7 +112,7 @@ int main(int argc, char** argv) {
     UpdateChecker worker([&](std::stop_token stop) {
         ++requests;
         while (!release && !stop.stop_requested()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        return response("v1.2.5-holybear");
+        return response("v1.2.6-holybear");
     });
     check(worker.Start(), "background start");
     check(!worker.Start(), "repeated manual request ignored while busy");

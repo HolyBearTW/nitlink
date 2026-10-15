@@ -1089,7 +1089,7 @@ void Overlay::DrawNoSignal(uint32_t windowW, uint32_t windowH)
             cardX + ipx + S(88.0f), brandY + S(5.0f),
             cardX + ipx + S(180.0f), brandY + S(22.0f));
         fBrandTag->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        const wchar_t* tag = L"1.2.4.1-holybear";
+        const wchar_t* tag = L"1.2.5-holybear";
         m_d2dContext->DrawText(tag, (UINT32)wcslen(tag),
             fBrandTag.Get(), rTag, bFgMuted.Get());
     }
