@@ -34,6 +34,13 @@ static void ConfigTests(const std::filesystem::path& dir) {
     Check(languageReload.Load(path.string()) && languageReload.language == "zh-CN",
           "Simplified Chinese preference survives restart");
     config = Config{};
+    Write(path, "language = de-DE\n");
+    Check(config.Load(path.string()) && config.language == "de-DE", "load German preference");
+    Check(config.Save(path.string()), "save German preference");
+    Config germanReload;
+    Check(germanReload.Load(path.string()) && germanReload.language == "de-DE",
+          "German preference survives restart");
+    config = Config{};
     Write(path, "audio_volume = nan\npip_opacity = inf\nnis_sharpness = -inf\nwindow_width = 444junk\npip_x = 23junk\n");
     Check(config.Load(path.string()), "load malformed values");
     Check(config.audioVolume == 1 && config.pipOpacity == 0.9f && config.nisSharpness == Config{}.nisSharpness &&

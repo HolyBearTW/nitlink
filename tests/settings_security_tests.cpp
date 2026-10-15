@@ -54,8 +54,10 @@ int main() {
         const auto chinese = localization.Get(key);
         localization.SetPreference("zh-CN");
         const auto simplified = localization.Get(key);
-        Expect(english != key && chinese != key && simplified != key &&
-               english != chinese && english != simplified,
+        localization.SetPreference("de-DE");
+        const auto german = localization.Get(key);
+        Expect(english != key && chinese != key && simplified != key && german != key &&
+               english != chinese && english != simplified && english != german,
                "all native locale tables define each settings/config warning");
     }
     localization.SetPreference("zh-CN");
@@ -65,6 +67,13 @@ int main() {
     Expect(localization.Format(L"toast.p010SelectionFallback",
            {{L"width", L"1920"}, {L"height", L"1080"}, {L"fps", L"60"}}).find(L"1920×1080 @ 60") != std::wstring::npos,
            "Simplified Chinese native placeholders are substituted");
+    localization.SetPreference("de-DE");
+    Expect(localization.PreferenceName() == "de-DE" && localization.LocaleName() == L"de-DE" &&
+           std::wstring(localization.UiFontFamily()) == L"Segoe UI",
+           "German selects native locale and default font");
+    Expect(localization.Format(L"toast.p010SelectionFallback",
+           {{L"width", L"1920"}, {L"height", L"1080"}, {L"fps", L"60"}}).find(L"1920x1080 @ 60") != std::wstring::npos,
+           "German native placeholders are substituted");
     localization.SetPreference("system");
     using namespace NitLink::WebViewPolicy;
     for (auto action : {L"ready", L"cycleNoSignalMode", L"chooseNoSignalImage",
@@ -119,7 +128,7 @@ int main() {
     Expect(device && device->text == L"Elgato \"USB\" \\ 測試 \xD83D\xDE00", "escaped Unicode device name");
     for (auto valid : {
         LR"({"action":"setLanguage","value":"system"})", LR"({"action":"setLanguage","value":"en-US"})",
-        LR"({"action":"setLanguage","value":"zh-CN"})",
+        LR"({"action":"setLanguage","value":"zh-CN"})", LR"({"action":"setLanguage","value":"de-DE"})",
         LR"({"action":"setLanguage","value":"zh-TW"})", LR"({"action":"setNoSignalMode","value":"image"})",
         LR"({"action":"setNoSignalMode","value":"default"})", LR"({"action":"setNoSignalFit","value":"contain"})",
         LR"({"action":"setNoSignalFit","value":"cover"})", LR"({"action":"setNoSignalFit","value":"stretch"})",

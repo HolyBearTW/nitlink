@@ -76,3 +76,5 @@ project authorship or maintainership.
   validation.
 - **Simplified Chinese (zh-CN):** [CN_115](https://github.com/CN115) (`@CN115`) — translation
   and automatic system-language selection.
+- **German (de-DE):** [Noka123](https://github.com/Noka123) (`@Noka123`) — translation
+  and automatic system-language selection.
