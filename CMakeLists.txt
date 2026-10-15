@@ -224,6 +224,10 @@ if(BUILD_TESTING)
     add_test(NAME frame_differ_adaptive_pacing COMMAND NitLinkFrameDifferNoiseTests)
     set_tests_properties(frame_differ_adaptive_pacing PROPERTIES TIMEOUT 90)
 
+    add_executable(NitLinkElgatoTonemapPolicyTests tests/elgato_tonemap_policy_tests.cpp)
+    target_include_directories(NitLinkElgatoTonemapPolicyTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME elgato_4kx_tonemap_policy COMMAND NitLinkElgatoTonemapPolicyTests)
+
     find_program(HOLYBEAR_PWSH NAMES pwsh REQUIRED)
     add_test(NAME holybear_release_notes
         COMMAND ${HOLYBEAR_PWSH} -NoProfile -File ${CMAKE_SOURCE_DIR}/scripts/test-holybear-release-notes.ps1)

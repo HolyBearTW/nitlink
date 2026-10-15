@@ -13,6 +13,7 @@
 #include "display_refresh.h"
 #include "capture/elgato_hdr_control.h"
 #include "capture/elgato_device_identity.h"
+#include "capture/elgato_tonemap_policy.h"
 #include "capture/elgato_hid_4ks.h"
 #include <chrono>
 #include <thread>
@@ -32,6 +33,17 @@ namespace NitLink {
 static void AppLog(const std::wstring& msg) {
     OutputDebugStringW((L"[NitLink/App] " + msg + L"\n").c_str());
 }
+// Pair the 4K X converter before each attempt and again with GetOutputFormat().
+// The property setter keeps its existing device/driver validation; no new XU commands.
+static void Pair4KXTonemap(const std::wstring& name, bool captureIsP010,
+                          const wchar_t* stage) {
+    const auto sent = Apply4KXTonemapForCapture(name, captureIsP010,
+        [](const std::wstring& device, bool enabled) { return SetElgatoTonemap(device, enabled); });
+    if (sent) AppLog(std::wstring(stage) + (*sent
+        ? (captureIsP010 ? L": 4K X tonemap OFF sent for P010" : L": 4K X tonemap ON sent for SDR")
+        : L": 4K X tonemap command unsupported or failed; hardware state unconfirmed"));
+}
+
 static std::wstring GameTitleWide(std::string_view text) {
     if (text.empty() || text.size() > 1024) return {};
     const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
@@ -546,6 +558,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     std::wstring chosenLower = chosen.name;
     std::transform(chosenLower.begin(), chosenLower.end(), chosenLower.begin(), ::towlower);
     m_is4KS = isElgato && chosenLower.find(L"4k s") != std::wstring::npos;
+    m_is4KX = IsElgato4KX(chosen.name);
     m_isGC553Pro = GetCaptureDevicePolicy(chosen.name).family ==
                    CaptureDeviceFamily::AverMediaGC553Pro;
     if (m_isGC553Pro) {
@@ -824,6 +837,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             ? L"Initialize: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Initialize: 4K S HID tonemap ON sent for SDR/NV12");
     }
+    Pair4KXTonemap(chosen.name, useP010, L"Initialize before Open");
 
     // F1 Source picker manual override. Applied to the capture device
     // before Open so the negotiator inside CaptureDevice tries the
@@ -884,6 +898,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
                 AppLog(L"Initialize: 4K S HID tonemap ON sent for SDR retry");
             }
+            Pair4KXTonemap(chosen.name, false, L"Initialize SDR retry");
             if (!m_captureDevice->Open(chosen)) {
                 AppLog(L"Initialize: CaptureDevice::Open FAILED");
                 return false;
@@ -921,7 +936,7 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // never the HID/processing path. The XU read needs a LIVE signal, so it
     // does not run at init: the device is flagged by name and Run() fires the
     // read on each no-signal to signal (re)lock edge.
-    m_is4KX = isElgato && (chosen.name.find(L"4K X") != std::wstring::npos);
+    // 4K X identity was established before the first tonemap/Open attempt above.
 
     // Log every native format this device exposes. Pure diagnostic: does
     // NOT change the running pipeline. Useful when triaging: confirms
@@ -990,6 +1005,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
         }
     }
+
+    // Actual negotiated bytes, rather than the HDR preference, are authoritative.
+    Pair4KXTonemap(chosen.name, IsEqualGUID(format.subtype, MFVideoFormat_P010),
+                    L"Initialize negotiated format");
 
     // Publish initial confirmed source metadata, including an already-HDR
     // 0x65 response. No later source transition or output toggle is required;
@@ -3967,6 +3986,7 @@ bool Application::ReconcileCaptureFormat(bool force)
             ? L"Reconcile: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Reconcile: 4K S HID tonemap ON sent for SDR/NV12");
     }
+    Pair4KXTonemap(deviceToOpen.name, wantP010, L"Reconcile before Open");
 
     // F1 Source picker manual override (same lifecycle as Initialize:
     // applied before Open, fallback handled inside CaptureDevice). This
@@ -4047,6 +4067,7 @@ bool Application::ReconcileCaptureFormat(bool force)
         if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
             AppLog(L"Reconcile: 4K S HID tonemap ON sent for SDR retry");
         }
+        Pair4KXTonemap(deviceToOpen.name, false, L"Reconcile SDR retry");
         opened = m_captureDevice->Open(deviceToOpen);
         if (opened) {
             AppLog(L"Reconcile: rolled back hdrEnabled, P010 unavailable for this source");
@@ -4118,6 +4139,10 @@ bool Application::ReconcileCaptureFormat(bool force)
             }
         }
     }
+
+    // Actual negotiated bytes, rather than the HDR preference, are authoritative.
+    Pair4KXTonemap(deviceToOpen.name, IsEqualGUID(format.subtype, MFVideoFormat_P010),
+                    L"Reconcile negotiated format");
 
     // Publish source EOTF refreshed by the force-reopen probe. Capture subtype
     // and renderer output preference do not change the source range label.
@@ -4769,7 +4794,7 @@ bool Application::SwitchCaptureDevice(const std::wstring& deviceName)
     std::wstring nameLower = newDevice.name;
     std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::towlower);
     m_is4KS = IsElgatoDevice(newDevice.name) && nameLower.find(L"4k s") != std::wstring::npos;
-    m_is4KX = IsElgatoDevice(newDevice.name) && nameLower.find(L"4k x") != std::wstring::npos;
+    m_is4KX = IsElgato4KX(newDevice.name);
     m_isGC553Pro = GetCaptureDevicePolicy(newDevice.name).family ==
                    CaptureDeviceFamily::AverMediaGC553Pro;
     if (m_isGC553Pro) {
