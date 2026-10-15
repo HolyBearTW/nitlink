@@ -239,9 +239,9 @@
     .about-source-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
     .about-contributors { color: var(--ink2); font-size: 12px; line-height: 1.55; }
     .about-contributor { margin-top: 4px; }
-    .about-contributor a { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; color: var(--accent-text); font-weight: 500; text-decoration: none; transition: color .12s ease; }
+    .about-contributor a { display: inline; color: var(--accent-text); font-weight: 500; text-decoration: none; transition: color .12s ease; }
     .about-contributor-name { text-decoration: underline; }
-    .about-contributor-logo { flex: none; width: 13px; height: 13px; fill: var(--ink2); transition: fill .12s ease; }
+    .about-contributor-logo { display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px; fill: var(--ink2); transition: fill .12s ease; }
     .about-contributor a:hover { color: var(--accent); }
     .about-contributor a:hover .about-contributor-logo, .about-contributor a:focus-visible .about-contributor-logo { fill: var(--accent-text); }
 
@@ -452,6 +452,8 @@
     .game-art[data-image-state="failed"]::before { content: '!'; font-size: 22px; }
     @keyframes game-shimmer { to { background: #303b49; } }
     .game-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .game-action-pair { display: inline-flex; gap: 8px; min-width: 0; max-width: 100%; }
+    .game-action-pair .game-button { min-width: 0; }
     .game-button { padding: 7px 10px; border: 1px solid var(--hair2); border-radius: 5px; background: #292929; color: var(--ink2); font: 12px var(--sans); cursor: pointer; }
     .game-button:hover, .game-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
     .game-button.primary { background: var(--accent); color: #132235; border-color: var(--accent); }
@@ -710,8 +712,7 @@
                 <div class="game-panel-header"><h2 data-i18n="game.current"></h2><span class="game-eyebrow" id="game-cover-mode"></span></div>
                 <div class="game-panel-body">
                   <div class="game-current"><div class="game-art" id="game-current-art"></div><div><span class="game-eyebrow" data-i18n="game.localArtwork"></span><h3 class="game-current-title" id="game-current-title"></h3><p class="game-note" id="game-current-source"></p><p class="game-note" id="game-current-discord"></p><span id="game-current-artwork-tag" hidden></span></div></div>
-                  <div class="game-actions"><button type="button" class="game-button" id="game-current-favorite" data-i18n="game.addFavorite"></button><button type="button" class="game-button" id="game-current-rename" data-i18n="game.rename"></button><button type="button" class="game-button" id="game-clear" data-i18n="game.clear"></button><button type="button" class="game-button" id="game-auto" data-i18n="game.auto"></button><button type="button" class="game-button" id="game-save-quality" data-i18n="game.saveQuality"></button></div>
-                  <div class="game-actions"><button type="button" class="game-button" id="game-adjust-cover" data-i18n="game.adjustArtwork"></button></div>
+                  <div class="game-actions"><button type="button" class="game-button" id="game-current-favorite" data-i18n="game.addFavorite"></button><button type="button" class="game-button" id="game-current-rename" data-i18n="game.rename"></button><button type="button" class="game-button" id="game-clear" data-i18n="game.clear"></button><button type="button" class="game-button" id="game-auto" data-i18n="game.auto"></button><span class="game-action-pair"><button type="button" class="game-button" id="game-save-quality" data-i18n="game.saveQuality"></button><button type="button" class="game-button" id="game-adjust-cover" data-i18n="game.adjustArtwork"></button></span></div>
                   <p class="game-status" id="game-notice" role="status" hidden></p>
                 </div>
               </article>
@@ -719,7 +720,7 @@
                 <div class="game-panel-header"><h2 data-i18n="game.searchTitle"></h2></div>
                 <div class="game-panel-body">
                   <label class="game-note" for="game-query" data-i18n="game.searchLabel"></label>
-                  <div class="game-search-row"><input type="search" id="game-query" maxlength="256" autocomplete="off" data-i18n-placeholder="game.searchPlaceholder"><button type="button" class="game-button primary" id="game-search" data-i18n="game.search"></button></div>
+                  <div class="game-search-row"><input type="search" id="game-query" maxlength="256" autocomplete="off" data-i18n-placeholder="game.searchPlaceholder"><button type="button" class="game-button" id="game-search" data-i18n="game.search"></button></div>
                   <p class="game-status" id="game-search-status" role="status" aria-live="polite"></p>
                   <p class="game-query-trace" id="game-query-trace" hidden></p>
                   <div class="game-results" id="game-results" aria-label="Search results"></div>
