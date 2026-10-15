@@ -54,6 +54,7 @@
 - 4K X 辨識移到第一次 Open 之前，採不分大小寫、同時具備 Elgato 與 4K X 名稱的既有安全條件。
 - 重用原有 `SetElgatoTonemap`，沒有新增 XU 命令或改動 GC553Pro mailbox／4K S HID。
 - 命令不支援／失敗會記錄硬體狀態未確認，並不把函式呼叫當成硬體成功。
+- 上游固定來源說明 4K X 的 4K P010 為 30 FPS，4K120 是 8-bit；這是上游格式限制說明，並非本次實機測量。
 - policy 測試以注入 sender 驗證首次嘗試、成功但降級、失敗重試、重新開啟與其他裝置隔離。
 
 ### F1 設定殘影
@@ -83,6 +84,19 @@
 | 官方來源快照 | `0a093cc8e41fd04ffe13196122dc1a03dc9a0d6a` | 僅選擇性移植，不整體 merge |
 
 `HOLYBEAR-SOURCES.json` 保留原始整合基底來源，另以 `selectivePorts` 紀錄本次固定來源與三項修正。
+
+本地按功能提交（均未 Push）：
+
+| 提交 | 功能 |
+| --- | --- |
+| `c364c3d` | 原始 Games／Discord／收藏／官方素材 checkpoint |
+| `ee7a15c` | fix(games): compile native artwork bridge on Windows |
+| `4b32ad4` | fix(capture): port adaptive duplicate noise floor from upstream 1.2.4 |
+| `427d51b` | fix(capture): pair 4K X tone mapping with negotiated output |
+| `4de7e02` | fix(settings): clear hidden WebView surfaces after closing F1 |
+| `932257a` | style(games): keep cover actions together and match search buttons |
+| `80c70aa` | chore(version): prepare 1.2.5 HolyBear test build |
+| `bcc8d12` | docs(integration): record upstream 1.2.4 audit and test boundaries |
 
 ## E. 修改檔案及摘要
 
@@ -120,12 +134,28 @@
 | CN_115 音訊 | conversion／drift／packet feedback／clock recovery／media policy 自動化通過，預設仍為 12／10 |
 | 三語與 UI | 420 個 menu、86 個 native 字串完整；173 個 game key 檢查；按鈕／About 版本 Full／Docked × 三語通過 |
 | 簽章腳本非發布檢查 | 公開金鑰 preflight 3／3、PowerShell 語法、CTest 拋棄式 Tag／發布拒絕檢查通過 |
-| Portable／Setup 非發布封裝 | 程式碼提交後執行，結果待補；不產生正式簽章、不發布 |
+| Portable／Setup 非發布封裝 | 通過原有嚴格白名單、Microsoft CRT 簽章、SHA256、ZIP 全新解壓、來源／EXE 版本及 NSIS Setup payload 比對；未執行安裝／解除安裝 |
 
 原始證據位置：`Documents/NitLink-Validation-20261016/official-v1.2.4-port/`。
 包含 `clean-release-build.log`、`full-ctest.xml`、`full-ctest.log`、`focused-ctest.xml`、
-`baseline-games-build.log`、`baseline-layout-ctest.xml`、`about-layout-fixed.xml`、`v125-ui-checks.json`。
+`baseline-games-build.log`、`baseline-layout-ctest.xml`、`about-layout-fixed.xml`、`v125-ui-checks.json`、
+`package-validation.log`、`verified-test-artifacts.json`、`preservation-verification.json`。
 完整軟體測試通過不代表硬體／客戶端驗證完成。
+
+測試包位於同一驗證資料夾的 `review-package/`：
+
+- Portable：`NitLink-1.2.5-HolyBear-Win64.zip`（1,374,609 bytes）。
+- Setup：`NitLink-1.2.5-HolyBear-Setup-x64.exe`（1,224,360 bytes）。
+- 已解壓可直接測試的程式：`review-package/install/bin/NitLink.exe`，資源位於同一資料夾。
+- 套件來源提交為 `bcc8d120da62e7bd47b63087509aeda05f632a93`；之後僅補本報告的封裝結果。
+- `BUILD.txt` 明確記錄 `tag_source_verified=false`，標籤只是預定名稱；未建立 1.2.5 Tag，未 Push／發布。
+- 原本 226 個開發檔案全部存在，212 個位元組未變，14 個僅有上述明列的後續修正；原始備份仍保留。
+
+| 檔案 | SHA256 |
+| --- | --- |
+| `NitLink-1.2.5-HolyBear-Win64.zip` | `a251d5da3292b6512e06a3dde36ef824745b19c905a1f8d917720cf50530e47c` |
+| `NitLink-1.2.5-HolyBear-Setup-x64.exe` | `d4b82d7195d95761b6b32425043b00c962aba6d195191c7356416bfcfa379f84` |
+
 
 使用 Visual Studio 2022 x64 工具鏈，於同一個 `cmd.exe` 初始化 `VsDevCmd.bat -arch=x64 -host_arch=x64`，
 Ninja／Release／C++20，開啟 `BUILD_TESTING` 與原生 WebView runtime 測試；新建獨立輸出目錄並集中清除重建。
