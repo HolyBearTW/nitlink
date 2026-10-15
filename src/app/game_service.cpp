@@ -4,6 +4,7 @@
 #include <winhttp.h>
 #include <roapi.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <shlwapi.h>
@@ -653,7 +654,7 @@ void GameService::PinImage(std::wstring uri,std::wstring source) {
     m_pinnedImage = m_images.contains(uri) ? std::move(uri) : std::wstring{};
     m_pinnedSourceImage=m_images.contains(source)?std::move(source):std::wstring{};
 }
-std::wstring GameService::LoadImage(std::wstring_view url, const Cancelled& cancelled) {
+std::wstring GameService::LoadArtworkImage(std::wstring_view url, const Cancelled& cancelled) {
     if (cancelled() || !IsCoverUrl(url)) return {};
     {
         std::lock_guard lock(m_mutex);
@@ -725,7 +726,7 @@ void GameService::Run(std::stop_token stop) {
                 if(request.library.size()!=1){Publish(base,cancelled);continue;}
                 auto game=request.library.front();
                 auto sourceUri=LoadFinalImage(game.sourceImageKey,cancelled);
-                if(sourceUri.empty())sourceUri=LoadImage(game.coverThumb.empty()?game.coverUrl:game.coverThumb,cancelled);
+                if(sourceUri.empty())sourceUri=LoadArtworkImage(game.coverThumb.empty()?game.coverUrl:game.coverThumb,cancelled);
                 const auto source=FindImage(sourceUri);
                 auto rendered=source?RenderSquareArtwork(*source,request.artworkMode,request.cropX,request.cropY,request.artworkZoom):nullptr;
                 if(rendered&&!cancelled()){
@@ -748,7 +749,7 @@ void GameService::Run(std::stop_token stop) {
                     if(game.coverUrl.empty())continue;
                     result.imageUri=LoadFinalImage(game.finalImageKey,cancelled);
                     result.sourceImageUri=LoadFinalImage(game.sourceImageKey,cancelled);
-                    if(result.imageUri.empty()&&game.finalImageKey.empty())result.imageUri=LoadImage(game.coverThumb.empty()?game.coverUrl:game.coverThumb,cancelled);
+                    if(result.imageUri.empty()&&game.finalImageKey.empty())result.imageUri=LoadArtworkImage(game.coverThumb.empty()?game.coverUrl:game.coverThumb,cancelled);
                     if(result.sourceImageUri.empty()&&game.artworkMode==L"original")result.sourceImageUri=result.imageUri;
                     result.imageStatus=result.imageUri.empty()?L"failed":L"ok";Publish(std::move(result),cancelled);
                 }continue;
@@ -756,7 +757,7 @@ void GameService::Run(std::stop_token stop) {
             if (request.operation == Operation::CurrentImage) {
                 base.coverId = request.coverId;
                 base.imageUri=LoadFinalImage(request.finalImageKey,cancelled);base.sourceImageUri=LoadFinalImage(request.sourceImageKey,cancelled);
-                if(base.imageUri.empty()&&request.finalImageKey.empty())base.imageUri = LoadImage(request.imageUrl, cancelled);
+                if(base.imageUri.empty()&&request.finalImageKey.empty())base.imageUri = LoadArtworkImage(request.imageUrl, cancelled);
                 if(base.sourceImageUri.empty())base.sourceImageUri=base.imageUri;
                 base.imageStatus = base.imageUri.empty() ? L"failed" : L"ok";
                 Publish(base, cancelled); continue;
@@ -820,7 +821,7 @@ void GameService::Run(std::stop_token stop) {
                     const auto tryCandidates=[&](const std::vector<Cover>& candidates){
                         for(size_t i=0;i<std::min<size_t>(3,candidates.size())&&!cancelled();++i){
                             const auto& cover=candidates[i];
-                            image.imageUri=LoadImage(cover.thumb.empty()?cover.url:cover.thumb,cancelled);
+                            image.imageUri=LoadArtworkImage(cover.thumb.empty()?cover.url:cover.thumb,cancelled);
                             if(!image.imageUri.empty()){image.reply.covers={cover};return;}
                             failed=true;
                         }
@@ -843,7 +844,7 @@ void GameService::Run(std::stop_token stop) {
                     auto image = base; image.reply = {}; image.operation = Operation::CurrentImage;
                     image.coverId = request.coverId;
                     image.imageUri=LoadFinalImage(request.finalImageKey,cancelled);image.sourceImageUri=LoadFinalImage(request.sourceImageKey,cancelled);
-                    if(image.imageUri.empty()&&request.finalImageKey.empty())image.imageUri = LoadImage(request.imageUrl, cancelled);
+                    if(image.imageUri.empty()&&request.finalImageKey.empty())image.imageUri = LoadArtworkImage(request.imageUrl, cancelled);
                     if(image.sourceImageUri.empty()&&request.finalImageKey.empty())image.sourceImageUri=image.imageUri;
                     image.imageStatus = image.imageUri.empty() ? L"failed" : L"ok";
                     Publish(std::move(image), cancelled);
@@ -853,7 +854,7 @@ void GameService::Run(std::stop_token stop) {
                 for (const auto& cover : candidates) {
                     if (cancelled()) break;
                     auto image = base; image.reply = {}; image.reply.page=request.page;image.operation = Operation::Image; image.coverId = cover.id;
-                    if (Clock::now() < imageDeadline) image.imageUri = LoadImage(cover.thumb, cancelled);
+                    if (Clock::now() < imageDeadline) image.imageUri = LoadArtworkImage(cover.thumb, cancelled);
                     image.imageStatus = image.imageUri.empty() ? L"failed" : L"ok";
                     Publish(std::move(image), cancelled);
                 }

@@ -5,6 +5,7 @@
 #include "app/game_identity.h"
 #include <roapi.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <debugapi.h>
 #include <sstream>
 #include <vector>

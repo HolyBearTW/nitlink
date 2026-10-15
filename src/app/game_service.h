@@ -94,7 +94,7 @@ public:
 private:
     void Run(std::stop_token stop);
     void Publish(Result result, const Cancelled&);
-    std::wstring LoadImage(std::wstring_view url, const Cancelled&);
+    std::wstring LoadArtworkImage(std::wstring_view url, const Cancelled&);
     std::wstring LoadFinalImage(std::wstring_view key,const Cancelled&);
     std::wstring StoreImage(std::shared_ptr<Image> image,std::wstring_view identity);
     std::unique_ptr<Provider> m_provider;
