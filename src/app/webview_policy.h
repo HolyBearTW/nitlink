@@ -46,7 +46,8 @@ inline bool CanOpenExternal(std::wstring_view current, std::wstring_view target,
     return userInitiated && IsTrustedDocument(current) &&
         (target == L"https://tally.so/r/EkZjNr" ||
          target == L"https://ko-fi.com/klosed89" ||
-         target == L"https://github.com/HolyBearTW");
+         target == L"https://github.com/HolyBearTW" ||
+         target == L"https://store.steampowered.com/app/5346980");
 }
 inline bool IsLocalScreenshotPath(std::wstring_view path) {
     if (path.size() < 8 || path.size() > 32767 || path[1] != L':' || path[2] != L'\\' ||

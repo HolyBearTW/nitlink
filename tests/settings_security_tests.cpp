@@ -258,14 +258,16 @@ int main() {
          L"https://nitlink.invalid/locales/../../nitlink.json", L"https://fonts.googleapis.com/",
          L"https://nitlink.invalid/assets/menu/menu.js?x", L"file:///C:/secret.txt"})
         Expect(!FindResource(bad), "unlisted resource");
-    for (auto target : {L"https://tally.so/r/EkZjNr", L"https://ko-fi.com/klosed89", L"https://github.com/HolyBearTW"}) {
+    for (auto target : {L"https://tally.so/r/EkZjNr", L"https://ko-fi.com/klosed89", L"https://github.com/HolyBearTW",
+         L"https://store.steampowered.com/app/5346980"}) {
         Expect(CanOpenExternal(MenuUri, target, true), "user activated menu link");
         Expect(!CanOpenExternal(MenuUri, target, false), "script popup");
         Expect(!CanOpenExternal(L"about:blank", target, true), "link from untrusted document");
     }
     for (auto target : {L"file:///C:/run.exe", L"ms-settings:display", L"javascript:alert(1)",
          L"http://ko-fi.com/klosed89", L"https://ko-fi.com/klosed89?redirect=elsewhere",
-         L"https://ko-fi.com@other.invalid/klosed89", L"https://other.invalid/"})
+         L"https://ko-fi.com@other.invalid/klosed89", L"https://other.invalid/",
+         L"http://store.steampowered.com/app/5346980", L"https://store.steampowered.com/app/5346980?x"})
         Expect(!CanOpenExternal(MenuUri, target, true), "unlisted shell target");
     Expect(IsLocalScreenshotPath(L"C:\\Users\\測試\\Pictures\\NitLink\\nitlink_1.png"), "local screenshot");
     for (auto path : {L"", L"\\\\server\\share\\file.png", L"\\\\?\\C:\\file.png", L"C:file.png",
