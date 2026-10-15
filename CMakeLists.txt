@@ -71,6 +71,7 @@ set(NITLINK_SOURCES
     src/capture/frame_buffer.h
     src/capture/frame_differ.cpp
     src/capture/frame_differ.h
+    src/capture/noise_floor.h
     src/capture/hdr_source_poller.cpp
     src/capture/hdr_source_poller.h
     src/capture/placeholder_detector.cpp
@@ -213,6 +214,16 @@ add_dependencies(NitLink NitLinkRuntimeResources)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(NitLinkNoiseFloorTests tests/noise_floor_tests.cpp)
+    target_include_directories(NitLinkNoiseFloorTests PRIVATE ${CMAKE_SOURCE_DIR}/src/capture)
+    add_test(NAME noise_floor COMMAND NitLinkNoiseFloorTests)
+
+    add_executable(NitLinkFrameDifferNoiseTests tests/frame_differ_noise_tests.cpp src/capture/frame_differ.cpp)
+    target_include_directories(NitLinkFrameDifferNoiseTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkFrameDifferNoiseTests PRIVATE d3d11 d3dcompiler)
+    add_test(NAME frame_differ_adaptive_pacing COMMAND NitLinkFrameDifferNoiseTests)
+    set_tests_properties(frame_differ_adaptive_pacing PROPERTIES TIMEOUT 90)
+
     find_program(HOLYBEAR_PWSH NAMES pwsh REQUIRED)
     add_test(NAME holybear_release_notes
         COMMAND ${HOLYBEAR_PWSH} -NoProfile -File ${CMAKE_SOURCE_DIR}/scripts/test-holybear-release-notes.ps1)

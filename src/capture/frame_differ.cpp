@@ -4,6 +4,8 @@
 #include <debugapi.h>
 #include <sstream>
 #include <string>
+#include <algorithm>
+#include <cmath>
 
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -302,6 +304,8 @@ void FrameDiffer::Reset()
     // readbacks eligible for the new stream's classification.
     m_stagingWrite = 0;
     m_stagingWritten = 0;
+    m_noiseFloor.Reset();
+    m_loggedFloor = -1.0f;
     // Per-stream state only; GPU resources stay alive. The next Process()
     // call will repopulate m_prevTex via the copy at the end of the
     // dispatch, and rebuild the ring buffer from the first kSmoothWindow
@@ -408,8 +412,19 @@ void FrameDiffer::Process(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* in
             //
             // Upper threshold = m_threshold (the existing tuning value).
             // Lower threshold = m_threshold * 0.4 (well below typical noise).
-            const float upper = m_threshold;
-            const float lower = m_threshold * 0.4f;
+            // Cards that do not repeat a held frame pixel-exactly (measured: Elgato 4K Pro at 2560x1440, a UGREEN
+            // 1080p60 card) put their repeats just above the tuned threshold, so every repeat of a 30 fps game
+            // would count as a picture change. The estimator learns that repeat band and raises both bounds
+            // above it; with exact repeats it never engages and the tuned values apply unchanged.
+            m_noiseFloor.Observe(m_lastDiff);
+            const auto bounds = m_noiseFloor.Compute(m_threshold, m_threshold * 0.4f);
+            const float upper = bounds.upper;
+            const float lower = bounds.lower;
+            if (bounds.adaptive && std::fabs(m_noiseFloor.Floor() - m_loggedFloor) > 0.2f * (std::max)(m_loggedFloor, 1e-6f)) {
+                m_loggedFloor = m_noiseFloor.Floor();
+                FDLog(L"noise floor " + std::to_wstring(m_loggedFloor) + L": duplicate bounds lower " +
+                      std::to_wstring(lower) + L" upper " + std::to_wstring(upper));
+            }
             bool rawNew;
             if (m_lastDiff >= upper) {
                 rawNew = true;

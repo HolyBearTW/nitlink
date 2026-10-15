@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <cstdint>
+#include "noise_floor.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -80,6 +81,9 @@ public:
 
     void  SetThreshold(float t) { m_threshold = t; }
     float GetThreshold() const  { return m_threshold; }
+    // Adaptive duplicate floor learned from the capture's own repeat band (see noise_floor.h).
+    bool  NoiseFloorValid() const { return m_noiseFloor.Valid(); }
+    float NoiseFloor() const      { return m_noiseFloor.Floor(); }
 
     void  SetTileThreshold(float t) { m_tileThreshold = t; }
     float GetTileThreshold() const  { return m_tileThreshold; }
@@ -163,6 +167,8 @@ private:
     // 0.0005 catches subtle idle motion while still rejecting the static-noise
     // floor.
     float  m_threshold = 0.0005f;
+    NoiseFloorEstimator m_noiseFloor;   // raises both hysteresis bounds above a measured noisy repeat band
+    float  m_loggedFloor = -1.0f;        // last floor written to the log
 
     // Rescue-OR threshold for the max-tile metric. A frame whose global mean
     // (m_lastDiff) falls below m_threshold but whose strongest tile exceeds
