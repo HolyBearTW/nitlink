@@ -29,6 +29,11 @@ set(NITLINK_SOURCES
     src/app/localization.h
     src/app/game_database.cpp
     src/app/game_database.h
+    src/app/game_identity.h
+    src/app/game_service.h
+    src/app/game_service.cpp
+    src/app/artwork_renderer.cpp
+    src/app/nintendo_tw_artwork.cpp
     src/app/source_cadence.h
     src/app/frame_rate_stats.h
     src/app/present_cap_policy.h
@@ -127,6 +132,7 @@ target_link_libraries(NitLink PRIVATE
     dwmapi
     windowscodecs
     winhttp
+    bcrypt
     windowsapp
     # hid + setupapi: Windows HID Class API for the Elgato 4K S vendor
     # collection on USB interface 7 (src/capture/elgato_hid_4ks.cpp).
@@ -146,6 +152,8 @@ target_include_directories(NitLink PRIVATE
 
 install(TARGETS NitLink RUNTIME DESTINATION bin)
 install(FILES nitlink-menu.html DESTINATION bin)
+install(FILES game-search-expansions.json official-artwork.json unavailable-artwork.json DESTINATION bin)
+install(FILES assets/nitlink.svg DESTINATION bin/assets)
 install(DIRECTORY locales DESTINATION bin)
 install(DIRECTORY assets/menu DESTINATION bin/assets)
 install(FILES third_party/nis/NIS_Scaler.h third_party/nis/LICENSE.txt
@@ -179,6 +187,18 @@ add_custom_target(NitLinkRuntimeResources
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/nitlink-menu.html
         $<TARGET_FILE_DIR:NitLink>/nitlink-menu.html
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/game-search-expansions.json
+        $<TARGET_FILE_DIR:NitLink>/game-search-expansions.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/official-artwork.json
+        $<TARGET_FILE_DIR:NitLink>/official-artwork.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/unavailable-artwork.json
+        $<TARGET_FILE_DIR:NitLink>/unavailable-artwork.json
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/assets/nitlink.svg
+        $<TARGET_FILE_DIR:NitLink>/assets/nitlink.svg
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/locales/en-US.js
         $<TARGET_FILE_DIR:NitLink>/locales/en-US.js
@@ -228,13 +248,13 @@ if(BUILD_TESTING)
 
     add_executable(NitLinkPipeSecurityTests tests/pipe_security_tests.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp)
     target_include_directories(NitLinkPipeSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(NitLinkPipeSecurityTests PRIVATE advapi32)
+    target_link_libraries(NitLinkPipeSecurityTests PRIVATE advapi32 windowsapp)
     add_test(NAME pipe_security COMMAND NitLinkPipeSecurityTests)
 
     add_executable(NitLinkDiscordPresenceTests tests/discord_presence_tests.cpp
         src/app/localization.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp)
     target_include_directories(NitLinkDiscordPresenceTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(NitLinkDiscordPresenceTests PRIVATE advapi32)
+    target_link_libraries(NitLinkDiscordPresenceTests PRIVATE advapi32 windowsapp)
     add_test(NAME discord_presence COMMAND NitLinkDiscordPresenceTests)
     set_tests_properties(discord_presence PROPERTIES TIMEOUT 90)
 
@@ -259,6 +279,13 @@ if(BUILD_TESTING)
     target_include_directories(NitLinkSettingsSecurityTests PRIVATE
         ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party/webview2/include)
     add_test(NAME settings_security COMMAND NitLinkSettingsSecurityTests)
+
+    add_executable(NitLinkGameSelectionTests tests/game_selection_tests.cpp
+        src/app/game_service.cpp src/app/artwork_renderer.cpp src/app/nintendo_tw_artwork.cpp src/app/config.cpp src/app/settings_message.cpp src/app/game_database.cpp)
+    target_include_directories(NitLinkGameSelectionTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkGameSelectionTests PRIVATE winhttp windowsapp windowscodecs ole32 shlwapi bcrypt shell32)
+    add_test(NAME online_game_selection COMMAND NitLinkGameSelectionTests)
+    set_tests_properties(online_game_selection PROPERTIES TIMEOUT 15)
 
     option(NITLINK_TEST_WEBVIEW_RUNTIME "Run the isolated, software-rendered WebView2 host test" ON)
     if(NITLINK_TEST_WEBVIEW_RUNTIME)

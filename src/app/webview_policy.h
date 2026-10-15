@@ -2,6 +2,7 @@
 
 #include <string_view>
 #include "holybear_version.h"
+#include "game_identity.h"
 
 namespace NitLink::WebViewPolicy {
 
@@ -27,6 +28,9 @@ inline constexpr Resource Resources[] = {
     {L"https://nitlink.invalid/locales/zh-CN.js", L"locales/zh-CN.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/locales/zh-TW.js", L"locales/zh-TW.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/assets/menu/menu.js", L"assets/menu/menu.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
+    {L"https://nitlink.invalid/assets/menu/artwork-editor.js", L"assets/menu/artwork-editor.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
+    {L"https://nitlink.invalid/assets/menu/preview-host.js", L"assets/menu/preview-host.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
+    {L"https://nitlink.invalid/assets/nitlink.svg",L"assets/nitlink.svg",L"image/svg+xml",ResourceKind::Image},
     {L"https://nitlink.invalid/assets/menu/Archivo-400.ttf", L"assets/menu/Archivo-400.ttf", L"font/ttf", ResourceKind::Font},
     {L"https://nitlink.invalid/assets/menu/Archivo-500.ttf", L"assets/menu/Archivo-500.ttf", L"font/ttf", ResourceKind::Font},
     {L"https://nitlink.invalid/assets/menu/Archivo-600.ttf", L"assets/menu/Archivo-600.ttf", L"font/ttf", ResourceKind::Font},
@@ -44,6 +48,11 @@ inline bool CanReceiveMessage(std::wstring_view source, std::wstring_view curren
 }
 inline const Resource* FindResource(std::wstring_view uri) {
     for (const auto& resource : Resources) if (resource.uri == uri) return &resource;
+    constexpr std::wstring_view revision=L"?v=20261015-artwork3";
+    if(uri.ends_with(revision)){
+        uri.remove_suffix(revision.size());
+        for(const auto& resource:Resources)if(resource.kind==ResourceKind::Script&&resource.uri==uri)return &resource;
+    }
     return nullptr;
 }
 inline bool CanOpenExternal(std::wstring_view current, std::wstring_view target, bool userInitiated) {

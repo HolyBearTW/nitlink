@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "aliases": ["薩爾達", "薩爾達傳說", "塞尔达", "塞尔达传说", "ゼルダ", "Zelda"],
+      "queries": [
+        "The Legend of Zelda",
+        "Zelda",
+        "Hyrule Warriors",
+        "The Legend of Zelda: Breath of the Wild",
+        "The Legend of Zelda: Tears of the Kingdom"
+      ],
+      "suggestions": [
+        "The Legend of Zelda: Breath of the Wild",
+        "The Legend of Zelda: Tears of the Kingdom",
+        "Hyrule Warriors",
+        "Hyrule Warriors: Age of Calamity",
+        "Hyrule Warriors: Age of Imprisonment",
+        "The Legend of Zelda: Link's Awakening",
+        "The Legend of Zelda: Ocarina of Time",
+        "The Legend of Zelda: Majora's Mask"
+      ]
+    }
+  ]
+}

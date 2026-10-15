@@ -1,4 +1,5 @@
 #pragma once
+#include "game_identity.h"
 
 #include "hdmi_source.h"
 
@@ -248,12 +249,13 @@ struct Config {
 
     // ===== Per-game settings =====
     //
-    // The currently selected game id (matches a GameEntry::id from
-    // game_database.h), or empty string if no game is selected.
+    // Built-in GameEntry::id or validated sgdb-<id>, empty for no game.
     // When non-empty AND gameSettings[currentGameId] exists, those values
     // override the global nisEnabled/colorExpansion above when
     // applied at startup or game-change time.
     std::string  currentGameId = "";
+    // Kept separate from HDMI identity and the old game.<id> quality profiles.
+    std::map<std::string, Games::SavedGame> onlineGames;
 
     // Per-game settings keyed by game id. Persisted in the config file as
     // flat keys: "game.spider-man-2.nis_enabled = true", etc.

@@ -424,7 +424,7 @@ void TestLayouts(WebViewSettings& host, HWND window, std::vector<std::wstring>& 
             ? WebViewSettings::Dock::Left : WebViewSettings::Dock::Right);
         PushState(host, side);
         Check(Script(view, LR"JS(getComputedStyle(document.querySelector('.content')).display === 'flex' &&
-            getComputedStyle(document.querySelector('.rail')).height === '48px' &&
+            getComputedStyle(document.querySelector('.rail')).height === '56px' &&
             getComputedStyle(document.querySelector('.rail')).flexDirection === 'row' &&
             getComputedStyle(document.querySelector('.metabar')).display === 'grid' &&
             getComputedStyle(document.querySelector('.row')).paddingLeft === '16px' &&
@@ -442,15 +442,19 @@ void TestLayouts(WebViewSettings& host, HWND window, std::vector<std::wstring>& 
     PushState(host, L"Full");
     Script(view, L"document.querySelector('#source-trigger').click()");
     std::wcout << L"Source popover integration geometry: " << Script(view, LR"JS((() => {
-        const p = document.querySelector('#source-popover'), r = p.getBoundingClientRect();
+        const p = document.querySelector('#source-popover');
+        p.querySelector('.source-format-details').open = true;
+        const r = p.getBoundingClientRect();
         return JSON.stringify({open:p.dataset.open,viewport:[innerWidth,innerHeight],
             bounds:[r.left,r.top,r.right,r.bottom],selects:[...p.querySelectorAll('select')]
                 .map(e=>({id:e.id,label:e.previousElementSibling?.textContent,
                     capture:e.parentElement.parentElement===p}))});
     })())JS") << L'\n';
     Check(Script(view, LR"JS((() => {
-        const p = document.querySelector('#source-popover'), r = p.getBoundingClientRect();
-        const capture = [...p.querySelectorAll(':scope > .source-popover-select-row > select')];
+        const p = document.querySelector('#source-popover');
+        p.querySelector('.source-format-details').open = true;
+        const r = p.getBoundingClientRect();
+        const capture = [...p.querySelectorAll('.source-format-details > .source-popover-select-row > select')];
         const identity = p.querySelector('#hdmi-source-picker #hdmi-source-trigger');
         const labels = ['source.resolution', 'source.framerate', 'source.format'];
         const strings = window.NitLinkLocales[document.documentElement.lang];

@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "game_service.h"
 
 namespace NitLink {
 
@@ -51,5 +52,9 @@ std::wstring JsonEscapeWide(std::wstring_view value);
 std::wstring SerializeWebViewCoreSettingsProperties(const WebViewCoreSettingsState& state);
 std::wstring SerializeWebViewCoreSettingsState(const WebViewCoreSettingsState& state);
 std::wstring NextNoSignalMode(std::wstring_view currentMode);
+std::wstring SerializeGameResult(const Games::Result& result);
+std::wstring SerializeArtworkMetadataProperties(const Games::ArtworkMetadata& artwork);
+std::wstring SerializeArtworkEditProperties(const Games::SavedGame& game);
+std::wstring SerializeArtworkCandidates(const std::vector<Games::Cover>& covers);
 
 } // namespace NitLink

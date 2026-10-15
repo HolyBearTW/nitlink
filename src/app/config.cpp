@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <memory>
 #include <atomic>
+#include <charconv>
 
 // Minimal key=value parser. NOT real JSON despite the .json file extension:
 // the format is flat "key = value" lines with one extension: dotted keys
@@ -167,6 +168,7 @@ bool IsConfigText(const std::string& value) {
         [](unsigned char c) { return c < 0x20 && c != '\t'; });
 }
 bool IsGameId(const std::string& id) {
+    if (id.starts_with("sgdb-")) return Games::DynamicId(id) != 0;
     return id.size() <= 64 && std::all_of(id.begin(), id.end(), [](unsigned char c) {
         return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
     });
@@ -318,6 +320,7 @@ bool Config::Load(const std::string& path)
     }
     std::istringstream file(contents);
     // Older files also restore Auto when this Config instance is reused.
+    onlineGames.clear();
     manualHdmiSource = "auto";
     manualHdmiSourceCustom.clear();
 
@@ -350,6 +353,46 @@ bool Config::Load(const std::string& path)
 
         std::string key = Trim(line.substr(0, eq));
         std::string val = Trim(line.substr(eq + 1));
+
+        if (key.starts_with("online_game.")) {
+            const auto dot = key.find('.', 12);
+            if (dot == std::string::npos) continue;
+            const auto id = key.substr(12, dot - 12);
+            const auto number = Games::DynamicId(id);
+            if (id.empty() || !IsGameId(id) || (onlineGames.size() >= 256 && !onlineGames.contains(id))) continue;
+            const auto field = key.substr(dot + 1);
+            auto& game = onlineGames[id];
+            game.id = number;
+            const auto text = ConfigWide(val);
+            if (field == "name" && Games::ValidText(text)) game.name = text;
+            else if (field.starts_with("display_")) {
+                const auto locale = ConfigWide(field.substr(8));
+                if (Games::IsLocale(locale) && Games::ValidText(text)) game.displayNames[locale] = text;
+            } else if (field == "cover_url" && (text.empty() || Games::IsCoverUrl(text))) game.coverUrl = text;
+            else if (field == "cover_thumb" && (text.empty() || Games::IsCoverUrl(text))) game.coverThumb = text;
+            else if (field == "cover_id") game.coverId = Games::ParseId(val);
+            else if (field == "cover_provider") game.provider = text;
+            else if (field == "cover_source_label") game.sourceLabel = text;
+            else if (field == "cover_language") game.language = text;
+            else if (field == "cover_region") game.region = text;
+            else if (field == "cover_kind") game.kind = text;
+            else if (field == "cover_official") game.isOfficial = ParseBool(val);
+            else if(field=="artwork_mode"&&(text==L"original"||text==L"fit"||text==L"crop"))game.artworkMode=text;
+            else if(field=="artwork_final")game.finalImageKey=text;
+            else if(field=="artwork_source")game.sourceImageKey=text;
+            else if(field=="artwork_x")game.cropX=ParseFloatClamped(val,.5f,0,1);
+            else if(field=="artwork_y")game.cropY=ParseFloatClamped(val,.5f,0,1);
+            else if(field=="artwork_zoom")game.artworkZoom=ParseFloatClamped(val,1,1,3);
+            else if (field == "manual_cover") game.manualCover = ParseBool(val);
+            else if (field == "favorite") game.favorite = ParseBool(val);
+            else if (field == "custom_name" && Games::ValidText(text)) game.customName = text;
+            else if (field == "last_used_utc") {
+                uint64_t stamp = 0;
+                const auto parsed = std::from_chars(val.data(),val.data()+val.size(),stamp);
+                if (parsed.ec == std::errc{} && parsed.ptr == val.data()+val.size() && stamp <= 253402300799ull) game.lastUsedUtc=stamp;
+            }
+            continue;
+        }
 
         // Per-game settings: "game.<id>.<setting> = value"
         // Split on dots and route into Config::gameSettings.
@@ -553,6 +596,10 @@ bool Config::Load(const std::string& path)
     m_loadFailed = false;
     m_loadIssue = LoadIssue::None;
     m_lastSaveFailed = false;
+    for (auto it = onlineGames.begin(); it != onlineGames.end();) {
+        if (!Games::ValidSavedGame(it->first, it->second)) { preserve(); it = onlineGames.erase(it); }
+        else ++it;
+    }
     return true;
 }
 
@@ -575,6 +622,8 @@ bool Config::Save(const std::string& path)
         !std::isfinite(audioVolume) || !std::isfinite(pipOpacity) || !std::isfinite(nisSharpness))
         return false;
     for (const auto& [id, settings] : gameSettings) if (!IsGameId(id)) return false;
+    if (onlineGames.size() > 256) return false;
+    for (const auto& [id, game] : onlineGames) if (!Games::ValidSavedGame(id, game)) return false;
     for (const auto& [device, format] : captureFormatOverrides) {
         const auto name = ConfigUtf8(device);
         if (device.empty() || name.empty() || name.size() > 4096 ||
@@ -737,6 +786,30 @@ bool Config::Save(const std::string& path)
     // ===== Game state =====
     file << "# Current Game (empty if none selected)\n";
     file << "current_game = " << currentGameId << "\n\n";
+
+    file << "# Online game metadata (no API keys)\n";
+    for (const auto& [id, game] : onlineGames) {
+        const auto prefix = "online_game." + id + ".";
+        file << prefix << "name = " << ConfigUtf8(game.name) << "\n";
+        for (const auto& [locale, name] : game.displayNames)
+            file << prefix << "display_" << ConfigUtf8(locale) << " = " << ConfigUtf8(name) << "\n";
+        file << prefix << "cover_url = " << ConfigUtf8(game.coverUrl) << "\n";
+        file << prefix << "cover_thumb = " << ConfigUtf8(game.coverThumb) << "\n";
+        file << prefix << "cover_id = " << game.coverId << "\n";
+        file << prefix << "cover_provider = " << ConfigUtf8(game.provider) << "\n";
+        file << prefix << "cover_source_label = " << ConfigUtf8(game.sourceLabel) << "\n";
+        file << prefix << "cover_language = " << ConfigUtf8(game.language) << "\n";
+        file << prefix << "cover_region = " << ConfigUtf8(game.region) << "\n";
+        file << prefix << "cover_kind = " << ConfigUtf8(game.kind) << "\n";
+        file << prefix << "cover_official = " << (game.isOfficial?"true":"false") << "\n";
+        file<<prefix<<"artwork_mode = "<<ConfigUtf8(game.artworkMode)<<"\n"<<prefix<<"artwork_final = "<<ConfigUtf8(game.finalImageKey)<<"\n";
+        file<<prefix<<"artwork_source = "<<ConfigUtf8(game.sourceImageKey)<<"\n"<<prefix<<"artwork_x = "<<game.cropX<<"\n"<<prefix<<"artwork_y = "<<game.cropY<<"\n"<<prefix<<"artwork_zoom = "<<game.artworkZoom<<"\n";
+        file<<prefix<<"artwork_discord_status = "<<(game.artworkMode==L"original"?"unverified":"localOnly")<<"\n";
+        file << prefix << "manual_cover = " << (game.manualCover ? "true" : "false") << "\n\n";
+        file << prefix << "favorite = " << (game.favorite ? "true" : "false") << "\n";
+        file << prefix << "custom_name = " << ConfigUtf8(game.customName) << "\n";
+        file << prefix << "last_used_utc = " << game.lastUsedUtc << "\n\n";
+    }
 
     if (!gameSettings.empty()) {
         file << "# Per-Game Settings\n";

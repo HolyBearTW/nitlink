@@ -2,6 +2,9 @@
 #include <algorithm>
 #include "discord_rpc.h"
 #include "activity_fields.h"
+#include "app/game_identity.h"
+#include <roapi.h>
+#include <winrt/Windows.Data.Json.h>
 #include <debugapi.h>
 #include <sstream>
 #include <vector>
@@ -136,16 +139,34 @@ void DiscordRPC::SetActivity(const std::wstring& details,
                               const std::wstring& state,
                               std::chrono::system_clock::time_point startTime,
                               const std::string& largeImageKey,
-                              const std::wstring& largeImageText)
+                              const std::wstring& largeImageText,
+                              const std::wstring& activityName)
 {
     if (details.size() > 1024 || state.size() > 1024 || largeImageText.size() > 1024 || largeImageKey.size() > 1024)
         return;
     std::lock_guard<std::mutex> lock(m_activityMutex);
+    const auto previousName=m_pendingName;
+    m_pendingName = !activityName.empty() && Games::ValidText(activityName,128) ? activityName : L"NitLink";
+    if(previousName!=m_pendingName&&m_nameState.load()!=NameState::Unsupported)m_nameState=NameState::Unverified;
     m_pendingDetails        = GetDiscordActivityField(details);
     m_pendingState          = GetDiscordActivityField(state);
     m_pendingStartTimeUnix  = std::chrono::duration_cast<std::chrono::seconds>(
         startTime.time_since_epoch()).count();
-    m_pendingLargeImageKey  = largeImageKey;
+    const std::wstring imageUrl(largeImageKey.begin(), largeImageKey.end());
+    const bool external = Games::IsCoverUrl(imageUrl);
+    const bool asset = !largeImageKey.empty() && largeImageKey.size() <= 64 &&
+        std::all_of(largeImageKey.begin(), largeImageKey.end(), [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+        });
+    const auto previousImage = m_pendingLargeImageKey;
+    m_pendingLargeImageKey = external || asset ? largeImageKey : "nitlink-logo";
+    if (external && m_rejectedImageKey == largeImageKey) {
+        m_pendingLargeImageKey = "nitlink-logo"; m_imageState = ImageState::Fallback;
+    } else if (external) {
+        // Repeated source updates do not erase a prior acknowledgement.
+        if (m_imageState.load() != ImageState::ExternalAccepted || previousImage != largeImageKey)
+            m_imageState = ImageState::ExternalPending;
+    } else m_imageState = ImageState::Asset;
     m_pendingLargeImageText = largeImageText;
     m_activityDirty         = true;
     m_clearRequested        = false;
@@ -160,6 +181,12 @@ void DiscordRPC::ClearActivity()
 
 void DiscordRPC::WorkerLoop()
 {
+    const HRESULT initialized = RoInitialize(RO_INIT_MULTITHREADED);
+    struct Apartment {
+        bool close;
+        ~Apartment() { if (close) { winrt::clear_factory_cache(); RoUninitialize(); } }
+    } apartment{SUCCEEDED(initialized)};
+    std::string activityNonce, externalImage, sentName;
     // Replies are drained independently of the two-second activity send limit.
     auto lastSend = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     uint64_t nonce = 1000;
@@ -190,6 +217,8 @@ void DiscordRPC::WorkerLoop()
         if (!m_connected) {
             if (now < nextReconnect) continue;
             if (!OpenConnection()) { disconnected(L"Discord reconnect unavailable"); continue; }
+            m_nameState=NameState::Unverified; // A new client connection must acknowledge name again.
+            {std::lock_guard lock(m_activityMutex);if(m_pendingLargeImageKey.starts_with("https://"))m_imageState=ImageState::ExternalPending;}
             reader.Reset();
             connectedSince = std::chrono::steady_clock::now();
         }
@@ -205,13 +234,54 @@ void DiscordRPC::WorkerLoop()
                 disconnected(L"Discord stream closed or invalid");
                 break;
             }
+            if (opcode == static_cast<uint32_t>(Opcode::Frame) && (!externalImage.empty() || !sentName.empty()) && SUCCEEDED(initialized)) {
+                try {
+                    using namespace winrt::Windows::Data::Json;
+                    JsonObject reply;
+                    if (!JsonObject::TryParse(winrt::to_hstring(payload), reply) ||
+                        reply.GetNamedString(L"cmd", L"") != L"SET_ACTIVITY" ||
+                        winrt::to_string(reply.GetNamedString(L"nonce", L"")) != activityNonce) continue;
+                    bool rejected = reply.GetNamedString(L"evt", L"") == L"ERROR";
+                    bool accepted = false;
+                    bool nameAccepted = false;
+                    if (!rejected && reply.HasKey(L"data") && reply.GetNamedValue(L"data").ValueType() == JsonValueType::Object) {
+                        const auto data = reply.GetNamedObject(L"data");
+                        nameAccepted = !sentName.empty() && winrt::to_string(data.GetNamedString(L"name",L"")) == sentName;
+                        if (data.HasKey(L"assets") && data.GetNamedValue(L"assets").ValueType() == JsonValueType::Object) {
+                            const auto assets = data.GetNamedObject(L"assets");
+                            const auto returned = winrt::to_string(assets.GetNamedString(L"large_image", L""));
+                            accepted = returned == externalImage || returned.starts_with("mp:external/");
+                            rejected = !accepted;
+                        } else rejected = true;
+                    }
+                    std::lock_guard lock(m_activityMutex);
+                    if (!sentName.empty() && WideToUtf8(m_pendingName) == sentName && !m_clearRequested) {
+                        const bool error=reply.GetNamedString(L"evt",L"")==L"ERROR";
+                        if(!error)m_nameState = nameAccepted ? NameState::Accepted : NameState::Unsupported;
+                        if (error&&externalImage.empty()) {
+                            m_nameState=NameState::Unsupported;
+                            m_activityDirty = true; // Retry the same activity without name.
+                            rejected = false; // Name fallback precedes the independent image fallback.
+                        }
+                    }
+                    if (!externalImage.empty() && m_pendingLargeImageKey == externalImage && !m_clearRequested) {
+                        if (rejected) {
+                            m_rejectedImageKey = externalImage;
+                            m_pendingLargeImageKey = "nitlink-logo";
+                            m_activityDirty = true; m_imageState = ImageState::Fallback;
+                            RPCLog(L"External image activity rejected; retrying NitLink art with the same text/timestamp");
+                        } else if (accepted) m_imageState = ImageState::ExternalAccepted;
+                    }
+                    // An accepted activity/URL is not proof of rendered pixels.
+                } catch (...) { /* Malformed/unrelated replies do not change text or timing. */ }
+            }
         }
         if (!m_connected) continue;
         now = std::chrono::steady_clock::now();
         if (now - connectedSince >= std::chrono::seconds(60)) reconnectDelay = 2000;
         if (now - lastSend < std::chrono::seconds(2)) continue;
 
-        std::wstring details, state, largeText;
+        std::wstring details, state, largeText, name;
         std::string  largeKey;
         int64_t      startUnix = 0;
         bool         dirty = false, doClear = false;
@@ -225,6 +295,7 @@ void DiscordRPC::WorkerLoop()
                 startUnix = m_pendingStartTimeUnix;
                 largeKey  = m_pendingLargeImageKey;
                 largeText = m_pendingLargeImageText;
+                name = m_pendingName;
                 m_activityDirty = false;
             }
             m_clearRequested = false;
@@ -234,12 +305,16 @@ void DiscordRPC::WorkerLoop()
 
         DWORD pid = GetCurrentProcessId();
         std::stringstream cmd;
-        cmd << "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"" << (nonce++) << "\","
+        activityNonce = std::to_string(nonce++);
+        externalImage = largeKey.starts_with("https://") ? largeKey : "";
+        sentName = !doClear && !name.empty() && m_nameState.load()!=NameState::Unsupported ? WideToUtf8(name) : "";
+        cmd << "{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"" << activityNonce << "\","
             << "\"args\":{\"pid\":" << pid;
         if (doClear) {
             cmd << ",\"activity\":null}}";
         } else {
             cmd << ",\"activity\":{\"timestamps\":{\"start\":" << startUnix << "}";
+            if (!sentName.empty()) cmd << ",\"name\":\"" << EscapeJson(sentName) << "\"";
             // Match Discord's optional-string serialization: omit unavailable
             // source/signal fields rather than sending empty text or filler.
             if (!details.empty())
@@ -262,6 +337,26 @@ void DiscordRPC::WorkerLoop()
     }
     m_connected = false;
     m_running = false;
+}
+
+void DiscordRPC::RetryImage(){std::lock_guard lock(m_activityMutex);m_rejectedImageKey.clear();}
+const wchar_t* DiscordRPC::ImageStatus() const {
+    if (!m_connected) return L"unavailable";
+    switch (m_imageState.load()) {
+    case ImageState::Asset: return L"asset";
+    case ImageState::ExternalPending: return L"externalPending";
+    case ImageState::ExternalAccepted: return L"externalAccepted";
+    case ImageState::Fallback: return L"fallback";
+    default: return L"unavailable";
+    }
+}
+const wchar_t* DiscordRPC::NameStatus() const {
+    if(!m_connected)return L"unverified";
+    switch(m_nameState.load()){
+    case NameState::Accepted:return L"accepted";
+    case NameState::Unsupported:return L"unsupported";
+    default:return L"unverified";
+    }
 }
 
 } // namespace NitLink

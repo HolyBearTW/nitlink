@@ -30,6 +30,7 @@
     let holyBearUpdateState = {};
     let renderHolyBearUpdate = () => {};
     let renderContributorPreview = () => {};
+    let renderGameUI = () => {};
     const t = key => {
       const selected = localeResources[currentLocale] || {};
       const value = selected[key] || englishLocale[key];
@@ -71,10 +72,14 @@
       document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
         el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
       });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = t(el.dataset.i18nPlaceholder);
+      });
       const active = document.querySelector('.rail-item[data-active="true"]');
       const titleKey = active && ({
         'pane-video': 'top.settings',
         'pane-audio': 'top.settings',
+        'pane-games': 'game.pageTitle',
         'pane-shortcuts': 'section.shortcuts',
         'pane-about': 'section.about'
       })[active.dataset.tab];
@@ -86,6 +91,7 @@
       }
       renderHolyBearUpdate();
       renderContributorPreview();
+      renderGameUI();
     };
     const localizeValue = value => ({
       Auto: 'value.auto', Stretch: 'value.stretch',
@@ -106,7 +112,7 @@
       const tabs = [...document.querySelectorAll('.rail-item[data-tab]')];
       const titles = {
         'pane-video': 'top.settings', 'pane-audio': 'top.settings',
-        'pane-shortcuts': 'section.shortcuts', 'pane-about': 'section.about'
+        'pane-shortcuts': 'section.shortcuts', 'pane-about': 'section.about', 'pane-games': 'game.pageTitle'
       };
       const h1 = document.querySelector('.topbar h1');
       const initiallyActive = tabs.find(tab => tab.dataset.active === 'true');
@@ -517,7 +523,7 @@
         });
         row.appendChild(lbl);
         row.appendChild(sel);
-        pop.appendChild(row);
+        (pop._formatContainer || pop).appendChild(row);
       };
 
       // The renderer supports three pixel formats end-to-end:
@@ -669,8 +675,10 @@
         pop.replaceChildren();
         sourceSelects = {};
 
-        // Device list: only when there is more than one to pick from.
-        if (lastDevices.length > 1) {
+        // Device, HDMI identity and the existing format cascade have their
+        // own regions. Choosing a game never changes any capture preference.
+        pop._formatContainer = null;
+        if (lastDevices.length) {
           const sectLabel = document.createElement('div');
           sectLabel.className = 'source-popover-section-label';
           sectLabel.textContent = t('source.captureDevice');
@@ -705,9 +713,19 @@
         // from auto-negotiation.
         const fmtSectLabel = document.createElement('div');
         fmtSectLabel.className = 'source-popover-section-label';
-        fmtSectLabel.textContent = t('source.manualFormat');
+        fmtSectLabel.textContent = t('game.hdmiSection');
         pop.appendChild(fmtSectLabel);
         pop.appendChild(hdmiPicker);
+
+        const formatDetails = document.createElement('details');
+        formatDetails.className = 'source-format-details';
+        formatDetails.open = !!(lastOverride.width || lastOverride.fps || lastOverride.format || pop._formatOpen);
+        const formatSummary = document.createElement('summary');
+        formatSummary.textContent = t('source.manualFormat');
+        formatDetails.appendChild(formatSummary);
+        formatDetails.addEventListener('toggle', () => { pop._formatOpen = formatDetails.open; });
+        pop.appendChild(formatDetails);
+        pop._formatContainer = formatDetails;
 
         const resolutions = uniqueResolutions();
         const currentResValue = lastOverride.width
@@ -1017,6 +1035,463 @@
       window._updateManualHdmiSource('auto', '');
     })();
 
+    // Production game controls. Native HTTPS and fixture hosts use the same
+    // bounded bridge actions/events; this code never fetches a remote URL.
+    (() => {
+      const el = id => document.getElementById(id);
+      const query = el('game-query');
+      let sequence = 0, searchRequest = 0, coverRequest = 0, debounce, searchTimer, coverTimer, coverImageTimer;
+      let current = {}, live = {}, results = [], covers = [], builtIn = [];
+      let library = {games:[],favorites:[],recent:[]}, librarySignature = '', renameKey = '';
+      let shape = 'square', searchStatus = 'idle', coverStatus = 'idle', notice = '', suggestions = [], queriedTerms = [];
+      let coverProvider='all',officialStatus='idle';
+      let coverPage = 0, coverHasMore = false, coverTotal = 0, coverView = '', detailsCover = 0;
+      const gameCards = new Map(), coverCards = new Map(), favoriteCards = new Map(), recentCards = new Map();
+      const image = (art, uri, state = 'empty') => {
+        if (!art) return;
+        if (uri && art.dataset.uri === uri) return;
+        const setStatus = value => {
+          art.dataset.imageState=value;
+          art.dataset.imageLabel=value==='loading'?t('game.status.loading'):value==='failed'?t('game.imageFailed'):value==='missing'?t('game.thumbnailMissing'):value==='unavailable'?t('game.thumbnailPaused'):'';
+          art.title=value==='unavailable'?t('game.thumbnailUnavailable'):art.dataset.imageLabel;
+        };
+        clearTimeout(art._imageTimer);
+        art.replaceChildren(); delete art.dataset.uri;
+        setStatus(state);
+        if (!uri) return;
+        // Only same-origin opaque native resources or preview fixture files.
+        const native = /^https:\/\/nitlink\.invalid\/game-images\/\d{1,20}\.png$/.test(uri);
+        const fixture = !!window.NitLinkPreview && /^preview\/fixtures\/[a-z0-9-]+\.(jpg|png|webp|svg)$/.test(uri);
+        const previewApi = !!window.NitLinkPreview && /^preview\/(?:api-images|generated-images)\/[a-f0-9]{64}\.png$/.test(uri);
+        if (!native && !fixture && !previewApi && uri!=='assets/nitlink.svg') { setStatus('failed'); return; }
+        const img = document.createElement('img'); img.alt = ''; img.decoding = 'async';
+        art.dataset.uri = uri; setStatus('loading');
+        img.addEventListener('load', () => {
+          if (art.dataset.uri !== uri) return;
+          clearTimeout(art._imageTimer);
+          setStatus('ok');
+          art.dataset.width=img.naturalWidth;art.dataset.height=img.naturalHeight;
+          art.dispatchEvent(new Event('artworkstate'));
+        });
+        const failed = () => {
+          if (art.dataset.uri !== uri) return;
+          clearTimeout(art._imageTimer); delete art.dataset.uri;
+          img.remove(); setStatus('failed');
+          art.dispatchEvent(new Event('artworkstate'));
+        };
+        img.addEventListener('error', failed);
+        art._imageTimer = setTimeout(failed, 12000);
+        img.src = uri; art.appendChild(img);
+      };
+      // Search enrichment and the selected gallery share the native worker.
+      // Cancelling one must settle its placeholders, while preserving loaded DOM.
+      const settleImages = (models, cards, state = 'unavailable') => {
+        let count=0;
+        models.forEach(model => {
+          const entry = cards.get(model.id);
+          if (!model.image && entry?.art.dataset.imageState === 'loading') {
+            model.imageStatus = state; image(entry.art, '', state);++count;
+          }
+        });
+        return count;
+      };
+      const stopSearch = () => {
+        clearTimeout(debounce); clearTimeout(searchTimer); searchRequest = ++sequence;
+        settleImages(results, gameCards);
+        if (searchStatus === 'loading') searchStatus = 'cancelled';
+      };
+      const stopCovers = () => {
+        clearTimeout(coverTimer); clearTimeout(coverImageTimer); coverRequest = ++sequence;
+        const pending=settleImages(covers, coverCards);
+        if (coverStatus === 'loading'||pending) coverStatus = 'cancelled';
+      };
+      const renderResults = () => {
+        gameCards.clear(); el('game-results').replaceChildren();
+        results.forEach(game => {
+          const card = document.createElement('button'); card.type = 'button'; card.className = 'game-result';
+          card.setAttribute('aria-pressed', String(current.key === `sgdb-${game.id}`));
+          const art = document.createElement('div'); art.className = 'game-art';
+          image(art, game.image, game.imageStatus || 'loading');
+          const title = document.createElement('span'); title.className = 'game-result-title';
+          title.textContent = game.displayName || game.name;
+          const sub = document.createElement('span'); sub.className = 'game-result-subtitle';
+          sub.textContent = game.name;
+          const origin = document.createElement('span'); origin.className = 'game-result-origin';
+          origin.hidden=!window.NitLinkPreview;
+          origin.textContent = game.source==='nintendo-tw' ? t('game.officialMapping') : game.dataMode === 'fixture' || game.source === 'fixture' ? 'FIXTURE' : `REAL API · ${game.source || 'SteamGridDB'}`;
+          card.append(art, title, sub, origin);
+          card.addEventListener('click', () => {
+            stopSearch(); updateStatus();
+            post('setGame', `sgdb-${game.id}`);
+          });
+          const wrap = document.createElement('div'); wrap.className = 'game-result-wrap';
+          const favorite = document.createElement('button'); favorite.type = 'button'; favorite.className = 'game-button game-favorite-action';
+          const isFavorite = library.favorites.some(saved=>saved.key===`sgdb-${game.id}`);
+          favorite.textContent = t(isFavorite ? 'game.removeFavorite' : 'game.addFavorite');
+          favorite.addEventListener('click',()=>post(library.favorites.some(saved=>saved.key===`sgdb-${game.id}`)?'removeGameFavorite':'addGameFavorite',`sgdb-${game.id}`));
+          wrap.append(card,favorite); gameCards.set(game.id, {card, art, favorite}); el('game-results').appendChild(wrap);
+        });
+      };
+      const officialCover=cover=>['nintendo-tw','nintendo-hk-eshop'].includes(cover.provider)&&cover.isOfficial===true&&cover.language==='zh-TW'&&cover.languageVerified===true;
+      const coverOrientation=entry=>{
+        const width=Number(entry.art.dataset.width),height=Number(entry.art.dataset.height);
+        return entry.art.dataset.imageState==='ok'&&width&&height?(width===height?'square':height>width?'portrait':'landscape'):entry.model.shape;
+      };
+      const refreshCover=entry=>{
+        const orientation=coverOrientation(entry);
+        entry.tile.hidden=(shape!=='all'&&['square','portrait','landscape'].includes(orientation)&&orientation!==shape)||entry.art.dataset.imageState==='failed';
+        entry.tile.dataset.shape=orientation||'';
+        entry.card.disabled=entry.art.dataset.imageState!=='ok';
+        entry.card.title=entry.art.dataset.imageState==='failed'?t('game.imageFailed'):entry.card.disabled?t('game.status.loading'):t('game.selectCover');
+      };
+      const showCoverDetails = (cover, open=true) => {
+        if(!cover)return;detailsCover=cover.id;
+        const entry=coverCards.get(cover.id),art=entry?.art;
+        image(el('game-cover-detail-art'),cover.image,cover.imageStatus||'empty');
+        const width=Number(art?.dataset.width)||0,height=Number(art?.dataset.height)||0;
+        const orientation=width&&height?(width===height?'square':height>width?'portrait':'landscape'):cover.shape;
+        const fields=[['game.artworkSource',cover.sourceLabel||'SteamGridDB'],['game.author',cover.author||t('game.authorUnknown')],
+          ['game.coverLanguage',cover.languageVerified?t('game.coverLanguage.'+cover.language):t('game.coverLanguage.unknown')],
+          ['game.artworkType',t('game.kind.'+(cover.kind||'cover'))],['game.orientation',t('game.'+(['square','portrait','landscape'].includes(orientation)?orientation:'orientationPending'))],
+          ['game.previewDimensions',width&&height?`${width} × ${height}`:t('game.orientationPending')]];
+        if(cover.region)fields.push(['game.region',cover.region]);
+        if(cover.productTitle)fields.push(['game.storeProduct',cover.productTitle]);
+        if(cover.productPlatform)fields.push(['game.storePlatform',cover.productPlatform]);
+        if(cover.productRelease)fields.push(['game.storeRelease',cover.productRelease]);
+        if(cover.crop)fields.push(['game.artworkTreatment',t('game.cropWhitespace')]);
+        if(cover.languageSource)fields.push(['game.artworkReference',cover.languageSource]);
+        el('game-cover-detail-fields').replaceChildren();
+        fields.forEach(([key,value])=>{const term=document.createElement('dt'),description=document.createElement('dd');term.textContent=t(key);description.textContent=value;el('game-cover-detail-fields').append(term,description);});
+        el('game-cover-detail-debug').hidden=!window.NitLinkPreview;
+        el('game-cover-detail-debug').textContent=window.NitLinkPreview?`${cover.synthetic?t('game.syntheticCover'):cover.dataMode||'real'} · ${cover.provider||'steamgriddb'} · ${cover.id}`:'';
+        el('game-detail-use-original').disabled=!entry||entry.card.disabled;el('game-detail-adjust').disabled=!entry||entry.card.disabled;
+        if(open&&!el('game-cover-details').open)el('game-cover-details').showModal();
+      };
+      el('game-cover-details-close').addEventListener('click',()=>el('game-cover-details').close());
+      const editCover=cover=>{
+        if(!cover?.image)return;
+        stopSearch();stopCovers();post('cancelGameSearch');
+        let state=current;
+        if(cover.id!==current.coverId){post('selectGameCover',{gameId:current.id,coverId:cover.id});state={...current,coverId:cover.id,image:cover.image,sourceImage:cover.image,artworkMode:'original',cropX:.5,cropY:.5,artworkZoom:1};}
+        window.NitLinkArtworkEditor?.open(cover,state);
+      };
+      el('game-adjust-cover').addEventListener('click',()=>editCover({id:current.coverId,image:current.sourceImage||current.image}));
+      el('game-detail-use-original').addEventListener('click',()=>{post('selectGameCover',{gameId:current.id,coverId:detailsCover});el('game-cover-details').close();});
+      el('game-detail-adjust').addEventListener('click',()=>{const cover=covers.find(cover=>cover.id===detailsCover);el('game-cover-details').close();editCover(cover);});
+      const localEffect=document.createElement('p');localEffect.className='game-note';localEffect.hidden=true;
+      document.querySelector('.game-discord-preview').before(localEffect);
+      const actualArtwork=document.createElement('div');actualArtwork.className='game-discord-original';actualArtwork.hidden=true;
+      const actualArt=document.createElement('div');actualArt.className='game-art';actualArt.id='game-discord-original-art';
+      const actualText=document.createElement('span');actualText.className='game-note';actualArtwork.append(actualArt,actualText);el('game-discord-image-status').before(actualArtwork);
+      const renderCovers = () => {
+        const ids=new Set(covers.map(cover=>cover.id));
+        for(const [id,entry] of coverCards)if(!ids.has(id)){clearTimeout(entry.art._imageTimer);entry.tile.remove();coverCards.delete(id);}
+        el('game-gallery').dataset.shape=shape;
+        let officialIndex=0,communityIndex=0;
+        covers.forEach(cover=>{
+          let entry=coverCards.get(cover.id);
+          if(!entry){
+            const tile=document.createElement('div');tile.className='game-cover-tile';
+            const card=document.createElement('button');card.type='button';card.className='game-cover';
+            const art=document.createElement('div');art.className='game-art';card.appendChild(art);
+            const badge=document.createElement('span');badge.className='game-cover-badge';
+            const kind=document.createElement('span');kind.className='game-cover-badge logo';
+            const info=document.createElement('button');info.type='button';info.className='game-cover-info';info.textContent='i';
+            const caption=document.createElement('span');caption.className='game-cover-caption';
+            entry={tile,card,art,badge,kind,info,caption,model:cover};
+            card.addEventListener('click',()=>{if(entry.art.dataset.imageState==='ok')post('selectGameCover',{gameId:current.id,coverId:cover.id});});
+            art.addEventListener('artworkstate',()=>{refreshCover(entry);updateStatus();});
+            info.addEventListener('click',()=>showCoverDetails(entry.model));tile.append(card,badge,kind,info,caption);coverCards.set(cover.id,entry);
+          }else if(!cover.image&&entry.model.image){cover.image=entry.model.image;cover.imageStatus=entry.model.imageStatus;}
+          entry.model=cover;entry.card.dataset.coverId=String(cover.id);entry.card.dataset.provider=cover.provider||'steamgriddb';entry.card.dataset.kind=cover.kind||'cover';entry.card.setAttribute('aria-pressed',String(current.coverId===cover.id));
+          entry.caption.hidden=!cover.productTitle;entry.caption.textContent=[cover.productTitle,cover.productPlatform,cover.productRelease].filter(Boolean).join(' · ');entry.caption.title=entry.caption.textContent;
+          entry.card.setAttribute('aria-label',t('game.selectCover')+(officialCover(cover)?' · '+t('game.officialBadge'):''));
+          entry.info.setAttribute('aria-label',t('game.artworkDetails'));entry.info.title=t('game.artworkDetails');
+          entry.badge.hidden=!officialCover(cover)&&!cover.synthetic;entry.badge.textContent=cover.synthetic?t('game.sampleBadge'):t('game.officialBadge');
+          entry.kind.hidden=cover.kind!=='logo'&&cover.kind!=='logoOnly';entry.kind.textContent='Logo';
+          image(entry.art,cover.image,cover.imageStatus||'loading');
+          refreshCover(entry);
+          const container=el(cover.isOfficial?'game-official-gallery':'game-gallery'),index=cover.isOfficial?officialIndex++:communityIndex++;
+          if(container.children[index]!==entry.tile)container.insertBefore(entry.tile,container.children[index]||null);
+        });
+        el('game-official-section').hidden=officialIndex===0;el('game-community-heading').hidden=officialIndex===0||communityIndex===0;
+        el('game-official-gallery').dataset.catalogue=String(covers.some(cover=>cover.provider==='nintendo-hk-store'));
+        el('game-official-section').dataset.catalogue=el('game-official-gallery').dataset.catalogue;
+      };
+      const updateStatus = () => {
+        const failed = ['offline', 'timeout', 'workerError', 'invalid', 'rateLimited', 'upstreamUnavailable'];
+        el('game-search-status').textContent = t(`game.status.${searchStatus}`) + (results.length ? ` · ${t('game.resultCount').replace('{count}',results.length)}` : '');
+        el('game-search-status').dataset.error = String(failed.includes(searchStatus));
+        el('game-search-status').setAttribute('aria-busy', String(searchStatus === 'loading'));
+        el('game-search-empty').hidden = results.length > 0;
+        el('game-search-empty').textContent = t(searchStatus === 'idle' ? 'game.searchIdle' : `game.status.${searchStatus}`);
+        el('game-search-fallback').hidden = !(['empty', 'partial', ...failed].includes(searchStatus) || suggestions.length);
+        const matching=covers.filter(cover=>{const entry=coverCards.get(cover.id),orientation=entry&&coverOrientation(entry);return shape==='all'||!['square','portrait','landscape'].includes(orientation)||orientation===shape;});
+        const visible=matching.filter(cover=>coverCards.get(cover.id)?.art.dataset.imageState!=='failed');
+        const imageFailures=matching.length-visible.length;
+        const officialVisible=visible.some(cover=>cover.isOfficial);
+        el('game-official-section').hidden=!officialVisible;
+        el('game-community-heading').hidden=!officialVisible||!visible.some(cover=>!cover.isOfficial);
+        el('game-cover-status').textContent = t(`game.status.${coverStatus}`) + (visible.length ? ` · ${t('game.coverCount').replace('{count}',visible.length)}` : '')+
+          (imageFailures?' · '+t('game.failedCoverCount').replace('{count}',imageFailures):'');
+        el('game-query-trace').hidden = !window.NitLinkPreview || !queriedTerms.length;
+        el('game-query-trace').textContent = `${t('game.queriedTerms')} · ${queriedTerms.join(' / ')}`;
+        if (window.NitLinkPreview) {
+          const key = window.NitLinkPreview.mode === 'real' ? 'game.realPreview' : 'game.fixture';
+          el('game-preview-mode-note').dataset.i18n = key; el('game-preview-mode-note').textContent = t(key);
+        }
+        el('game-cover-status').dataset.error = String(failed.includes(coverStatus)||imageFailures>0);
+        el('game-cover-empty').hidden = visible.length > 0;
+        el('game-cover-empty').textContent = t(imageFailures&&!visible.length?'game.noUsableCovers':covers.length&&!visible.length&&['ok','partial'].includes(coverStatus)?'game.noShapeCovers':coverStatus === 'idle' ? 'game.coverIdle' : `game.status.${coverStatus}`);
+        el('game-gallery').setAttribute('aria-busy', String(coverStatus === 'loading'));
+        el('game-cover-prev').disabled = !current.id || !coverPage || coverStatus === 'loading';
+        el('game-cover-next').disabled = !current.id || !coverHasMore || coverStatus === 'loading';
+        el('game-cover-page').textContent = current.id ? t('game.pageCount').replace('{page}',coverPage+1).replace('{total}',coverTotal) : '';
+        el('game-cover-pagination').hidden=!coverPage&&!coverHasMore;
+        el('game-notice').hidden = !notice;
+        el('game-notice').textContent = notice ? t(`game.${notice}`) : '';
+        document.querySelectorAll('[data-cover-provider]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.coverProvider===coverProvider)));
+        el('game-store-search').hidden=coverProvider==='community';
+        const storeStatus=['ok','empty','timeout','offline','rateLimited','invalid','upstreamUnavailable','loading'].includes(officialStatus)?officialStatus:officialStatus==='blocked'?'upstreamUnavailable':'idle';
+        el('game-store-status').textContent=t('game.hkStore')+' · '+t('game.status.'+storeStatus);
+      };
+      const loadCovers = () => {
+        stopSearch();
+        clearTimeout(coverTimer); clearTimeout(coverImageTimer); coverRequest = ++sequence;
+        const view=`${current.dataMode||'native'}:${current.key}:${shape}:${coverPage}:${coverProvider}:${el('game-official-query').value.trim()}`;
+        if(coverView!==view)covers=covers.filter(cover=>cover.isOfficial&&cover.provider!=='nintendo-hk-store'&&coverProvider!=='community'&&coverView.split(':').slice(0,2).join(':')===view.split(':').slice(0,2).join(':'));
+        coverView=view;renderCovers();
+        if (!current.id) { coverStatus = 'idle'; updateStatus(); return; }
+        coverStatus = 'loading';officialStatus=coverProvider==='community'?'idle':'loading'; updateStatus();
+        post('getGameCovers', {gameId: current.id, shape, page: coverPage, request: coverRequest,provider:coverProvider,officialQuery:el('game-official-query').value.trim()});
+        const requested = coverRequest;
+        coverTimer = setTimeout(() => {
+          if (requested === coverRequest) { coverStatus = 'timeout'; settleImages(covers, coverCards, 'failed'); updateStatus(); }
+        }, 30000);
+      };
+      const search = () => {
+        stopCovers();
+        clearTimeout(debounce); clearTimeout(searchTimer);
+        searchRequest = ++sequence; const requested = searchRequest;
+        const text = query.value.trim();
+        results = []; suggestions = []; queriedTerms = []; el('game-suggestions').replaceChildren(); renderResults(); notice = '';
+        if (!text) { searchStatus = 'idle'; post('cancelGameSearch'); updateStatus(); return; }
+        searchStatus = 'loading'; updateStatus();
+        post('searchGames', {query: text, request: requested});
+        searchTimer = setTimeout(() => {
+          if (requested === searchRequest) { searchStatus = 'timeout'; updateStatus(); }
+        }, 15000);
+      };
+      query.addEventListener('input', () => {
+        clearTimeout(debounce); clearTimeout(searchTimer);
+        searchRequest = ++sequence; // Invalidated before the 350ms debounce.
+        stopCovers();
+        post('cancelGameSearch');
+        results = []; renderResults();
+        if (!query.value.trim()) { results = []; searchStatus = 'idle'; renderResults(); updateStatus(); return; }
+        searchStatus = 'loading'; updateStatus(); debounce = setTimeout(search, 350);
+      });
+      query.addEventListener('keydown', event => { if (event.key === 'Enter') search(); });
+      el('game-search').addEventListener('click', search);
+      el('game-other-name').addEventListener('click', () => {
+        query.value = current.name || ''; query.focus(); query.select();
+      });
+      el('game-clear').addEventListener('click', () => {
+        stopSearch(); stopCovers(); post('clearGame');
+      });
+      el('game-auto').addEventListener('click', () => { shape='all';coverPage=0;post('restoreAutoCover');renderGameUI();loadCovers(); });
+      el('game-save-quality').addEventListener('click', () => {
+        post('saveGameSettings');
+      });
+      ['square', 'portrait', 'all'].forEach(value => el(`game-shape-${value}`).addEventListener('click', () => {
+        shape = value; coverPage = 0; renderGameUI(); loadCovers();
+      }));
+      el('game-cover-retry').addEventListener('click', () => { coverPage=0;loadCovers(); });
+      el('game-cover-prev').addEventListener('click',()=>{if(coverPage){--coverPage;loadCovers();}});
+      el('game-cover-next').addEventListener('click',()=>{if(coverHasMore){++coverPage;loadCovers();}});
+      document.querySelectorAll('[data-cover-provider]').forEach(button=>button.addEventListener('click',()=>{coverProvider=button.dataset.coverProvider;shape='all';coverPage=0;renderGameUI();loadCovers();}));
+      el('game-official-search').addEventListener('click',()=>{coverProvider='nintendo';shape='all';coverPage=0;renderGameUI();loadCovers();});
+      el('game-official-query').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();el('game-official-search').click();}});
+      const beginRename = game => {
+        renameKey=game.key;el('game-custom-name').value=game.customName||'';el('game-custom-name').placeholder=game.displayName||game.name;
+        el('game-rename-editor').hidden=false;el('game-custom-name').focus();
+      };
+      el('game-current-rename').addEventListener('click',()=>{const game=library.games.find(game=>game.key===current.key);if(game)beginRename(game);});
+      el('game-current-favorite').addEventListener('click',()=>post(library.favorites.some(game=>game.key===current.key)?'removeGameFavorite':'addGameFavorite',current.key));
+      el('game-name-save').addEventListener('click',()=>{post('setGameCustomName',{key:renameKey,name:el('game-custom-name').value.trim()});el('game-rename-editor').hidden=true;});
+      el('game-name-reset').addEventListener('click',()=>{post('setGameCustomName',{key:renameKey,name:''});el('game-rename-editor').hidden=true;});
+      el('game-name-cancel').addEventListener('click',()=>{el('game-rename-editor').hidden=true;});
+      ['large','compact'].forEach(size=>el('game-discord-size-'+size).addEventListener('click',()=>{
+        document.querySelector('.game-discord-preview').dataset.size=size;
+        ['large','compact'].forEach(other=>el('game-discord-size-'+other).setAttribute('aria-pressed',String(other===size)));
+      }));
+      const renderLibrary = () => {
+        el('game-favorites-empty').hidden=library.favorites.length>0;el('game-recent-empty').hidden=library.recent.length>0;
+        const title = game => game.customName || game.displayNames?.[currentLocale] || game.displayName || game.name;
+        const reconcile = (container, entries, items, create, update) => {
+          const keys=new Set(items.map(game=>game.key));
+          for(const [key,entry] of entries)if(!keys.has(key)){
+            entry.card.querySelectorAll('.game-art').forEach(art=>clearTimeout(art._imageTimer));
+            entry.card.remove();entries.delete(key);
+          }
+          items.forEach((game,index)=>{
+            let entry=entries.get(game.key);
+            if(!entry){entry=create(game);entries.set(game.key,entry);}
+            entry.game=game;update(entry,game);
+            if(container.children[index]!==entry.card)container.insertBefore(entry.card,container.children[index]||null);
+          });
+        };
+        reconcile(el('game-favorites'),favoriteCards,library.favorites,game=>{
+          const card=document.createElement('article');card.className='game-my-card';card.dataset.key=game.key;
+          const select=document.createElement('button');select.type='button';select.className='game-my-select';
+          const art=document.createElement('div');art.className='game-art';
+          const name=document.createElement('span');name.className='game-my-title';select.append(art,name);select.addEventListener('click',()=>post('setGame',game.key));
+          const tools=document.createElement('div');tools.className='game-my-tools';
+          const entry={card,art,name,game,buttons:[]};
+          [['game.rename',()=>beginRename(entry.game)],['game.removeFavorite',()=>post('removeGameFavorite',game.key)]].forEach(([key,action])=>{
+            const button=document.createElement('button');button.type='button';button.className='game-button';button.addEventListener('click',action);tools.appendChild(button);entry.buttons.push({button,key});
+          });card.append(select,tools);return entry;
+        },(entry,game)=>{
+          entry.card.dataset.current=String(game.key===current.key);entry.name.textContent=title(game);image(entry.art,game.image);
+          entry.buttons.forEach(({button,key})=>button.textContent=t(key));
+        });
+        reconcile(el('game-recent'),recentCards,library.recent,game=>{
+          const select=document.createElement('button');select.type='button';select.className='game-button game-recent-select';select.dataset.key=game.key;
+          const art=document.createElement('div');art.className='game-art';
+          const name=document.createElement('span');const tag=document.createElement('span');
+          select.append(art,name,tag);select.addEventListener('click',()=>post('setGame',game.key));return {card:select,art,name,tag};
+        },(entry,game)=>{
+          entry.name.textContent=title(game);entry.tag.textContent=game.favorite?'★':'';image(entry.art,game.image);
+        });
+      };
+      window._updateGameLibrary = value => {
+        library={games:value.games||[],favorites:value.favorites||[],recent:value.recent||[]};
+        const signature=JSON.stringify(library)+currentLocale;
+        if(signature!==librarySignature){librarySignature=signature;renderLibrary();}
+        for(const [id,{favorite}] of gameCards)favorite.textContent=t(library.favorites.some(game=>game.key===`sgdb-${id}`)?'game.removeFavorite':'game.addFavorite');
+        el('game-current-favorite').textContent=t(library.favorites.some(game=>game.key===current.key)?'game.removeFavorite':'game.addFavorite');
+      };
+      const elapsed = () => {
+        const seconds = Math.max(0, Math.floor(Date.now() / 1000 - (current.startUnix || Date.now() / 1000)));
+        el('game-discord-time').textContent = `${t('game.elapsed')} ${String(Math.floor(seconds / 3600)).padStart(2,'0')}:${String(Math.floor(seconds / 60) % 60).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+      };
+      renderGameUI = () => {
+        el('game-current-title').textContent = current.displayName || current.name || t('game.none');
+        el('game-current-source').textContent = `${t('game.source')} · ${live.effectiveHdmiSource || t('meta.none')}`;
+        el('game-current-discord').textContent = t(current.discordConnected ? 'game.discordConnected' : 'game.discordUnavailable');
+        el('game-cover-mode').textContent = current.key ? t(current.manualCover ? 'game.manualMode' : 'game.autoMode') : '';
+        image(el('game-current-art'), current.image);
+        const edited=current.artworkMode==='fit'||current.artworkMode==='crop';
+        const remotePreview=['externalAccepted','externalPending','unavailable','probeAccepted','previewOnly','localEditOnly'].includes(current.discordImageStatus);
+        image(el('game-discord-art'), remotePreview&&current.image?current.image:'assets/nitlink.svg');
+        el('game-discord-art').title=t(remotePreview?'game.discordArtworkPreview':'game.discordArtworkFallback');
+        el('game-current-artwork-tag').hidden=!current.isOfficial;
+        el('game-current-artwork-tag').textContent=edited?t(current.isOfficial?'game.derivedOfficial':'game.derivedArtwork'):current.isOfficial?t(current.language==='zh-TW'?'game.officialBadge':'game.officialArtwork')+' · '+(current.provider==='nintendo-hk-store'?t('game.hkStore'):current.provider==='nintendo-hk-eshop'?'Nintendo eShop CDN':'Nintendo Taiwan'):'';
+        el('game-current-artwork-tag').hidden=!current.isOfficial&&!edited;
+        localEffect.hidden=!edited;localEffect.textContent=t('game.edit.localEffect');actualArtwork.hidden=!edited;
+        if(edited){image(actualArt,['asset','fallback','localImageUnavailable'].includes(current.discordActualImageStatus)?'assets/nitlink.svg':current.sourceImage||'assets/nitlink.svg');actualText.textContent=t('game.edit.discordOriginal')+' · '+t('game.discordImage.'+(current.discordActualImageStatus||'unavailable'));}
+        window.NitLinkArtworkEditor?.update(current);
+        el('game-adjust-cover').disabled=!current.coverId||!current.image;
+        el('game-discord-title').textContent = current.displayName || live.effectiveHdmiSource || t('game.none');
+        el('game-discord-name').textContent = current.discordNameStatus === 'accepted' ? live.effectiveHdmiSource || 'NitLink' : 'NitLink';
+        el('game-discord-name-status').textContent = t('game.discordName.'+(current.discordNameStatus||'unverified'));
+        el('game-discord-signal').textContent = typeof live.discordSignal === 'string' ? live.discordSignal : (live.negotiatedWidth>0&&live.negotiatedHeight>0&&live.negotiatedFps>0
+          ? `${live.negotiatedWidth}×${live.negotiatedHeight} · ${live.negotiatedFps} FPS` : '');
+        el('game-discord-image-status').textContent = t(`game.discordImage.${current.discordImageStatus || 'unavailable'}`);
+        el('game-clear').disabled = !current.key; el('game-save-quality').disabled = !current.key;
+        el('game-current-favorite').disabled=!current.key;el('game-current-rename').disabled=!current.key;
+        el('game-current-favorite').textContent=t(library.favorites.some(game=>game.key===current.key)?'game.removeFavorite':'game.addFavorite');
+        el('game-auto').disabled = !current.id; el('game-cover-retry').disabled = !current.id;
+        ['square', 'portrait', 'all'].forEach(value => {
+          el(`game-shape-${value}`).setAttribute('aria-pressed', String(shape === value));
+          el(`game-shape-${value}`).disabled = !current.id;
+        });
+        for (const [id, {card}] of gameCards) card.setAttribute('aria-pressed', String(current.key === `sgdb-${id}`));
+        for (const [id, {card}] of coverCards) card.setAttribute('aria-pressed', String(current.coverId === id));
+        for(const [key,{card}] of favoriteCards)card.dataset.current=String(key===current.key);
+        updateStatus(); elapsed();
+        const signature=JSON.stringify(library)+currentLocale;
+        if(signature!==librarySignature){librarySignature=signature;renderLibrary();}
+      };
+      window._updateGameState = state => {
+        const changed=current.key!==state.key||current.dataMode!==state.dataMode;
+        const localeChanged=!!current.locale&&current.locale!==state.locale;
+        if(changed){stopSearch();stopCovers();shape=state.isOfficial||state.dataMode==='real'?'all':'square';coverProvider='all';officialStatus='idle';const known=results.find(game=>game.id===state.id);const saved=library.games.find(game=>game.key===state.key);el('game-official-query').value=state.officialQuery||saved?.displayNames?.['zh-TW']||known?.displayName||state.name||'';}
+        if (current.locale && current.locale !== state.locale) {
+          stopCovers();
+          clearTimeout(debounce); clearTimeout(searchTimer); searchRequest = ++sequence;
+          results = []; searchStatus = 'idle'; renderResults();
+        }
+        current = state; renderGameUI();
+        if (changed) {
+          notice = '';coverPage=0;coverHasMore=false;coverTotal=0;
+          if(state.libraryRestored&&state.coverId){covers=[];coverStatus='restored';renderCovers();updateStatus();}
+          else loadCovers();
+        }else if(localeChanged){renderCovers();if(el('game-cover-details').open)showCoverDetails(covers.find(cover=>cover.id===detailsCover),false);}
+      };
+      window._updateGameLive = state => {
+        live = {...live, ...state};
+        if (Array.isArray(state.gameList) && JSON.stringify(builtIn) !== JSON.stringify(state.gameList)) {
+          builtIn = state.gameList; el('game-built-in').replaceChildren();
+          builtIn.forEach(game => {
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'game-button';
+            button.textContent = game.title; button.addEventListener('click', () => post('setGame', game.id));
+            el('game-built-in').appendChild(button);
+          });
+        }
+        renderGameUI();
+      };
+      window._gameEvent = event => {
+        if (event.locale && event.locale !== currentLocale) return;
+        if (event.kind === 'search' && event.request === searchRequest) {
+          clearTimeout(searchTimer); searchStatus = event.status;
+          const needle=query.value.trim().toLowerCase();
+          const relevance=game=>String(game.id)===needle?4:Math.max(...[game.displayName,game.name].map(name=>{
+            const text=(name||'').toLowerCase();return text===needle?3:needle&&text.startsWith(needle)?2:needle&&text.includes(needle)?1:0;
+          }));
+          // Stable relevance groups include provider supplements. Preserve the
+          // Worker's order within a group; no popularity scores are invented.
+          results = [...event.games||[]].sort((a,b)=>relevance(b)-relevance(a));
+          results.forEach(game => { game.dataMode = game.dataMode || event.dataMode || 'real'; });
+          suggestions = event.suggestions || []; queriedTerms = event.queriedTerms || [];
+          el('game-suggestions').replaceChildren();
+          suggestions.forEach(term => {
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'game-button'; button.textContent = term;
+            button.addEventListener('click', () => { query.value = term; search(); }); el('game-suggestions').appendChild(button);
+          });
+          renderResults(); updateStatus();
+          el('game-search-status').title = Object.entries(event.lookups || {}).map(([source, status]) => `${source}: ${status}`).join(' · ');
+        } else if (event.kind === 'covers' && event.request === coverRequest && event.gameId === current.id && event.shape === shape) {
+          clearTimeout(coverTimer); coverStatus = event.status; covers = [...event.artworkSources||[],...event.covers||[]];
+          officialStatus=event.officialStatus||'idle';
+          coverPage=Number(event.page)||0;coverHasMore=event.hasMore===true;coverTotal=Number(event.total)||covers.length;
+          covers.forEach(cover => { cover.dataMode = cover.dataMode || event.dataMode || 'real'; });
+          renderCovers(); updateStatus();
+          clearTimeout(coverImageTimer);
+          const requested=coverRequest;
+          coverImageTimer=setTimeout(()=>{
+            if(requested===coverRequest&&settleImages(covers,coverCards,'failed')){coverStatus='timeout';updateStatus();}
+          },45000);
+        } else if (event.kind === 'image') {
+          const entry = event.coverId ? (event.request === coverRequest && coverCards.get(event.coverId)) :
+            (event.request === searchRequest && gameCards.get(event.gameId));
+          if (entry) {
+            const model=event.coverId?covers.find(cover=>cover.id===event.coverId):results.find(game=>game.id===event.gameId);
+            const status=['loading','failed','missing','unavailable'].includes(event.imageStatus)?event.imageStatus:'empty';
+            if(model){model.image=event.image;model.imageStatus=status;}
+            image(entry.art, event.image, status);
+            if(event.coverId){refreshCover(entry);updateStatus();}
+            if(model&&event.coverId&&detailsCover===model.id&&el('game-cover-details').open)showCoverDetails(model,false);
+          }
+        } else if (event.kind === 'currentImage' && event.request === coverRequest && event.gameId === current.id && event.coverId === current.coverId) {
+          if (event.imageStatus === 'failed') { notice = 'imageFailed'; updateStatus(); }
+        }
+      };
+      window._gameNotice = key => { notice = key; updateStatus();window.NitLinkArtworkEditor?.notice(key); };
+      setInterval(elapsed, 1000);
+      renderGameUI();
+    })();
+
     // Transient toast notification. Pushed from C++ via state.notification
     // (single-use, cleared on the C++ side so the same notice never
     // re-fires after dismissal).
@@ -1075,8 +1550,8 @@
     };
 
     const applyState = s => {
-      if (s.holyBearUpdate) { holyBearUpdateState = s.holyBearUpdate; renderHolyBearUpdate(); }
       if (!s) return;
+      if (s.holyBearUpdate) { holyBearUpdateState = s.holyBearUpdate; renderHolyBearUpdate(); }
       if (s.locale) applyTranslations(s.locale);
       if (languageSelect && s.languagePreference) languageSelect.value = s.languagePreference;
       const setToggle = (id, on) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!on); };
@@ -1188,6 +1663,7 @@
       }
       window._updateManualHdmiSource(
         s.manualHdmiSource, s.effectiveHdmiSource, s.manualHdmiSourceCustom, s.manualHdmiSourceOptions);
+      window._updateGameLive(s);
 
       // One-shot user-facing notice from the C++ pipeline. Most state
       // pushes carry an empty string here; non-empty means the C++ side
@@ -1231,6 +1707,10 @@
           }
         }
         if (msg && typeof msg.toast === 'string') showToast(msg.toast);
+        if (msg && msg.gameState) window._updateGameState(msg.gameState);
+        if (msg && msg.gameLibrary) window._updateGameLibrary(msg.gameLibrary);
+        if (msg && msg.gameEvent) window._gameEvent(msg.gameEvent);
+        if (msg && msg.gameNotice) window._gameNotice(msg.gameNotice);
         if (msg && typeof msg.pipOpacity === 'number') setPiPOpacityVisual(msg.pipOpacity);
       });
       post('ready');

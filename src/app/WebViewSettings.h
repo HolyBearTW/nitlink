@@ -9,6 +9,7 @@
 #include <map>
 #include <vector>
 #include <array>
+#include "game_service.h"
 
 // WebViewSettings: host a WebView2 control as a CHILD of the main window,
 // occupying the full client rect when visible. When the menu opens, the
@@ -60,6 +61,10 @@ public:
     bool PostMessage(const std::wstring& json);
     void DispatchPendingMessages(bool closing = false);
     void SetMessageHandler(MessageCallback cb) { m_onMessage = cb; }
+    // Memory-only lookup; no network or disk I/O from WebView callbacks.
+    void SetGameImageLookup(std::function<std::shared_ptr<const NitLink::Games::Image>(std::wstring_view)> cb) {
+        m_gameImageLookup = std::move(cb);
+    }
     void Shutdown();
 
 private:
@@ -98,6 +103,7 @@ private:
     // cleanly. value==0 means "not yet registered."
     EventRegistrationToken m_messageToken = {};
     MessageCallback m_onMessage;
+    std::function<std::shared_ptr<const NitLink::Games::Image>(std::wstring_view)> m_gameImageLookup;
     NitLink::MessageBudget m_messageBudget;
     NitLink::PendingSliderMessages m_pendingSliders;
     uint64_t m_lastBudgetLog = 0;

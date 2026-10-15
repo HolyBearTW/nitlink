@@ -5,10 +5,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title data-i18n="page.settings">NitLink · Settings</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <script src="locales/en-US.js"></script>
-  <script src="locales/zh-TW.js"></script>
-  <script src="locales/zh-CN.js"></script>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
+  <script src="locales/en-US.js?v=20261015-artwork3"></script>
+  <script src="locales/zh-TW.js?v=20261015-artwork3"></script>
+  <script src="locales/zh-CN.js?v=20261015-artwork3"></script>
+  <script src="assets/menu/preview-host.js?v=20261015-artwork3"></script>
   <style>
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400; font-display: swap; src: url('assets/menu/Archivo-400.ttf') format('truetype'); }
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 500; font-display: swap; src: url('assets/menu/Archivo-500.ttf') format('truetype'); }
@@ -32,6 +33,7 @@
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
+    body { container: shell / inline-size; }
     body {
       background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 13px;
       line-height: 1.4; overflow: hidden; -webkit-font-smoothing: antialiased;
@@ -52,9 +54,13 @@
     .audio-help { flex:none; width:19px; height:19px; border:1px solid var(--hair2); border-radius:50%; background:none; color:var(--ink3); cursor:help; font-size:11px; }
     .audio-help:hover, .audio-help:focus-visible { color:var(--ink); border-color:var(--accent); outline:none; }
     #audio-tooltip { position:fixed; z-index:100; width:320px; max-width:calc(100vw - 24px); padding:12px 14px; border:1px solid var(--hair2); border-radius:6px; background:#303030; color:var(--ink); box-shadow:0 4px 18px #0006; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
-    .rail, .metabar, #pane-video, #pane-audio, #pane-shortcuts {
+    .rail, .metabar, #pane-video, #pane-audio, #pane-shortcuts, #pane-games {
       -webkit-user-select: none;
       user-select: none;
+    }
+    #game-query, #game-custom-name, #game-official-query {
+      -webkit-user-select: text;
+      user-select: text;
     }
     :lang(zh-CN) { --sans: "Archivo", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
     button, select { font: inherit; }
@@ -331,7 +337,7 @@
        (panel_side right or left, about 420 CSS px wide): the rail becomes a
        tab strip, the signal block stacks, and the surfaces go translucent so
        the picture reads through. The full-window panel keeps the wide layout. */
-    @media (max-width: 640px) {
+    @container shell (max-width: 640px) {
       :root {
         --bg: rgba(26, 26, 26, 0.93);
         --chrome: rgba(18, 18, 18, 0.94);
@@ -380,7 +386,7 @@
 
     /* Full uses the existing state, navigation and controls. Only this mode
        gets a signal sidebar and section columns; docked rules stay intact. */
-    @media (min-width: 960px) {
+    @container shell (min-width: 960px) {
       html[data-side="full"] .content {
         display: grid;
         grid-template-columns: clamp(240px, 20vw, 320px) minmax(0, 1fr);
@@ -410,13 +416,13 @@
       html[data-side="full"] .row-right { justify-content: flex-end; gap: 12px; }
       html[data-side="full"] .row-chip { text-align: right; }
     }
-    @media (min-width: 1280px) {
+    @container shell (min-width: 1280px) {
       html[data-side="full"] #pane-video[data-active="true"] {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
     html[data-active-pane="pane-about"] .metabar { display: none !important; }
-    @media (min-width: 960px) {
+    @container shell (min-width: 960px) {
       html[data-side="full"][data-active-pane="pane-about"] .content {
         grid-template-columns: minmax(0, 1fr);
         grid-template-areas: "warning" "header" "settings";
@@ -425,6 +431,163 @@
         width: 100%; max-width: 1180px; margin: 0 auto; padding-top: 22px;
       }
     }
+    /* Game management is independent of capture settings. Layout follows the
+       actual content width, including a 420px dock or a small Full window. */
+    #pane-games { container: games / inline-size; min-width: 0; }
+    .game-layout { display: grid; gap: 18px; min-width: 0; }
+    .game-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+    .game-panel { min-width: 0; border: 1px solid var(--hair2); background: #242424; border-radius: 8px; overflow: hidden; }
+    .game-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--hair); }
+    .game-panel-header { flex-wrap: wrap; }
+    .game-panel h2 { font-size: 13px; font-weight: 600; }
+    .game-panel-body { padding: 16px; }
+    .game-note { font-size: 12px; color: var(--ink3); line-height: 1.65; overflow-wrap: anywhere; }
+    .game-eyebrow { color: var(--accent-text); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+    .game-current { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; align-items: center; }
+    .game-current-title { margin: 5px 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+    .game-art { position: relative; aspect-ratio: 1; background: #181d24; border-radius: 5px; overflow: hidden; display: grid; place-items: center; color: #65778d; }
+    .game-art::before { content: '◇'; font-size: 30px; }
+    .game-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .game-art[data-image-state="loading"] { animation: game-shimmer 1.4s ease-in-out infinite alternate; }
+    .game-art[data-image-state="failed"]::before { content: '!'; font-size: 22px; }
+    @keyframes game-shimmer { to { background: #303b49; } }
+    .game-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .game-button { padding: 7px 10px; border: 1px solid var(--hair2); border-radius: 5px; background: #292929; color: var(--ink2); font: 12px var(--sans); cursor: pointer; }
+    .game-button:hover, .game-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+    .game-button.primary { background: var(--accent); color: #132235; border-color: var(--accent); }
+    .game-button:disabled { opacity: .45; cursor: default; }
+    #pane-games :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .game-search-row { display: flex; gap: 8px; }
+    #game-official-query { flex: 1; width: 0; min-width: 0; padding: 9px; border: 1px solid var(--hair2); border-radius: 5px; background: #1c1c1c; color: var(--ink); font: inherit; }
+    .game-store-search { margin: 12px 0; }
+    .game-store-search .game-note { display: block; margin: 7px 0; }
+    .game-cover-caption { font-size: 10px; color: var(--ink2); line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 5px; }
+    #game-official-gallery[data-catalogue="true"] { display: grid; grid-template-columns: repeat(auto-fill,minmax(88px,1fr)); max-height: 340px; overflow-y: auto; }
+    #game-official-gallery[data-catalogue="true"] .game-art { height: auto; aspect-ratio: 16 / 9; }
+    #game-official-gallery[data-catalogue="true"] .game-cover-caption { padding-right: 27px; }
+    #game-query { flex: 1; width: 0; min-width: 0; padding: 10px 12px; border: 1px solid var(--hair2); border-radius: 5px; color: var(--ink); background: #1c1c1c; font: 13px var(--sans); }
+    #game-query:focus { border-color: var(--accent); outline: none; }
+    .game-status { margin: 12px 0; color: var(--ink2); font-size: 12px; line-height: 1.6; }
+    .game-status[data-error="true"] { color: var(--warn); }
+    .game-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; max-height: 390px; overflow-y: auto; padding: 2px 6px 2px 2px; scrollbar-gutter: stable; }
+    .game-result { min-width: 0; text-align: left; border: 1px solid var(--hair2); border-radius: 6px; background: #202020; padding: 8px; color: var(--ink); cursor: pointer; }
+    .game-result:hover, .game-result[aria-pressed="true"] { border-color: var(--accent); background: #27313d; }
+    .game-result .game-art { aspect-ratio: 1.25; }
+    .game-result .game-art:not([data-image-state="ok"])::before { content: attr(data-image-label); font-size: 11px; line-height: 1.6; padding: 12px; text-align: center; color: var(--ink3); }
+    .game-result-title { display: block; margin: 8px 0 4px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .game-result-subtitle { display: block; font-size: 10px; color: var(--ink3); overflow-wrap: anywhere; }
+    .game-result-origin { display: inline-block; margin-top: 7px; font-size: 9px; padding: 2px 5px; border-radius: 3px; color: var(--accent-text); background: var(--accent-soft); }
+    .game-result-wrap { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .game-result-wrap .game-result { width: 100%; flex: 1; }
+    .game-favorite-action { width: 100%; text-align: center; font-size: 10px; }
+    .game-my-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(145px,1fr)); gap: 8px; max-height: 300px; overflow-y: auto; padding: 2px 5px 2px 2px; }
+    .game-my-card { min-width: 0; padding: 8px; border: 1px solid var(--hair2); border-radius: 6px; background: #202020; }
+    .game-my-card[data-current="true"] { border-color: var(--accent); background: #27313d; }
+    .game-my-select { display: block; width: 100%; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+    .game-my-title { display: block; padding: 7px 0 3px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .game-my-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .game-my-tools .game-button { font-size: 10px; padding: 5px 7px; }
+    .game-recent-heading { margin: 14px 0 8px; font-size: 12px; color: var(--ink2); }
+    .game-recent-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+    .game-recent-select { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: 8px; align-items: center; text-align: left; }
+    .game-recent-select span { overflow-wrap: anywhere; }
+    .game-rename { margin-top: 12px; padding: 10px; background: #1c1c1c; border: 1px solid var(--hair2); border-radius: 5px; }
+    .game-rename input { width: 100%; margin-top: 7px; padding: 8px; color: var(--ink); border: 1px solid var(--hair2); background: #202020; font: inherit; }
+    .game-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; }
+    .game-gallery[data-shape="all"] img { object-fit: contain; }
+    .game-query-trace { margin: 10px 0; font-size: 10px; line-height: 1.6; color: var(--ink3); overflow-wrap: anywhere; }
+    #game-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    #game-suggestions .game-button { font-size: 10px; text-align: left; overflow-wrap: anywhere; }
+    .game-empty { padding: 24px 12px; text-align: center; border: 1px dashed var(--hair2); border-radius: 6px; color: var(--ink3); font-size: 12px; line-height: 1.7; }
+    .game-fallback { padding: 12px; margin-top: 12px; background: #2b2a24; border-radius: 6px; }
+    .game-fallback .game-actions { margin-top: 8px; }
+    .game-cover-tools { display: flex; gap: 6px; flex-wrap: wrap; }
+    .game-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(64px, calc((100% - 40px) / 6)), 1fr)); gap: 8px; max-height: 420px; overflow-y: auto; padding: 2px 6px 2px 2px; scrollbar-gutter: stable; }
+    .game-cover-tile { position: relative; min-width: 0; align-self: start; }
+    .game-cover-tile .game-cover { display: block; width: 100%; padding: 2px; }
+    .game-cover-tile .game-art img { object-fit: contain; }
+    .game-cover-info { position: absolute; bottom: 7px; right: 7px; width: 23px; height: 23px; border: 1px solid #8295a8; border-radius: 50%; background: #171c24ee; color: #fff; font: 13px var(--sans); cursor: pointer; }
+    .game-cover-badge { position: absolute; left: 5px; top: 5px; padding: 3px 4px; border-radius: 3px; background: #152c40ee; color: #b9e0ff; font-size: 9px; pointer-events: none; }
+    .game-cover-badge.logo { top: auto; bottom: 7px; }
+    .game-artwork-heading { margin: 14px 0 9px; color: var(--ink2); font-size: 12px; font-weight: 500; }
+    #game-official-section { display: flex; align-items: center; gap: 14px; padding: 8px 0 12px; margin-bottom: 8px; border-bottom: 1px solid var(--hair2); }
+    #game-official-section h3 { flex: 0 1 110px; margin: 0; line-height: 1.6; }
+    #game-official-section[data-catalogue="true"] { display: block; }
+    #game-official-section[data-catalogue="true"] h3 { margin: 0 0 10px; }
+    #game-official-gallery { display: flex; flex: 1; gap: 8px; max-height: 140px; min-width: 0; overflow-x: auto; scrollbar-gutter: auto; }
+    #game-official-gallery .game-cover-tile { flex: 0 0 84px; }
+    #game-official-gallery .game-art { height: 116px; aspect-ratio: auto; }
+    #game-current-art img, .game-my-select img, .game-recent-select img { object-fit: contain; }
+    #game-current-artwork-tag { display: inline-block; margin-top: 6px; color: #b9e0ff; font-size: 10px; }
+    .game-cover-dialog { width: min(460px, calc(100vw - 28px), calc(100cqw - 28px)); max-height: calc(100vh - 32px); overflow: auto; margin: auto; padding: 20px; border: 1px solid var(--hair2); border-radius: 10px; background: #22252a; color: var(--ink); }
+    :root[data-side="right"] .game-cover-dialog { left: auto; right: 14px; margin-inline: 0; }
+    :root[data-side="left"] .game-cover-dialog { left: 14px; right: auto; margin-inline: 0; }
+    .game-cover-dialog::backdrop { background: #000a; }
+    .game-cover-dialog-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 15px; }
+    #game-cover-detail-art { width: min(240px, 100%); max-height: 42vh; margin: 0 auto 16px; }
+    #game-cover-detail-art img { object-fit: contain; }
+    .game-cover-dialog dl { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 9px 14px; font-size: 12px; }
+    .game-cover-dialog dt { color: var(--ink3); }
+    .game-cover-dialog dd { margin: 0; overflow-wrap: anywhere; }
+    .game-cover-dialog .game-note { margin-top: 15px; }
+    .game-artwork-editor { width: min(540px,calc(100vw - 24px),calc(100cqw - 24px)); }
+    .game-editor-modes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    #game-editor-canvas { display: block; width: min(100%,320px); height: auto; margin: 12px auto; border: 1px solid var(--hair2); background: #16181c; touch-action: none; cursor: grab; }
+    #game-editor-canvas:active { cursor: grabbing; }
+    .game-editor-tools { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 10px; align-items: center; }
+    .game-editor-previews { display: flex; align-items: center; gap: 24px; margin: 16px 0; }
+    .game-editor-previews figure { margin: 0; }
+    .game-editor-previews figcaption { margin-top: 5px; color: var(--ink3); font-size: 11px; }
+    .game-discord-original { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+    #game-discord-original-art { flex: 0 0 40px; width: 40px; }
+    #game-discord-original-art img { object-fit: contain; }
+    .game-cover { min-width: 0; position: relative; background: #202020; border: 2px solid transparent; border-radius: 7px; padding: 4px; color: var(--ink2); cursor: pointer; text-align: left; }
+    .game-cover:hover { border-color: #547596; }
+    .game-cover:disabled { cursor: wait; }
+    .game-cover:disabled:has([data-image-state="failed"]) { cursor: not-allowed; opacity: .55; }
+    .game-cover[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+    .game-cover[aria-pressed="true"]::after { content: '✓'; position: absolute; right: 8px; top: 8px; width: 20px; height: 20px; text-align: center; border-radius: 50%; color: #12253a; background: var(--accent); }
+    .game-gallery[data-shape="portrait"] .game-art { aspect-ratio: 2 / 3; }
+    .game-gallery[data-shape="all"] .game-cover-tile[data-shape="portrait"] .game-art { aspect-ratio: 2 / 3; }
+    .game-discord-preview { margin-top: 12px; padding: 16px; border-radius: 7px; background: #191a1e; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; align-items: center; }
+    .game-discord-preview[data-size="compact"] { grid-template-columns: 64px minmax(0,1fr); gap: 12px; }
+    #game-discord-art img { object-fit: contain; }
+    .game-discord-text { min-width: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+    .game-discord-text strong { display: block; color: var(--ink); margin-bottom: 3px; }
+    .game-discord-text p { color: var(--ink2); }
+    .game-discord-time { color: var(--ink3); }
+    .game-library { margin-top: 14px; border-top: 1px solid var(--hair); padding-top: 12px; }
+    .game-library summary { color: var(--ink2); font-size: 12px; cursor: pointer; }
+    .game-library-list { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; margin-top: 10px; }
+    .game-library-list .game-button { text-align: left; overflow-wrap: anywhere; }
+    #game-fixture-banner { margin-bottom: 16px; padding: 12px; border: 1px solid #746134; border-radius: 6px; background: #302b20; }
+    .game-preview-controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .game-preview-controls label { display: flex; align-items: center; gap: 6px; color: var(--ink2); font-size: 11px; }
+    .game-preview-controls select { min-width: 0; color: var(--ink); background: #202020; padding: 5px; border: 1px solid var(--hair2); }
+    .source-format-details { border-top: 1px solid var(--hair2); margin-top: 10px; padding-top: 4px; }
+    .source-format-details summary { cursor: pointer; padding: 10px 14px; font-size: 12px; color: var(--ink2); }
+    .source-popover { width: min(340px, calc(100vw - 24px)); max-height: min(520px, calc(100vh - 120px)); border-radius: 6px; padding: 6px 0; }
+    @container games (min-width: 900px) {
+      .game-layout { grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr); align-items: start; }
+    }
+    @container games (max-width: 500px) {
+      .game-my-grid { grid-template-columns: minmax(0,1fr); }
+      .game-my-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; }
+      .game-my-select { display: grid; grid-template-columns: 48px minmax(0,1fr); align-items: center; gap: 10px; }
+      .game-my-title { padding: 0; }
+      .game-my-tools { flex-direction: column; margin: 0; }
+    }
+    @container shell (max-width: 600px) {
+      .rail { height: 56px; }
+      .rail-brand { display: none; }
+      .rail-item { min-width: 0; flex-direction: column; gap: 3px; font-size: 10px; }
+      #pane-games { padding: 14px 12px 22px; }
+      .game-panel-header, .game-panel-body { padding: 12px; }
+      .game-results { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 340px; }
+      .game-gallery { max-height: 340px; }
+      .game-current-title { font-size: 14px; }
+    }
+    [hidden] { display: none !important; }
   </style>
 </head>
 
@@ -442,6 +605,10 @@
       <button class="rail-item" data-tab="pane-audio">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="8" width="2.2" height="4" fill="currentColor"></rect><rect x="7.4" y="5" width="2.2" height="10" fill="currentColor"></rect><rect x="11.8" y="7" width="2.2" height="6" fill="currentColor"></rect><rect x="16.2" y="9" width="2.2" height="2" fill="currentColor"></rect></svg>
         <span data-i18n="nav.audio"></span>
+      </button>
+      <button class="rail-item" data-tab="pane-games">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M7 7h10a4 4 0 0 1 4 3l1 7a2 2 0 0 1-3 2l-4-3H9l-4 3a2 2 0 0 1-3-2l1-7a4 4 0 0 1 4-3Z"/><path d="M7 10v5m-2.5-2.5h5m6-1h.01m2 3h.01"/></svg>
+        <span data-i18n="nav.games"></span>
       </button>
       <button class="rail-item" data-tab="pane-shortcuts">
         <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="15" height="9" rx="1" stroke="currentColor" stroke-width="1.4"></rect><rect x="6" y="11" width="8" height="1.6" fill="currentColor"></rect></svg>
@@ -517,6 +684,87 @@
       </div>
 
       <main>
+
+        <section class="pane" id="pane-games" aria-label="Games and Discord">
+          <aside id="game-fixture-banner" hidden>
+            <p class="game-note" id="game-preview-mode-note" data-i18n="game.fixture"></p>
+            <div class="game-preview-controls">
+              <label><span data-i18n="game.dataMode"></span><select id="game-preview-data-mode"><option value="fixture">Fixture</option><option value="real">Real API</option></select></label>
+              <label><span data-i18n="game.previewLayout"></span><select id="game-preview-layout"><option value="full">Full</option><option value="left">Docked Left · 420px</option><option value="right">Docked Right · 420px</option></select></label>
+              <label><span data-i18n="game.previewLanguage"></span><select id="game-preview-language"><option value="zh-TW">繁體中文</option><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></label>
+              <label><span data-i18n="game.previewScenario"></span><select id="game-preview-scenario"><option value="ok" data-i18n="game.scenarioOk"></option><option value="empty" data-i18n="game.scenarioEmpty"></option><option value="upstreamUnavailable" data-i18n="game.scenarioUpstream"></option><option value="timeout" data-i18n="game.scenarioTimeout"></option><option value="imageFailure" data-i18n="game.scenarioImage"></option></select></label>
+              <label id="game-preview-synthetic-control" hidden><span data-i18n="game.showSynthetic"></span><input id="game-preview-synthetic" type="checkbox"></label>
+            </div>
+          </aside>
+          <div class="game-layout">
+            <div class="game-column">
+              <article class="game-panel" id="game-my-games">
+                <div class="game-panel-header"><h2 data-i18n="game.myGames"></h2><span class="game-note" data-i18n="game.localLibrary"></span></div>
+                <div class="game-panel-body">
+                  <div class="game-my-grid" id="game-favorites"></div><p class="game-note" id="game-favorites-empty" data-i18n="game.favoritesEmpty"></p>
+                  <h3 class="game-recent-heading" data-i18n="game.recent"></h3><div class="game-recent-list" id="game-recent"></div><p class="game-note" id="game-recent-empty" data-i18n="game.recentEmpty"></p>
+                  <div class="game-rename" id="game-rename-editor" hidden><label for="game-custom-name" class="game-note" data-i18n="game.customName"></label><input id="game-custom-name" maxlength="256" autocomplete="off"><div class="game-actions"><button type="button" class="game-button primary" id="game-name-save" data-i18n="game.saveName"></button><button type="button" class="game-button" id="game-name-reset" data-i18n="game.resetName"></button><button type="button" class="game-button" id="game-name-cancel" data-i18n="game.cancel"></button></div></div>
+                </div>
+              </article>
+              <article class="game-panel">
+                <div class="game-panel-header"><h2 data-i18n="game.current"></h2><span class="game-eyebrow" id="game-cover-mode"></span></div>
+                <div class="game-panel-body">
+                  <div class="game-current"><div class="game-art" id="game-current-art"></div><div><span class="game-eyebrow" data-i18n="game.localArtwork"></span><h3 class="game-current-title" id="game-current-title"></h3><p class="game-note" id="game-current-source"></p><p class="game-note" id="game-current-discord"></p><span id="game-current-artwork-tag" hidden></span></div></div>
+                  <div class="game-actions"><button type="button" class="game-button" id="game-current-favorite" data-i18n="game.addFavorite"></button><button type="button" class="game-button" id="game-current-rename" data-i18n="game.rename"></button><button type="button" class="game-button" id="game-clear" data-i18n="game.clear"></button><button type="button" class="game-button" id="game-auto" data-i18n="game.auto"></button><button type="button" class="game-button" id="game-save-quality" data-i18n="game.saveQuality"></button></div>
+                  <div class="game-actions"><button type="button" class="game-button" id="game-adjust-cover" data-i18n="game.adjustArtwork"></button></div>
+                  <p class="game-status" id="game-notice" role="status" hidden></p>
+                </div>
+              </article>
+              <article class="game-panel">
+                <div class="game-panel-header"><h2 data-i18n="game.searchTitle"></h2></div>
+                <div class="game-panel-body">
+                  <label class="game-note" for="game-query" data-i18n="game.searchLabel"></label>
+                  <div class="game-search-row"><input type="search" id="game-query" maxlength="256" autocomplete="off" data-i18n-placeholder="game.searchPlaceholder"><button type="button" class="game-button primary" id="game-search" data-i18n="game.search"></button></div>
+                  <p class="game-status" id="game-search-status" role="status" aria-live="polite"></p>
+                  <p class="game-query-trace" id="game-query-trace" hidden></p>
+                  <div class="game-results" id="game-results" aria-label="Search results"></div>
+                  <div class="game-empty" id="game-search-empty" data-i18n="game.searchIdle"></div>
+                  <div class="game-fallback" id="game-search-fallback" hidden><p class="game-note" data-i18n="game.fallbackHelp"></p><div id="game-suggestions"></div><div class="game-actions"><button type="button" class="game-button" id="game-other-name" data-i18n="game.otherName"></button></div></div>
+                  <details class="game-library"><summary data-i18n="game.builtIn"></summary><div class="game-library-list" id="game-built-in"></div></details>
+                </div>
+              </article>
+            </div>
+            <div class="game-column">
+              <article class="game-panel">
+                <div class="game-panel-header"><h2 data-i18n="game.covers"></h2><div class="game-cover-tools"><button type="button" class="game-button" id="game-shape-square" aria-pressed="true" data-i18n="game.square"></button><button type="button" class="game-button" id="game-shape-portrait" aria-pressed="false" data-i18n="game.portrait"></button><button type="button" class="game-button" id="game-shape-all" aria-pressed="false" data-i18n="game.all"></button><button type="button" class="game-button" id="game-cover-retry" data-i18n="game.retry"></button></div></div>
+                <div class="game-panel-body">
+                  <div class="game-cover-tools" id="game-cover-sources"><button type="button" class="game-button" data-cover-provider="all" aria-pressed="true" data-i18n="game.sourcesAll"></button><button type="button" class="game-button" data-cover-provider="nintendo" aria-pressed="false" data-i18n="game.hkStore"></button><button type="button" class="game-button" data-cover-provider="community" aria-pressed="false" data-i18n="game.sourcesCommunity"></button></div>
+                  <div class="game-store-search" id="game-store-search"><label class="game-note" for="game-official-query" data-i18n="game.storeSearchLabel"></label><div class="game-search-row"><input type="search" id="game-official-query" maxlength="256" autocomplete="off"><button type="button" class="game-button" id="game-official-search" data-i18n="game.search"></button></div><p class="game-note" data-i18n="game.storeHelp"></p><p class="game-note" id="game-store-status" role="status"></p></div>
+                  <p class="game-status" id="game-cover-status" role="status" aria-live="polite"></p>
+                  <div id="game-official-section" hidden><h3 class="game-artwork-heading" data-i18n="game.officialGroup"></h3><div class="game-gallery" id="game-official-gallery" data-i18n-aria-label="game.officialGroup"></div></div>
+                  <h3 class="game-artwork-heading" id="game-community-heading" data-i18n="game.communityGroup" hidden></h3>
+                  <div class="game-gallery" id="game-gallery" data-shape="square" aria-label="Cover gallery"></div>
+                  <div class="game-empty" id="game-cover-empty" data-i18n="game.coverIdle"></div>
+                  <div class="game-pagination" id="game-cover-pagination" hidden><button type="button" class="game-button" id="game-cover-prev" data-i18n="game.previous"></button><span class="game-note" id="game-cover-page"></span><button type="button" class="game-button" id="game-cover-next" data-i18n="game.next"></button></div>
+                </div>
+              </article>
+              <article class="game-panel">
+                <div class="game-panel-header"><h2 data-i18n="game.discordPreview"></h2><span class="game-eyebrow" data-i18n="game.preview"></span></div>
+                <div class="game-panel-body"><p class="game-note" data-i18n="game.discordHelp"></p><div class="game-actions"><button type="button" class="game-button" id="game-discord-size-large" data-i18n="game.preview84" aria-pressed="true"></button><button type="button" class="game-button" id="game-discord-size-compact" data-i18n="game.preview64" aria-pressed="false"></button></div><div class="game-discord-preview"><div class="game-art" id="game-discord-art"></div><div class="game-discord-text"><strong id="game-discord-name">NitLink</strong><p id="game-discord-title"></p><p id="game-discord-signal"></p><span class="game-discord-time" id="game-discord-time"></span></div></div><p class="game-note" id="game-discord-name-status"></p><p class="game-status" id="game-discord-image-status"></p></div>
+              </article>
+            </div>
+          </div>
+          <dialog class="game-cover-dialog" id="game-cover-details" aria-labelledby="game-cover-details-title">
+            <div class="game-cover-dialog-header"><h2 id="game-cover-details-title" data-i18n="game.artworkDetails"></h2><button type="button" class="game-button" id="game-cover-details-close" data-i18n="game.close"></button></div>
+            <div class="game-art" id="game-cover-detail-art"></div><dl id="game-cover-detail-fields"></dl>
+            <p class="game-note" data-i18n="game.languageHonesty"></p><p class="game-note" id="game-cover-detail-debug" hidden></p>
+            <div class="game-actions"><button type="button" class="game-button" id="game-detail-use-original" data-i18n="game.useOriginal"></button><button type="button" class="game-button primary" id="game-detail-adjust" data-i18n="game.adjustArtwork"></button></div>
+          </dialog>
+          <dialog class="game-cover-dialog game-artwork-editor" id="game-artwork-editor" aria-labelledby="game-editor-title">
+            <div class="game-cover-dialog-header"><h2 id="game-editor-title" data-i18n="game.adjustArtwork"></h2><button type="button" class="game-button" id="game-editor-close" data-i18n="game.close"></button></div>
+            <div class="game-editor-modes"><button type="button" class="game-button" data-artwork-mode="fit" data-i18n="game.edit.fit"></button><button type="button" class="game-button" data-artwork-mode="crop" data-i18n="game.edit.crop"></button><button type="button" class="game-button" data-artwork-mode="original" data-i18n="game.edit.original"></button></div>
+            <p class="game-note" id="game-editor-help"></p><canvas id="game-editor-canvas" width="512" height="512" tabindex="0" data-i18n-aria-label="game.edit.drag"></canvas>
+            <label class="game-editor-tools" id="game-editor-zoom-row"><span data-i18n="game.edit.zoom"></span><input id="game-editor-zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
+            <div class="game-editor-previews"><figure><canvas id="game-editor-84" width="84" height="84"></canvas><figcaption data-i18n="game.preview84"></figcaption></figure><figure><canvas id="game-editor-64" width="64" height="64"></canvas><figcaption data-i18n="game.preview64"></figcaption></figure></div>
+            <p class="game-note" data-i18n="game.edit.discordLimit"></p><p class="game-status" id="game-editor-status" role="status"></p>
+            <div class="game-actions"><button type="button" class="game-button primary" id="game-editor-save" data-i18n="game.edit.save"></button><button type="button" class="game-button" id="game-editor-reset" data-i18n="game.edit.reset"></button></div>
+          </dialog>
+        </section>
 
         <section class="pane" id="pane-video" data-active="true">
           <div class="settings-group">
@@ -853,7 +1101,8 @@
     </div>
   </aside>
   <div id="audio-tooltip" role="tooltip" hidden></div>
-  <script src="assets/menu/menu.js"></script>
+  <script src="assets/menu/artwork-editor.js?v=20261015-artwork3"></script>
+  <script src="assets/menu/menu.js?v=20261015-artwork3"></script>
 </body>
 
 </html>

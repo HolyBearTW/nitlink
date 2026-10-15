@@ -247,19 +247,20 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
           "original source menu keeps its explicit device refresh on opening");
     Check(Script(view, LR"JS((() => {
         const source = document.getElementById('source-popover');
+        source.querySelector('.source-format-details').open = true;
         const picker = document.getElementById('hdmi-source-picker');
-        const resolution = source.querySelector(':scope > .source-popover-select-row');
-        return source.dataset.open === 'true' && picker.previousElementSibling.textContent === window.NitLinkLocales['zh-TW']['source.manualFormat'] &&
+        const resolution = source.querySelector('.source-format-details > .source-popover-select-row');
+        return source.dataset.open === 'true' && picker.previousElementSibling.textContent === window.NitLinkLocales['zh-TW']['game.hdmiSection'] &&
             picker.getBoundingClientRect().bottom <= resolution.getBoundingClientRect().top &&
             resolution.querySelector('label').textContent === window.NitLinkLocales['zh-TW']['source.resolution'] &&
-            source.querySelectorAll(':scope > .source-popover-select-row').length === 3 &&
+            source.querySelectorAll('.source-format-details > .source-popover-select-row').length === 3 &&
             document.querySelector('#hdmi-source-trigger option[value=auto]').textContent === '自動' &&
             document.querySelector('#hdmi-source-trigger option[value=other]').textContent === '其他…' &&
             document.getElementById('hdmi-source-trigger').selectedOptions[0].value === 'switch2';
-    })())JS") == L"true", "manual format heading precedes HDMI identity, followed by resolution, framerate and format");
+    })())JS") == L"true", "HDMI identity precedes the separate expandable resolution, framerate and format region");
     Check(Script(view, LR"JS((() => {
         const manual = document.getElementById('hdmi-source-trigger');
-        const resolution = document.querySelector('#source-popover > .source-popover-select-row select');
+        const resolution = document.querySelector('#source-popover .source-format-details > .source-popover-select-row select');
         const same = (a, b, properties) => properties.every(property => getComputedStyle(a)[property] === getComputedStyle(b)[property]);
         return manual.tagName === 'SELECT' && resolution.tagName === 'SELECT' &&
             same(manual, resolution, ['backgroundColor','color','fontFamily','fontSize','fontWeight','lineHeight','borderTopColor','borderTopWidth','borderRadius','paddingTop','paddingBottom','paddingLeft','paddingRight','height','appearance']) &&
@@ -270,7 +271,7 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
     })())JS") == L"true", "actual WebView computed style, borders, spacing and column alignment match the existing selects");
     Check(Script(view, LR"JS((() => {
         const manual = document.getElementById('hdmi-source-trigger');
-        const resolution = document.querySelector('#source-popover > .source-popover-select-row select');
+        const resolution = document.querySelector('#source-popover .source-format-details > .source-popover-select-row select');
         resolution.focus();
         const focusedBorder = getComputedStyle(resolution).borderTopColor;
         manual.focus();
@@ -350,7 +351,7 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
     PushManualState(host, "auto", L"Detected PS5");
     Check(PumpUntil([&] { return Script(view, L"document.getElementById('hdmi-source-trigger').value === 'auto'") == L"true"; }), "native Auto state reaches select");
     Script(view, L"document.getElementById('source-trigger').click()");
-    Check(Script(view, L"document.getElementById('source-popover').dataset.open === 'true' && document.getElementById('hdmi-source-trigger').value === 'auto' && document.querySelectorAll('#source-popover > .source-popover-select-row').length === 3") == L"true",
+    Check(Script(view, L"document.getElementById('source-popover').dataset.open === 'true' && document.getElementById('hdmi-source-trigger').value === 'auto' && document.querySelectorAll('#source-popover .source-format-details > .source-popover-select-row').length === 3") == L"true",
           "reopening source menu retains identity listeners and native selection beside the format cascade");
 
     SetWindowPos(window, nullptr, 0, 0, 1280, 800, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -358,7 +359,7 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
     Check(PumpUntil([&] { return Script(view, LR"JS((() => {
         const source = document.getElementById('source-popover').getBoundingClientRect();
         const manual = document.getElementById('hdmi-source-picker').getBoundingClientRect();
-        const resolution = document.querySelector('#source-popover > .source-popover-select-row').getBoundingClientRect();
+        const resolution = document.querySelector('#source-popover .source-format-details > .source-popover-select-row').getBoundingClientRect();
         return window.innerWidth > 1000 && manual.top >= source.top && manual.bottom <= resolution.top && manual.right <= source.right;
     })())JS") == L"true"; }), "desktop identity stays below manual format heading and above resolution");
     SetWindowPos(window, nullptr, 0, 0, 440, 650, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -366,7 +367,7 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
     Check(PumpUntil([&] { return Script(view, LR"JS((() => {
         const source = document.getElementById('source-popover').getBoundingClientRect();
         const manual = document.getElementById('hdmi-source-picker').getBoundingClientRect();
-        const resolution = document.querySelector('#source-popover > .source-popover-select-row').getBoundingClientRect();
+        const resolution = document.querySelector('#source-popover .source-format-details > .source-popover-select-row').getBoundingClientRect();
         return window.innerWidth < 600 && manual.top >= source.top && manual.bottom <= resolution.top && manual.right <= window.innerWidth;
     })())JS") == L"true"; }), "compact identity stays below manual format heading and above resolution without overflow");
     Script(view, L"document.querySelector('main').click()");

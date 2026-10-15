@@ -187,6 +187,49 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
         L"clearGame", L"saveGameSettings", L"getDeviceList", L"refreshDevices",
         L"openScreenshotFolder", L"checkHolyBearUpdate", L"markHolyBearUpdateSeen"})) {
         if (value) return std::nullopt;
+    } else if (action == L"restoreAutoCover" || action == L"cancelGameSearch") {
+        if (value) return std::nullopt;
+    } else if(action==L"renderGameArtwork"){
+        if(!value||value->kind!=Value::Kind::Object||value->fields.size()!=6||
+           !Uint(*value,L"gameId",0xffffffffu,result.gameId)||!result.gameId||!Uint(*value,L"coverId",0xffffffffu,result.coverId)||!result.coverId)return std::nullopt;
+        const auto mode=value->fields.find(L"mode");
+        if(mode==value->fields.end()||!Text(mode->second,16)||!OneOf(mode->second.text,{L"original",L"fit",L"crop"}))return std::nullopt;
+        result.artworkMode=mode->second.text;
+        const auto number=[&](const wchar_t* key,double lo,double hi,double& out){const auto item=value->fields.find(key);if(item==value->fields.end()||item->second.kind!=Value::Kind::Number||item->second.number<lo||item->second.number>hi)return false;out=item->second.number;return true;};
+        if(!number(L"x",0,1,result.cropX)||!number(L"y",0,1,result.cropY)||!number(L"zoom",1,3,result.artworkZoom))return std::nullopt;
+    } else if (action == L"setGameCustomName") {
+        if (!value || value->kind != Value::Kind::Object || value->fields.size()!=2) return std::nullopt;
+        const auto key=value->fields.find(L"key"), name=value->fields.find(L"name");
+        if (key==value->fields.end() || name==value->fields.end() || !Text(key->second,64) ||
+            key->second.text.empty() || !Text(name->second,256)) return std::nullopt;
+        std::string id;
+        for(auto c:key->second.text){if(c>127)return std::nullopt;id.push_back(static_cast<char>(c));}
+        if(!FindGameById(id)&&!Games::DynamicId(id))return std::nullopt;
+        result.key=key->second.text;result.text=name->second.text;
+    } else if (action == L"searchGames" || action == L"getGameCovers" || action == L"selectGameCover") {
+        if (!value || value->kind != Value::Kind::Object) return std::nullopt;
+        if (action == L"searchGames") {
+            const auto query = value->fields.find(L"query");
+            if (value->fields.size() != 2 || query == value->fields.end() || !Text(query->second, 256) ||
+                query->second.text.empty() || !Uint(*value, L"request", 0xffffffffu, result.request) || !result.request)
+                return std::nullopt;
+            result.text = query->second.text;
+        } else if (action == L"getGameCovers") {
+            const auto shape = value->fields.find(L"shape");
+            if ((value->fields.size() != 4 && value->fields.size()!=6) || shape == value->fields.end() || !Text(shape->second, 16) ||
+                !OneOf(shape->second.text, {L"square", L"portrait", L"all"}) || !Uint(*value, L"page", 1000, result.page) ||
+                !Uint(*value, L"gameId", 0xffffffffu, result.gameId) || !result.gameId ||
+                !Uint(*value, L"request", 0xffffffffu, result.request) || !result.request) return std::nullopt;
+            result.shape = shape->second.text;
+            if(value->fields.size()==6){
+                const auto provider=value->fields.find(L"provider"),query=value->fields.find(L"officialQuery");
+                if(provider==value->fields.end()||!Text(provider->second,16)||!OneOf(provider->second.text,{L"all",L"nintendo",L"community"})||
+                   query==value->fields.end()||!Text(query->second,256))return std::nullopt;
+                result.coverProvider=provider->second.text;result.catalogueQuery=query->second.text;
+            }
+        } else if (value->fields.size() != 2 || !Uint(*value, L"gameId", 0xffffffffu, result.gameId) ||
+            !result.gameId || !Uint(*value, L"coverId", 0xffffffffu, result.coverId) || !result.coverId)
+            return std::nullopt;
     } else if (OneOf(action, {L"toggleHDR", L"toggleColorExpansion", L"toggleNIS",
         L"toggleMute", L"toggleVSync", L"toggleLowLatency", L"togglePreventSleep"})) {
         // Existing controls send the next visual state; native toggles remain authoritative.
@@ -244,13 +287,13 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
             if (!OneOf(result.text, {L"contain", L"cover", L"stretch"})) return std::nullopt;
         } else if (action == L"setPreferredDevice") {
             if (result.text.empty()) return std::nullopt;
-        } else if (action == L"setGame") {
+        } else if (action == L"setGame" || action == L"addGameFavorite" || action == L"removeGameFavorite") {
             std::string id;
             for (auto c : result.text) {
                 if (c > 127) return std::nullopt;
                 id += static_cast<char>(c);
             }
-            if (!id.empty() && !FindGameById(id))
+            if (!id.empty() && !FindGameById(id) && !Games::DynamicId(id))
                 return std::nullopt;
         } else return std::nullopt;
     }

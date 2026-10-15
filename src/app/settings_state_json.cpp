@@ -1,6 +1,7 @@
 #include "settings_state_json.h"
 
 #include <sstream>
+#include <locale>
 
 namespace NitLink {
 
@@ -108,4 +109,74 @@ std::wstring NextNoSignalMode(std::wstring_view currentMode)
     return currentMode == L"image" ? L"default" : L"image";
 }
 
+std::wstring SerializeArtworkMetadataProperties(const Games::ArtworkMetadata& artwork){
+    const auto q=[](std::wstring_view text){return L"\""+JsonEscapeWide(text)+L"\"";};
+    return L"\"provider\":"+q(artwork.provider)+L",\"sourceLabel\":"+q(artwork.sourceLabel)+L",\"language\":"+q(artwork.language)+
+        L",\"region\":"+q(artwork.region)+L",\"kind\":"+q(artwork.kind)+L",\"isOfficial\":"+(artwork.isOfficial?L"true":L"false");
+}
+std::wstring SerializeArtworkEditProperties(const Games::SavedGame& game){
+    std::wostringstream out;out.imbue(std::locale::classic());
+    out<<L"\"artworkMode\":\""<<game.artworkMode<<L"\",\"finalImageKey\":\""<<game.finalImageKey<<L"\",\"sourceImageKey\":\""<<game.sourceImageKey
+        <<L"\",\"cropX\":"<<game.cropX<<L",\"cropY\":"<<game.cropY<<L",\"artworkZoom\":"<<game.artworkZoom
+        <<L",\"discordArtworkState\":\""<<(game.artworkMode==L"original"?L"unverified":L"localOnly")<<L"\"";
+    return out.str();
+}
+std::wstring SerializeArtworkCandidates(const std::vector<Games::Cover>& covers){
+    const auto q=[](std::wstring_view text){return L"\""+JsonEscapeWide(text)+L"\"";};
+    std::wostringstream json;json<<L"[";
+    for(size_t i=0;i<covers.size();++i){if(i)json<<L",";const auto& cover=covers[i];
+        json<<L"{\"id\":"<<cover.id<<L","<<SerializeArtworkMetadataProperties(cover)
+            <<L",\"author\":"<<q(cover.author)<<L",\"shape\":"<<q(cover.shape)<<L",\"languageSource\":"<<q(cover.languageSource)
+            <<L",\"languageVerified\":"<<(cover.languageVerified?L"true":L"false");
+        if(!cover.productTitle.empty())json<<L",\"productTitle\":"<<q(cover.productTitle)<<L",\"productPage\":"<<q(cover.productPage)
+            <<L",\"productPlatform\":"<<q(cover.productPlatform)<<L",\"productRelease\":"<<q(cover.productRelease);
+        if(cover.crop)json<<L",\"crop\":{\"x\":"<<cover.crop->x<<L",\"y\":"<<cover.crop->y<<L",\"width\":"<<cover.crop->width<<L",\"height\":"<<cover.crop->height<<L"}";
+        json<<L"}";
+    }json<<L"]";return json.str();
+}
+std::wstring SerializeGameResult(const Games::Result& result)
+{
+    const auto quoted = [](std::wstring_view text) { return L"\"" + JsonEscapeWide(text) + L"\""; };
+    const wchar_t* kind = result.operation == Games::Operation::Search ? L"search" :
+        result.operation == Games::Operation::Covers ? L"covers" :
+        result.operation == Games::Operation::CurrentImage ? L"currentImage" :
+        result.operation == Games::Operation::Image ? L"image" : L"resolve";
+    std::wostringstream json;
+    json << L"{\"gameEvent\":{\"kind\":" << quoted(kind) << L",\"request\":" << result.request
+         << L",\"gameId\":" << result.gameId << L",\"coverId\":" << result.coverId
+         << L",\"locale\":" << quoted(result.locale) << L",\"shape\":" << quoted(result.shape)
+         << L",\"status\":" << quoted(result.reply.status) << L",\"imageStatus\":" << quoted(result.imageStatus)
+         << L",\"image\":" << quoted(result.imageUri) << L",\"dataMode\":\"real\",\"total\":" << result.reply.totalCount
+         << L",\"workerCount\":"<<result.reply.workerCount
+         << L",\"officialStatus\":"<<quoted(result.reply.officialStatus)
+         << L",\"page\":" << result.reply.page << L",\"hasMore\":" << (result.reply.hasMore ? L"true" : L"false") << L",\"games\":[";
+    for (size_t i = 0; i < result.reply.games.size(); ++i) {
+        if (i) json << L",";
+        const auto& g = result.reply.games[i];
+        json << L"{\"id\":" << g.id << L",\"name\":" << quoted(g.name)
+             << L",\"displayName\":" << quoted(g.displayName) << L",\"source\":" << quoted(g.source)
+             << L",\"imageStatus\":\"loading\""
+             << L",\"artworkSources\":"<<SerializeArtworkCandidates(g.artworkSources)
+             << L",\"displayNameSource\":"<<quoted(g.displayNameSource)<<L",\"dataMode\":\"real\"}";
+    }
+    json << L"],\"covers\":"<<SerializeArtworkCandidates(result.reply.covers)
+         <<L",\"artworkSources\":"<<SerializeArtworkCandidates(result.reply.artworkSources)<<L",";
+    const auto list = [&](const wchar_t* key, const std::vector<std::wstring>& strings) {
+        json << quoted(key) << L":[";
+        for (size_t i = 0; i < strings.size(); ++i) { if (i) json << L","; json << quoted(strings[i]); }
+        json << L"],";
+    };
+    list(L"queriedTerms", result.reply.queriedTerms);
+    list(L"resolvedQueries", result.reply.resolvedQueries);
+    list(L"suggestions", result.reply.suggestions);
+    json << L"\"lookups\":{";
+    bool first = true;
+    for (const auto& [key, status] : result.reply.lookups) {
+        if (!first) json << L",";
+        first = false;
+        json << quoted(key) << L":" << quoted(status);
+    }
+    json << L"}}}";
+    return json.str();
+}
 } // namespace NitLink

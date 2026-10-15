@@ -266,6 +266,11 @@ int main() {
         Expect(!CanReceiveMessage(MenuUri, bad), "untrusted current document");
     }
     for (const auto& resource : Resources) Expect(FindResource(resource.uri) == &resource, "packaged resource");
+    Expect(FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=20261015-artwork3")!=nullptr,"fixed script revision maps to packaged editor");
+    Expect(!FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=other"),"unapproved revision rejected");
+    Expect(ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"crop","x":0.2,"y":0.8,"zoom":1.5}})").has_value(),"bounded artwork recipe bridge");
+    Expect(!ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"crop","x":-1,"y":0.8,"zoom":1.5}})"),"negative crop rejected");
+    Expect(!ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"fit","x":0.2,"y":0.8,"zoom":1,"url":"https://evil.test/image"}})"),"artwork editor cannot submit arbitrary URLs");
     Expect(ParseSettingsMessage(LR"({"action":"checkHolyBearUpdate"})").has_value(), "manual update check schema");
     Expect(ParseSettingsMessage(LR"({"action":"setHolyBearAutoUpdateCheck","value":false})").has_value(), "opt-out schema");
     Expect(!ParseSettingsMessage(LR"({"action":"setHolyBearAutoUpdateCheck","value":"true"})"), "update option requires boolean");

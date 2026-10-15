@@ -30,6 +30,10 @@ public:
     bool Connect(const std::string& applicationId);
     void Disconnect();
     bool IsConnected() const { return m_connected; }
+    // IPC acceptance is reported separately from actual client rendering.
+    const wchar_t* ImageStatus() const;
+    const wchar_t* NameStatus() const;
+    void RetryImage(); // Explicit user retry; never changes the activity timer.
 
     // Activity = "details" line shown under the app name in the user's profile.
     // Example: details = "Playing Saros", state = "Boss Fight 3 of 6"
@@ -37,7 +41,8 @@ public:
                      const std::wstring& state,
                      std::chrono::system_clock::time_point startTime,
                      const std::string& largeImageKey = "",
-                     const std::wstring& largeImageText = L"");
+                     const std::wstring& largeImageText = L"",
+                     const std::wstring& activityName = L"");
 
     void ClearActivity();
 
@@ -74,6 +79,12 @@ private:
     int64_t             m_pendingStartTimeUnix = 0;
     std::string         m_pendingLargeImageKey;
     std::wstring        m_pendingLargeImageText;
+    enum class ImageState { Unavailable, Asset, ExternalPending, ExternalAccepted, Fallback };
+    std::atomic<ImageState> m_imageState{ImageState::Unavailable};
+    std::string m_rejectedImageKey;
+    std::wstring m_pendingName;
+    enum class NameState { Unverified, Accepted, Unsupported };
+    std::atomic<NameState> m_nameState{NameState::Unverified};
 
     std::thread         m_worker;
     std::atomic<bool>   m_running{false};

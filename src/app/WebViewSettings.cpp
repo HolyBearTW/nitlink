@@ -197,7 +197,17 @@ HRESULT WebViewSettings::ConfigureSecurity(ICoreWebView2Environment* environment
                     if (context != expected) resource = nullptr;
                 }
                 wil::com_ptr<IStream> stream;
+                std::shared_ptr<const NitLink::Games::Image> gameImage;
+                if (!resource && uri && method && std::wstring_view(method.get()) == L"GET" &&
+                    context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE && IsTrustedDocument() &&
+                    NitLink::Games::IsImageResource(uri.get()) && m_gameImageLookup)
+                    gameImage = m_gameImageLookup(uri.get());
                 std::wstring headers = L"Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n";
+                if (gameImage && !gameImage->png.empty() && gameImage->png.size() <= 2 * 1024 * 1024) {
+                    stream.attach(SHCreateMemStream(gameImage->png.data(), static_cast<UINT>(gameImage->png.size())));
+                    if (!stream) return E_OUTOFMEMORY;
+                    headers += L"Content-Type: image/png\r\n";
+                } else gameImage.reset();
                 if (resource) {
                     const auto it = m_resources.find(std::wstring(resource->uri));
                     if (it == m_resources.end()) resource = nullptr;
@@ -212,8 +222,9 @@ HRESULT WebViewSettings::ConfigureSecurity(ICoreWebView2Environment* environment
                     }
                 }
                 wil::com_ptr<ICoreWebView2WebResourceResponse> response;
-                HRESULT hr = env->CreateWebResourceResponse(stream.get(), resource ? 200 : 403,
-                    resource ? L"OK" : L"Forbidden", headers.c_str(), &response);
+                const bool served = resource || gameImage;
+                HRESULT hr = env->CreateWebResourceResponse(stream.get(), served ? 200 : 403,
+                    served ? L"OK" : L"Forbidden", headers.c_str(), &response);
                 if (SUCCEEDED(hr)) hr = args->put_Response(response.get());
                 if (FAILED(hr)) {
                     Fail(L"toast.settingsResources", hr);

@@ -31,6 +31,7 @@
 #include <chrono>
 
 namespace NitLink {
+struct SettingsMessage;
 
 class Application {
 public:
@@ -62,6 +63,7 @@ private:
     void UpdateWindowTitle();
     std::wstring GetEffectiveHdmiSourceLabel() const;
     std::wstring GetLiveHdmiSignalLabel() const;
+    std::wstring GetDiscordSignalLabel() const;
     HdmiConfirmedRange GetConfirmedHdmiRange() const;
     std::wstring GetConfirmedHdmiRangeLabel() const;
     HdmiSourceVrrState GetHdmiSourceVrrState() const;
@@ -73,6 +75,12 @@ private:
     void PushSettingsState(bool refreshCaptureDevices = false, uint32_t audioRefreshRequest = 0);
     void CheckHolyBearUpdate(bool automatic);
     void ConsumeHolyBearUpdate();
+    void ConsumeGameResults();
+    bool HandleGameMessage(const SettingsMessage& message);
+    void PushCurrentGameState();
+    void PushGameLibrary();
+    Games::SavedGame* EnsureSavedGame(const std::string& key);
+    void RequestGameCovers(uint32_t request, std::wstring shape, uint32_t page, std::wstring provider=L"all", std::wstring catalogueQuery={});
     void SetPiPOpacity(float opacity);
 
     // Game selector helpers. ApplyGameSettings loads the per-game settings
@@ -80,7 +88,7 @@ private:
     // the renderer. UpdateDiscordForCurrentGame pushes the current game's
     // title/art-key to Rich Presence (or clears it when gameId is empty).
     void ApplyGameSettings(const std::string& gameId);
-    void UpdateDiscordForCurrentGame(bool preserveStartTime = false);
+    void UpdateDiscordForCurrentGame(bool preserveStartTime = true);
 
     // Capture-side HDR/SDR reconciliation. Compares the format the capture
     // device is currently running (P010 vs BGRA/NV12) against what the
@@ -268,6 +276,18 @@ private:
     std::unique_ptr<HolyBear::UpdateChecker> m_updateChecker;
     HolyBear::UpdateStatus m_updateStatus = HolyBear::UpdateStatus::Never;
     std::unique_ptr<DiscordRPC>       m_discord;
+    std::wstring m_lastDiscordPreviewStatus;
+    std::unique_ptr<Games::GameService> m_gameService;
+    std::map<uint32_t, Games::Game> m_searchGames;
+    std::map<uint32_t, Games::Cover> m_searchDefaultCovers;
+    std::map<uint32_t, Games::Cover> m_gameCovers;
+    std::map<uint32_t, std::wstring> m_coverImages;
+    uint32_t m_coverGameId = 0;
+    std::wstring m_currentGameImage;
+    std::wstring m_currentGameSourceImage;
+    std::map<std::string,std::wstring> m_libraryImages;
+    std::map<std::string,std::wstring> m_librarySourceImages;
+    bool m_gameFromLibrary = true;
     std::chrono::system_clock::time_point m_discordActivityStart{};
 
     // Background-thread monitor for HDMI source HDR<->SDR transitions.
