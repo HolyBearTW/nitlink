@@ -16,6 +16,14 @@ Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Li
 </p>
 
 <p align="center">
+  <a href="https://store.steampowered.com/app/5346980"><img src="docs/images/steam-banner.webp" alt="NitLink with frame generation: wishlist on Steam" width="900"></a>
+</p>
+
+<p align="center">
+  <em>NitLink with experimental frame generation is in closed beta and coming soon on Steam. This repository stays the free viewer: MIT licensed and maintained.</em>
+</p>
+
+<p align="center">
   <img src="docs/images/COMPARSIONS.webp" alt="NitLink HDR comparison" width="900">
 </p>
 
@@ -142,7 +150,7 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 - **Tearing on fixed-refresh displays.** Enable VSync with `Alt+V` or F1 to synchronize presentation. VSync defaults to off and may add input delay. Leave Low-Latency enabled; `Alt+L` does not control VSync. GPU driver overrides still apply: use the application-controlled VSync setting in the driver to follow the NitLink toggle.
 - **Brief visual artifact during PS5 HDR mode changes.** Changing the PS5's HDR setting mid-session renegotiates the HDMI link; a frame or two can show a transient green band before the next reconcile (~100ms). Restarting NitLink avoids it if you know you'll change PS5 HDR mode.
 - **Spider-Man 2 on the 4K S in 4K SDR (game-specific).** On the 4K S's NV12 4K@60 SDR path this title produces fewer unique frames than expected (the HUD reports it honestly), while other games on the same setup run at 60fps. Switching the 4K S to 1080p HDR restores 60fps. Most plausibly a PS5 / Insomniac / 4K-S interaction rather than a NitLink defect.
-- **No frame generation. No recording or streaming.** Out of scope — run OBS alongside for capture.
+- **No frame generation in this build. No recording or streaming.** Frame generation is the Steam version (see the top of this page); for capture, run OBS alongside.
 
 <p align="center">
   <img src="docs/images/no-signal.png" alt="NitLink branded no-signal screen" width="900">
