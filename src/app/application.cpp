@@ -836,7 +836,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // SDR, which makes the SDR picture look washed (HDR codes
     // interpreted as 100-nit-paper-white SDR). Always pair the two.
     // Sent only when the selected device is a 4K S, since the HID protocol is
-    // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF).
+    // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF). The 4K X has the same
+    // on-card converter behind the Elgato property set and gets the same
+    // pairing below; a 4K X with a 120 Hz source captures 4K only as 8-bit
+    // NV12, so without the pairing an HDR source arrives as raw PQ codes.
     // Detect4KSHdmiSource already fired earlier in Initialize (before
     // the useP010 decision so the source-ID heuristic can feed into
     // it); no second call here.
@@ -844,6 +847,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(useP010
             ? L"Initialize: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Initialize: 4K S HID tonemap ON sent for SDR/NV12");
+    }
+    if (m_is4KX && SetElgatoTonemap(chosen.name, /*enable=*/ !useP010)) {
+        AppLog(useP010
+            ? L"Initialize: 4K X tonemap OFF sent for raw HDR/P010"
+            : L"Initialize: 4K X tonemap ON sent for SDR/NV12");
     }
 
     // F1 Source picker manual override. Applied to the capture device
@@ -904,6 +912,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // Same selected-4K-S gating as the initial call above.
             if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
                 AppLog(L"Initialize: 4K S HID tonemap ON sent for SDR retry");
+            }
+            if (m_is4KX && SetElgatoTonemap(chosen.name, /*enable=*/ true)) {
+                AppLog(L"Initialize: 4K X tonemap ON sent for SDR retry");
             }
             if (!m_captureDevice->Open(chosen)) {
                 AppLog(L"Initialize: CaptureDevice::Open FAILED");
@@ -1010,6 +1021,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                        L"frames carry clean SDR instead of raw HDR codes");
             }
         }
+    }
+    if (m_is4KX && useP010 &&
+        !IsEqualGUID(format.subtype, MFVideoFormat_P010) &&
+        SetElgatoTonemap(chosen.name, /*enable=*/ true)) {
+        AppLog(L"Initialize: P010 requested but Open negotiated a non-HDR "
+               L"format (the 4K X publishes 4K P010 only at 30 fps); flipped "
+               L"4K X tonemap ON so NV12 frames carry clean SDR instead of raw HDR codes");
     }
 
     // Now safe to update the title: source identifier and HDR detection
@@ -3928,6 +3946,11 @@ bool Application::ReconcileCaptureFormat(bool force)
             ? L"Reconcile: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Reconcile: 4K S HID tonemap ON sent for SDR/NV12");
     }
+    if (m_is4KX && SetElgatoTonemap(deviceToOpen.name, /*enable=*/ !wantP010)) {
+        AppLog(wantP010
+            ? L"Reconcile: 4K X tonemap OFF sent for raw HDR/P010"
+            : L"Reconcile: 4K X tonemap ON sent for SDR/NV12");
+    }
 
     // F1 Source picker manual override (same lifecycle as Initialize:
     // applied before Open, fallback handled inside CaptureDevice). This
@@ -4008,6 +4031,9 @@ bool Application::ReconcileCaptureFormat(bool force)
         if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
             AppLog(L"Reconcile: 4K S HID tonemap ON sent for SDR retry");
         }
+        if (m_is4KX && SetElgatoTonemap(deviceToOpen.name, /*enable=*/ true)) {
+            AppLog(L"Reconcile: 4K X tonemap ON sent for SDR retry");
+        }
         opened = m_captureDevice->Open(deviceToOpen);
         if (opened) {
             AppLog(L"Reconcile: rolled back hdrEnabled, P010 unavailable for this source");
@@ -4078,6 +4104,12 @@ bool Application::ReconcileCaptureFormat(bool force)
                        L"format; flipped 4K S tonemap ON for clean SDR NV12");
             }
         }
+    }
+    if (m_is4KX && wantP010 &&
+        !IsEqualGUID(format.subtype, MFVideoFormat_P010) &&
+        SetElgatoTonemap(deviceToOpen.name, /*enable=*/ true)) {
+        AppLog(L"Reconcile: wantP010=true but Open negotiated a non-HDR "
+               L"format; flipped 4K X tonemap ON for clean SDR NV12");
     }
 
     // Title bar may need updating: if the source HDR state changed (the
