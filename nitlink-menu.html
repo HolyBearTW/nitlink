@@ -8,6 +8,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <script src="locales/en-US.js"></script>
   <script src="locales/zh-TW.js"></script>
+  <script src="locales/zh-CN.js"></script>
   <style>
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400; font-display: swap; src: url('assets/menu/Archivo-400.ttf') format('truetype'); }
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 500; font-display: swap; src: url('assets/menu/Archivo-500.ttf') format('truetype'); }
@@ -38,10 +39,19 @@
     a { color: var(--accent-text); }
     a:hover { color: var(--accent); }
     ::selection { background: var(--accent-soft); }
+#pane-audio input[type="number"], #audio-refresh { color:var(--ink); background:#202020; border:1px solid var(--hair2); padding:6px 8px; font:inherit; }
+    #pane-audio input:focus-visible, #audio-refresh:focus-visible { outline:2px solid var(--accent); }
+    #pane-audio input[type="checkbox"] { accent-color:var(--accent); width:18px; height:18px; }
+    #pane-audio .audio-note { font-size:12px; line-height:1.6; white-space:pre-line; overflow-wrap:anywhere; padding:8px 16px; color:var(--ink2); }
+    .audio-label { display:flex; align-items:center; gap:8px; }
+    .audio-help { flex:none; width:19px; height:19px; border:1px solid var(--hair2); border-radius:50%; background:none; color:var(--ink3); cursor:help; font-size:11px; }
+    .audio-help:hover, .audio-help:focus-visible { color:var(--ink); border-color:var(--accent); outline:none; }
+    #audio-tooltip { position:fixed; z-index:100; width:320px; max-width:calc(100vw - 24px); padding:12px 14px; border:1px solid var(--hair2); border-radius:6px; background:#303030; color:var(--ink); box-shadow:0 4px 18px #0006; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
     .rail, .metabar, #pane-video, #pane-audio, #pane-shortcuts {
       -webkit-user-select: none;
       user-select: none;
     }
+    :lang(zh-CN) { --sans: "Archivo", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
     button, select { font: inherit; }
     ::-webkit-scrollbar { width: 12px; }
     ::-webkit-scrollbar-track { background: #191919; }
@@ -565,6 +575,7 @@
                 <select class="language-select" id="language-select">
                   <option value="system" data-i18n="language.system"></option>
                   <option value="en-US" data-i18n="language.english"></option>
+                  <option value="zh-CN" data-i18n="language.simplifiedChinese"></option>
                   <option value="zh-TW" data-i18n="language.traditionalChinese"></option>
                 </select>
               </div>
@@ -610,6 +621,18 @@
               <span class="slider-val" id="slider-volume-val">100</span>
             </div>
           </div>
+
+          <div class="band"><span class="band-title" data-i18n="audio.latencyTitle"></span></div>
+          <div class="row"><div class="row-name audio-label"><label for="audio-exclusive" data-i18n="audio.exclusive"></label><button type="button" class="audio-help" data-audio-help="audio.exclusiveHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-exclusive" type="checkbox"></div></div>
+          <div class="row"><div class="row-name audio-label"><label for="audio-fifo" data-i18n="audio.fifo"></label><button type="button" class="audio-help" data-audio-help="audio.fifoHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-fifo" type="number" min="3" max="100" step="1" value="12" style="width:80px"> ms</div></div>
+          <div class="row"><div class="row-name audio-label"><label for="audio-render" data-i18n="audio.render"></label><button type="button" class="audio-help" data-audio-help="audio.renderHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-render" type="number" min="3" max="100" step="1" value="10" style="width:80px"> ms</div></div>
+          <div class="row"><div class="row-name audio-label"><label for="audio-drift" data-i18n="audio.drift"></label><button type="button" class="audio-help" data-audio-help="audio.driftHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-drift" type="checkbox" checked></div></div>
+          <div class="row"><div class="row-name audio-label"><label for="audio-debug" data-i18n="audio.debug"></label><button type="button" class="audio-help" data-audio-help="audio.debugHelp" data-i18n-aria-label="audio.moreHelp" aria-describedby="audio-tooltip">?</button></div><div class="row-right end"><input id="audio-debug" type="checkbox" aria-controls="audio-diagnostics" aria-expanded="false"></div></div>
+          <div class="row kv"><span class="row-name" data-i18n="audio.status"></span><span id="audio-status" class="row-value" data-i18n="audio.waiting"></span></div>
+          <div id="audio-diagnostics" hidden>
+            <div class="row"><span class="row-name" data-i18n="audio.health"></span><button id="audio-refresh" type="button" data-i18n="audio.refresh"></button></div>
+            <p id="audio-health" class="audio-note" role="status" aria-live="polite"></p>
+          </div>
         </section>
 
         <section class="pane" id="pane-shortcuts">
@@ -646,15 +669,16 @@
         <section class="pane" id="pane-about">
           <div class="band">
             <span class="band-title" data-i18n="section.about"></span>
-            <span class="band-hint">v1.2.3</span>
+            <span class="band-hint">v1.2.4</span>
           </div>
-          <div class="row kv"><span class="row-name" data-i18n="about.build"></span><span class="row-value">1.2.3</span></div>
+          <div class="row kv"><span class="row-name" data-i18n="about.build"></span><span class="row-value">1.2.4</span></div>
           <div class="row kv"><span class="row-name" data-i18n="about.renderer"></span><span class="row-value">D3D11 · P010 / NV12 / BGRA</span></div>
           <div class="about-copy">
             <p data-i18n="about.description"></p>
             <div class="about-links">
               <a href="https://tally.so/r/EkZjNr" target="_blank" rel="noopener noreferrer" data-i18n="about.feedback"></a>
               <a href="https://ko-fi.com/klosed89" target="_blank" rel="noopener noreferrer" data-i18n="about.support"></a>
+              <a href="https://store.steampowered.com/app/5346980" target="_blank" rel="noopener noreferrer" data-i18n="about.steam"></a>
             </div>
             <div class="about-credits">
               <div class="about-credit-title" data-i18n="about.localizationContributors"></div>
@@ -671,6 +695,7 @@
     </div>
   </div>
 
+  <div id="audio-tooltip" role="tooltip" hidden></div>
   <script src="assets/menu/menu.js"></script>
 </body>
 

@@ -16,6 +16,14 @@ Built and tested on the Elgato 4K Pro (PCIe), 4K S (USB), 4K X (USB), and Cam Li
 </p>
 
 <p align="center">
+  <a href="https://store.steampowered.com/app/5346980"><img src="docs/images/steam-banner.webp" alt="NitLink with frame generation: wishlist on Steam" width="900"></a>
+</p>
+
+<p align="center">
+  <em>NitLink with experimental frame generation is in closed beta and coming soon on Steam. This repository stays the free viewer: MIT licensed and maintained.</em>
+</p>
+
+<p align="center">
   <img src="docs/images/COMPARSIONS.webp" alt="NitLink HDR comparison" width="900">
 </p>
 
@@ -135,13 +143,14 @@ The latency above is *capture latency* (HDMI-into-card → photons-off-your-pane
 
 - **Elgato 4K S: 1080p HDR or 4K SDR, not both.** Its USB 3.2 Gen 1 (5 Gbps) interface can't fit 4K@60 P010 (HDR10, ~12 Gbps). The driver only publishes P010 at 1080p/720p. Elgato lists 4K60 SDR capture via MJPEG and native 4K NV12 at up to 30 fps; negotiated viewer output can be converted by Media Foundation. Hardware ceiling, not a NitLink limitation. See [Elgato's format table](https://www.elgato.com/us/en/explorer/products/capture/4k-s-supported-resolutions-and-frame-rates/).
 - **Elgato 4K S: HDR costs resolution.** Engaging HDR clamps capture to 1080p, so `hdr_enabled` acts as opt-in even with an HDR source connected. `Alt+H` flips between 1080p HDR and 4K SDR at runtime.
+- **Elgato 4K X: 4K HDR captures at 30 fps.** The card publishes 4K P010 (HDR10) only at 30 Hz; its USB 3.2 Gen 2 link cannot carry 4K or 1440p at 120 Hz in 10-bit, so a 120 Hz source captures 4K as 8-bit NV12. NitLink keeps the card's HDR-to-SDR conversion on for that path, so an HDR console still shows a clean SDR picture; the F1 capture line reads P010 when real HDR is being delivered. HDR at 120 Hz fits at 1080p.
 - **AVerMedia GC553Pro HDR depends on native P010 modes.** With Auto capture format and `hdr_auto_from_source` enabled (the default), NitLink reads HDMI source state through the card's UVC extension unit and selects P010 for confirmed HDR10/PQ or NV12 for SDR. Manual formats and the `Alt+H` output preference remain independent. Failed probes retain the last valid source state; until detection succeeds, the existing P010/HDR-to-SDR fallback is preserved. P010 modes come exclusively from Media Foundation enumeration, and unavailable requests fall back to a native mode with a notice. Manual 1920x1080@60 P010 was validated on Windows 11, and the contributor supplied GC553Pro validation for the later fixes. Broader automatic native-mode fallback selection has not been fully validated on GC553Pro hardware.
 - **Windows HDR can be temperamental.** Moving the window across monitors with different HDR profiles, some notification overlays, or apps with custom ICC profiles can cause flickering/desaturation. Closing and reopening NitLink resets the swap chain. A Windows-wide limitation for all HDR apps.
 - **VRR below ~40Hz falls back to fixed refresh.** Most VRR displays have a ~40Hz floor; below it VRR disengages.
 - **Tearing on fixed-refresh displays.** Enable VSync with `Alt+V` or F1 to synchronize presentation. VSync defaults to off and may add input delay. Leave Low-Latency enabled; `Alt+L` does not control VSync. GPU driver overrides still apply: use the application-controlled VSync setting in the driver to follow the NitLink toggle.
 - **Brief visual artifact during PS5 HDR mode changes.** Changing the PS5's HDR setting mid-session renegotiates the HDMI link; a frame or two can show a transient green band before the next reconcile (~100ms). Restarting NitLink avoids it if you know you'll change PS5 HDR mode.
 - **Spider-Man 2 on the 4K S in 4K SDR (game-specific).** On the 4K S's NV12 4K@60 SDR path this title produces fewer unique frames than expected (the HUD reports it honestly), while other games on the same setup run at 60fps. Switching the 4K S to 1080p HDR restores 60fps. Most plausibly a PS5 / Insomniac / 4K-S interaction rather than a NitLink defect.
-- **No frame generation. No recording or streaming.** Out of scope — run OBS alongside for capture.
+- **No frame generation in this build. No recording or streaming.** Frame generation is the Steam version (see the top of this page); for capture, run OBS alongside.
 
 <p align="center">
   <img src="docs/images/no-signal.png" alt="NitLink branded no-signal screen" width="900">

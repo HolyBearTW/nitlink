@@ -51,7 +51,18 @@ Code contributions merged into NitLink:
   [#16](https://github.com/nitlink-dev/nitlink/pull/16),
   [#19](https://github.com/nitlink-dev/nitlink/pull/19),
   [#20](https://github.com/nitlink-dev/nitlink/pull/20),
-  [#21](https://github.com/nitlink-dev/nitlink/pull/21)).
+  [#21](https://github.com/nitlink-dev/nitlink/pull/21)); NitLink 1.2.4:
+  the wide Full-mode settings layout, the Content FPS headline and
+  automatic present pacing on the exact display refresh rate
+  ([#26](https://github.com/nitlink-dev/nitlink/pull/26),
+  [#31](https://github.com/nitlink-dev/nitlink/pull/31)).
+
+- CN_115, [@CN115](https://github.com/CN115), NitLink 1.2.4: the low-latency
+  audio path (configurable capture-to-playback buffering, device-clock
+  drift estimation and correction, native playback formats with sinc
+  conversion, optional exclusive output with focus fallback, automatic
+  recovery), merged from the MIT-licensed nitlink-lowlatency fork with the
+  original commits (https://github.com/CN115/nitlink-lowlatency).
 
 ---
 
@@ -63,3 +74,5 @@ project authorship or maintainership.
 - **Traditional Chinese (zh-TW):** [HolyBear（聖小熊）](https://github.com/HolyBearTW)
   (`@HolyBearTW`) — translation and localization review with real-device
   validation.
+- **Simplified Chinese (zh-CN):** [CN_115](https://github.com/CN115) (`@CN115`) — translation
+  and automatic system-language selection.

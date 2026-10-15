@@ -18,6 +18,7 @@ int main()
     }
     NitLink::Config legacyLoaded;
     if (!legacyLoaded.Load(path.string())) return 1;
+    if (legacyLoaded.audioFifoMs != 40 || legacyLoaded.audioRenderMs != 30 || !legacyLoaded.audioDrift || legacyLoaded.audioExclusive) return 19;
     if (legacyLoaded.noSignalMode != "default" ||
         !legacyLoaded.noSignalImage.empty() ||
         legacyLoaded.noSignalFit != "contain" ||
@@ -33,6 +34,7 @@ int main()
         !defaultLoaded.noSignalDimImage) return 5;
 
     NitLink::Config saved;
+    saved.audioFifoMs = 7; saved.audioRenderMs = 9; saved.audioDrift = false; saved.audioExclusive = true;
     saved.noSignalMode = "image";
     saved.noSignalImage =
         "C:\\Users\\測試者\\Pictures\\無訊號圖片.png";
@@ -42,6 +44,7 @@ int main()
 
     NitLink::Config loaded;
     if (!loaded.Load(path.string())) return 7;
+    if (loaded.audioFifoMs != 7 || loaded.audioRenderMs != 9 || loaded.audioDrift || !loaded.audioExclusive) return 18;
     if (loaded.noSignalMode != saved.noSignalMode ||
         loaded.noSignalImage != saved.noSignalImage ||
         loaded.noSignalFit != saved.noSignalFit ||

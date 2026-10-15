@@ -461,6 +461,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     m_window->SetPreventSleep(m_config->preventSleep);
     m_window->SetCloseCallback([this] {
         if (m_webviewSettings) m_webviewSettings->DispatchPendingMessages(/*closing=*/true);
+        // Release WASAPI before destroying the window or waiting on unrelated workers.
+        if (m_audioRouter) m_audioRouter->Shutdown();
+        m_running=false;
     });
 
     auto [actualW, actualH] = m_window->GetClientSize();
@@ -833,7 +836,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     // SDR, which makes the SDR picture look washed (HDR codes
     // interpreted as 100-nit-paper-white SDR). Always pair the two.
     // Sent only when the selected device is a 4K S, since the HID protocol is
-    // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF).
+    // 4K S-specific (VID 0x0FD9 + PID 0x00AE/0x00AF). The 4K X has the same
+    // on-card converter behind the Elgato property set and gets the same
+    // pairing below; a 4K X with a 120 Hz source captures 4K only as 8-bit
+    // NV12, so without the pairing an HDR source arrives as raw PQ codes.
     // Detect4KSHdmiSource already fired earlier in Initialize (before
     // the useP010 decision so the source-ID heuristic can feed into
     // it); no second call here.
@@ -841,6 +847,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         AppLog(useP010
             ? L"Initialize: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Initialize: 4K S HID tonemap ON sent for SDR/NV12");
+    }
+    if (m_is4KX && SetElgatoTonemap(chosen.name, /*enable=*/ !useP010)) {
+        AppLog(useP010
+            ? L"Initialize: 4K X tonemap OFF sent for raw HDR/P010"
+            : L"Initialize: 4K X tonemap ON sent for SDR/NV12");
     }
 
     // F1 Source picker manual override. Applied to the capture device
@@ -901,6 +912,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             // Same selected-4K-S gating as the initial call above.
             if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
                 AppLog(L"Initialize: 4K S HID tonemap ON sent for SDR retry");
+            }
+            if (m_is4KX && SetElgatoTonemap(chosen.name, /*enable=*/ true)) {
+                AppLog(L"Initialize: 4K X tonemap ON sent for SDR retry");
             }
             if (!m_captureDevice->Open(chosen)) {
                 AppLog(L"Initialize: CaptureDevice::Open FAILED");
@@ -1008,6 +1022,13 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             }
         }
     }
+    if (m_is4KX && useP010 &&
+        !IsEqualGUID(format.subtype, MFVideoFormat_P010) &&
+        SetElgatoTonemap(chosen.name, /*enable=*/ true)) {
+        AppLog(L"Initialize: P010 requested but Open negotiated a non-HDR "
+               L"format (the 4K X publishes 4K P010 only at 30 fps); flipped "
+               L"4K X tonemap ON so NV12 frames carry clean SDR instead of raw HDR codes");
+    }
 
     // Now safe to update the title: source identifier and HDR detection
     // were settled by the 4K S vendor HID block above, AND the actual
@@ -1111,6 +1132,9 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
     }
 
     m_audioRouter = std::make_unique<AudioRouter>();
+    m_audioRouter->SetOwnerWindow(m_window->GetHWND());
+    m_audioRouter->SetLatency(m_config->audioFifoMs, m_config->audioRenderMs, m_config->audioDrift);
+    m_audioRouter->SetExclusive(m_config->audioExclusive);
     // Route audio from the selected capture card to the default playback device.
     //
     // Pass the selected video device's full name as the audio endpoint hint
@@ -1202,9 +1226,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
         if (action == L"setLanguage" && m_config) {
             const std::wstring requested = message->text;
-            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW") {
+            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW" || requested == L"zh-CN") {
                 m_config->language = requested == L"en-US" ? "en-US"
-                    : requested == L"zh-TW" ? "zh-TW" : "system";
+                    : requested == L"zh-TW" ? "zh-TW"
+                    : requested == L"zh-CN" ? "zh-CN" : "system";
                 Localization::Instance().SetPreference(m_config->language);
                 if (m_overlay && !m_overlay->RefreshTextFormats()) {
                     AppLog(L"setLanguage: failed to refresh overlay text formats");
@@ -1312,6 +1337,17 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
             m_config->preventSleep = !m_config->preventSleep;
             m_window->SetPreventSleep(m_config->preventSleep);
             m_config->Save("nitlink.json");
+            return;
+        }
+        if ((action == L"setAudioFifoMs" || action == L"setAudioRenderMs" || action == L"setAudioDrift" || action == L"setAudioExclusive") && m_config && m_audioRouter) {
+            if (action == L"setAudioFifoMs") m_config->audioFifoMs = static_cast<int>(message->number);
+            if (action == L"setAudioRenderMs") m_config->audioRenderMs = static_cast<int>(message->number);
+            if (action == L"setAudioDrift") m_config->audioDrift = message->number != 0;
+            if (action == L"setAudioExclusive") m_config->audioExclusive = message->number != 0;
+            m_audioRouter->SetLatency(m_config->audioFifoMs, m_config->audioRenderMs, m_config->audioDrift);
+            m_audioRouter->SetExclusive(m_config->audioExclusive);
+            m_config->Save("nitlink.json");
+            PushSettingsState();
             return;
         }
         if (action == L"setVolume" && m_config && m_audioRouter) {
@@ -3133,6 +3169,10 @@ void Application::Shutdown()
     m_running = false;
     if (m_webviewSettings) m_webviewSettings->DispatchPendingMessages(/*closing=*/true);
     if (m_window) m_window->SetVideoAvailable(false);
+    if (m_audioRouter) {
+        m_audioRouter->Shutdown();
+        m_audioRouter.reset();
+    }
     m_4kxPoller.Stop();
 
     // Stop the HDR source poller FIRST. Its worker thread can be mid-call
@@ -3153,10 +3193,6 @@ void Application::Shutdown()
         m_discord.reset();
     }
 
-    if (m_audioRouter) {
-        m_audioRouter->Shutdown();
-        m_audioRouter.reset();
-    }
 
     // Stop capture FIRST and explicitly close the device. The Elgato driver
     // can hold the device handle indefinitely if the process exits without
@@ -3910,6 +3946,11 @@ bool Application::ReconcileCaptureFormat(bool force)
             ? L"Reconcile: 4K S HID tonemap OFF sent for raw HDR/P010"
             : L"Reconcile: 4K S HID tonemap ON sent for SDR/NV12");
     }
+    if (m_is4KX && SetElgatoTonemap(deviceToOpen.name, /*enable=*/ !wantP010)) {
+        AppLog(wantP010
+            ? L"Reconcile: 4K X tonemap OFF sent for raw HDR/P010"
+            : L"Reconcile: 4K X tonemap ON sent for SDR/NV12");
+    }
 
     // F1 Source picker manual override (same lifecycle as Initialize:
     // applied before Open, fallback handled inside CaptureDevice). This
@@ -3990,6 +4031,9 @@ bool Application::ReconcileCaptureFormat(bool force)
         if (m_is4KS && Set4KSTonemap(/*enableTonemap=*/ true)) {
             AppLog(L"Reconcile: 4K S HID tonemap ON sent for SDR retry");
         }
+        if (m_is4KX && SetElgatoTonemap(deviceToOpen.name, /*enable=*/ true)) {
+            AppLog(L"Reconcile: 4K X tonemap ON sent for SDR retry");
+        }
         opened = m_captureDevice->Open(deviceToOpen);
         if (opened) {
             AppLog(L"Reconcile: rolled back hdrEnabled, P010 unavailable for this source");
@@ -4060,6 +4104,12 @@ bool Application::ReconcileCaptureFormat(bool force)
                        L"format; flipped 4K S tonemap ON for clean SDR NV12");
             }
         }
+    }
+    if (m_is4KX && wantP010 &&
+        !IsEqualGUID(format.subtype, MFVideoFormat_P010) &&
+        SetElgatoTonemap(deviceToOpen.name, /*enable=*/ true)) {
+        AppLog(L"Reconcile: wantP010=true but Open negotiated a non-HDR "
+               L"format; flipped 4K X tonemap ON for clean SDR NV12");
     }
 
     // Title bar may need updating: if the source HDR state changed (the
@@ -4870,6 +4920,32 @@ void Application::PushSettingsState(bool refreshCaptureDevices)
     js << L"\"lowLatency\":"        << (m_config->lowLatency        ? L"true" : L"false") << L",";
     js << L"\"preventSleep\":"      << (m_config->preventSleep      ? L"true" : L"false") << L",";
     js << L"\"audioMuted\":"        << (m_config->audioMuted        ? L"true" : L"false") << L",";
+    js << L"\"audioFifoMs\":" << m_config->audioFifoMs << L",";
+    js << L"\"audioRenderMs\":" << m_config->audioRenderMs << L",";
+    js << L"\"audioDrift\":" << (m_config->audioDrift ? L"true" : L"false") << L",";
+    js << L"\"audioExclusive\":" << (m_config->audioExclusive ? L"true" : L"false") << L",";
+    if (m_audioRouter) {
+        js << L"\"audioExclusiveActive\":" << (m_audioRouter->ExclusiveActive() ? L"true" : L"false") << L",";
+        const uint64_t audioQueues=m_audioRouter->QueueSnapshotUs();
+        js << L"\"audioFillMs\":" << (audioQueues >> 32) / 1000.0 << L",";
+        js << L"\"audioQueueMs\":" << static_cast<uint32_t>(audioQueues) / 1000.0 << L",";
+        js << L"\"audioEffectiveMs\":" << m_audioRouter->EffectiveQueueUs() / 1000.0 << L",";
+        js << L"\"audioAverageMs\":" << m_audioRouter->FifoAverageUs() / 1000.0 << L",";
+        js << L"\"audioMinMs\":" << m_audioRouter->FifoMinUs() / 1000.0 << L",";
+        js << L"\"audioMaxMs\":" << m_audioRouter->FifoMaxUs() / 1000.0 << L",";
+        js << L"\"audioEndpointInfo\":\"" << JsonEscapeWide(m_audioRouter->EndpointInfo()) << L"\",";
+        js << L"\"audioPeriodUs\":" << m_audioRouter->RenderPeriodUs() << L",";
+        js << L"\"audioPpm\":" << m_audioRouter->DriftPpm() << L",";
+        js << L"\"audioEstimatedPpm\":" << m_audioRouter->EstimatedDriftPpm() << L",";
+        js << L"\"audioClockValid\":" << (m_audioRouter->ClockEstimateValid() ? L"true" : L"false") << L",";
+        js << L"\"audioUnderrunEvents\":" << m_audioRouter->UnderrunEvents() << L",";
+        js << L"\"audioReloads\":" << m_audioRouter->AutomaticReloads() << L",";
+        js << L"\"audioUnderruns\":" << m_audioRouter->Underruns() << L",";
+        js << L"\"audioOverruns\":" << m_audioRouter->Overruns() << L",";
+        js << L"\"audioResyncs\":" << m_audioRouter->Resyncs() << L",";
+        js << L"\"audioAdaptive\":" << (m_audioRouter->AdaptiveSupported() ? L"true" : L"false") << L",";
+        js << L"\"audioStreaming\":" << (m_audioRouter->IsStreaming() ? L"true" : L"false") << L",";
+    }
     js << L"\"volume\":"            << m_config->audioVolume        << L",";
     js << L"\"pipOpacity\":"        << m_config->pipOpacity         << L",";
     js << L"\"scalerName\":\"Catmull-Rom\",";

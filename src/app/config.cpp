@@ -370,7 +370,7 @@ bool Config::Load(const std::string& path)
         if (key == "window_width")    windowWidth  = ParseU32(val, windowWidth, 320, 16384);
         if (key == "window_height")   windowHeight = ParseU32(val, windowHeight, 240, 16384);
         if (key == "language") {
-            if (val == "system" || val == "en-US" || val == "zh-TW") language = val;
+            if (val == "system" || val == "en-US" || val == "zh-TW" || val == "zh-CN") language = val;
         }
         if (key == "pip_width")       pipWidth     = ParseU32(val, pipWidth, 80, 16384);
         if (key == "pip_height")      pipHeight    = ParseU32(val, pipHeight, 45, 16384);
@@ -378,6 +378,10 @@ bool Config::Load(const std::string& path)
         if (key == "pip_x")           pipX         = ParseI32(val, pipX, -100000, 100000);
         if (key == "pip_y")           pipY         = ParseI32(val, pipY, -100000, 100000);
         if (key == "audio_volume")    audioVolume  = ParseFloatClamped(val, audioVolume, 0.0f, 1.0f);
+        if (key == "audio_fifo_ms")   audioFifoMs = ParseI32(val, audioFifoMs, 3, 100);
+        if (key == "audio_render_ms") audioRenderMs = ParseI32(val, audioRenderMs, 3, 100);
+        if (key == "audio_drift")     audioDrift = ParseBool(val);
+        if (key == "audio_exclusive") audioExclusive = ParseBool(val);
         if (key == "audio_muted")     audioMuted   = ParseBool(val);
         if (key == "color_expansion") colorExpansion = ParseBool(val);
         if (key == "nis_enabled")     nisEnabled   = ParseBool(val);
@@ -567,7 +571,7 @@ bool Config::Save(const std::string& path)
     file << "# NitLink Configuration\n";
     file << "# https://github.com/nitlink-dev/nitlink\n\n";
 
-    file << "# Interface language: system | en-US | zh-TW\n";
+    file << "# Interface language: system | en-US | zh-TW | zh-CN\n";
     file << "language = " << language << "\n\n";
 
     file << "# Window\n";
@@ -581,7 +585,11 @@ bool Config::Save(const std::string& path)
     file << "pip_x = "       << pipX       << "\n";
     file << "pip_y = "       << pipY       << "\n\n";
 
-    file << "# Audio\n";
+    file << "# Audio (buffer targets in ms; device period may raise render minimum)\n";
+    file << "audio_fifo_ms = " << std::clamp(audioFifoMs, 3, 100) << "\n";
+    file << "audio_render_ms = " << std::clamp(audioRenderMs, 3, 100) << "\n";
+    file << "audio_drift = " << (audioDrift ? "true" : "false") << "\n";
+    file << "audio_exclusive = " << (audioExclusive ? "true" : "false") << "\n";
     file << "audio_volume = " << audioVolume << "\n";
     file << "audio_muted = "  << (audioMuted ? "true" : "false") << "\n\n";
 

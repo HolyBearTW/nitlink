@@ -1,6 +1,10 @@
 #pragma once
 
 #include <string>
+#include "drift_controller.h"
+#include "clock_recovery.h"
+#include "audio_convert.h"
+#include "exclusive_focus.h"
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
@@ -44,6 +48,26 @@ public:
 
     void SetVolume(float volume); // 0.0 - 1.0
     void SetMuted(bool muted);
+    void SetLatency(int fifoMs, int renderMs, bool drift);
+    void SetExclusive(bool enabled);
+    void SetOwnerWindow(HWND window) { m_ownerWindow = window; }
+    bool ExclusiveActive() const { return m_exclusiveActive.load(); }
+    uint32_t RenderQueueMs() const { return m_queueMs.load(); }
+    int EstimatedDriftPpm() const { return m_estimatedPpm.load(); }
+    bool ClockEstimateValid() const { return m_clockEstimateValid.load(); }
+    uint64_t UnderrunEvents() const { return m_underrunEvents.load(); }
+    uint64_t AutomaticReloads() const { return m_automaticReloads.load(); }
+    int DriftPpm() const { return m_driftPpm.load(); }
+    uint32_t RenderPeriodUs() const { return m_periodUs.load(); }
+    uint64_t Resyncs() const { return m_resyncs.load(); }
+    bool AdaptiveSupported() const { return m_adaptiveSupported.load(); }
+    std::wstring EndpointInfo() const;
+    // One atomic publication: FIFO and render occupancy after the SAME pump.
+    uint64_t QueueSnapshotUs() const { return m_queueSnapshot.load(); }
+    uint32_t EffectiveQueueUs() const { return m_effectiveQueueUs.load(); }
+    uint32_t FifoAverageUs() const { return m_fifoAverageUs.load(); }
+    uint32_t FifoMinUs() const { return m_fifoMinUs.load(); }
+    uint32_t FifoMaxUs() const { return m_fifoMaxUs.load(); }
 
     float GetVolume() const { return m_volume; }
     bool  IsMuted()   const { return m_muted; }
@@ -76,6 +100,9 @@ private:
     bool FindCaptureDevice(const std::wstring& nameHint, ComPtr<IMMDevice>& outDevice);
     bool SetupCapture();
     bool SetupRender();
+    bool SetupExclusive(IMMDevice* device, const WAVEFORMATEX* native, std::wstring& failure);
+    bool OwnerIsForeground() const;
+    void UpdateExclusiveFocus(bool foreground, ExclusiveFocusGate::Clock::time_point now);
     void TeardownCapture();
     void TeardownRender();
 
@@ -92,12 +119,52 @@ private:
     // then top the render endpoint up from it. Each returns false after a
     // stream error was handed to HandleStreamError.
     bool DrainCapture();
-    bool FillRender();
+    bool FillRender(bool renderReady = true);
     bool FifoReset(UINT32 bytesPerFrame, UINT32 samplesPerSec);
     void FifoPush(const BYTE* data, UINT32 frames, bool silent);
     UINT32 FifoPop(BYTE* out, UINT32 frames);
     void FifoSkip(UINT32 frames);
     void LogStatsIfDue();
+    UINT32 FifoResample(BYTE* out, UINT32 frames, double ratio);
+    void ResetDrift(bool preserveClock = false);
+    void SetupRenderClock();
+    double ReadClockEstimate(double now);
+    void ObserveRecovery(double now, double error, double missing, double block);
+    void PublishQueue(UINT32 padding);
+    bool PrepareConversion();
+    AudioConvert::Format m_inputPcm{}, m_outputPcm{};
+    AudioConvert::SincKernel m_sinc;
+    bool m_conversionReady = false;
+    mutable std::mutex m_endpointInfoMutex;
+    std::wstring m_endpointInfo = L"Waiting for endpoints";
+    std::atomic<uint64_t> m_queueSnapshot{0};
+    std::atomic<uint32_t> m_effectiveQueueUs{0}, m_fifoAverageUs{0}, m_fifoMinUs{0}, m_fifoMaxUs{0};
+    std::chrono::steady_clock::time_point m_occupancyStart{}, m_occupancyLast{};
+    double m_occupancyIntegral = 0, m_occupancySeconds = 0;
+    uint32_t m_occupancyPrevious = 0, m_occupancyMin = UINT32_MAX, m_occupancyMax = 0;
+    std::atomic<int> m_fifoTargetMs{12}, m_renderQueueTargetMs{10};
+    std::atomic<bool> m_driftEnabled{true};
+    std::atomic<bool> m_exclusiveRequested{false}, m_exclusiveActive{false}, m_retryExclusive{false};
+    std::atomic<HWND> m_ownerWindow{nullptr};
+    std::atomic<bool> m_exclusivePermitted{false};
+    ExclusiveFocusGate m_focusGate;
+    std::wstring m_exclusiveFailure, m_failedExclusiveDeviceId;
+    std::chrono::steady_clock::time_point m_lastRenderEvent{};
+    std::atomic<uint32_t> m_queueMs{0}, m_periodUs{0};
+    std::atomic<int> m_driftPpm{0};
+    std::atomic<uint64_t> m_resyncs{0};
+    std::atomic<bool> m_adaptiveSupported{false};
+    UINT32 m_renderPeriodFrames = 0;
+    DriftController m_drift;
+    AudioClockRate m_captureClockRate, m_renderClockRate;
+    AudioRecoveryGuard m_recoveryGuard;
+    ComPtr<IAudioClock> m_renderClock;
+    UINT64 m_renderClockFrequency = 0;
+    std::atomic<int> m_estimatedPpm{0};
+    std::atomic<bool> m_clockEstimateValid{false};
+    std::atomic<uint64_t> m_underrunEvents{0}, m_automaticReloads{0};
+    double m_phase = 1.0, m_slipBudget = 0;
+    std::chrono::steady_clock::time_point m_lastDrift{};
 
     std::wstring m_nameHint = L"Elgato";
 
@@ -124,11 +191,9 @@ private:
     HANDLE m_stopEvent    = nullptr;
 
     // FIFO between the two endpoint clocks, in capture-format frames. The
-    // capture card and the playback device each run on their own clock, so
-    // over minutes one side outruns the other. The worker holds the fill
-    // near a target by slipping single frames, which is inaudible, instead
-    // of letting the render buffer drain (gaps) or overflow (dropped packet
-    // tails); both showed up as periodic stutter on USB cards.
+    // capture and playback clocks drift. A filtered PI controller steers
+    // sinc resampling and format conversion; rare shared-mode formats use
+    // filtered frame slips. All ring/phase/controller state is worker-owned.
     std::vector<BYTE> m_fifo;
     size_t   m_fifoHead      = 0;      // read offset, bytes
     size_t   m_fifoBytes     = 0;      // bytes held

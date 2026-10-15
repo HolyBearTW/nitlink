@@ -27,6 +27,13 @@ static std::string Read(const std::filesystem::path& path) {
 static void ConfigTests(const std::filesystem::path& dir) {
     const auto path = dir / "config.ini";
     Config config;
+    Write(path, "language = zh-CN\n");
+    Check(config.Load(path.string()) && config.language == "zh-CN", "load Simplified Chinese preference");
+    Check(config.Save(path.string()), "save Simplified Chinese preference");
+    Config languageReload;
+    Check(languageReload.Load(path.string()) && languageReload.language == "zh-CN",
+          "Simplified Chinese preference survives restart");
+    config = Config{};
     Write(path, "audio_volume = nan\npip_opacity = inf\nnis_sharpness = -inf\nwindow_width = 444junk\npip_x = 23junk\n");
     Check(config.Load(path.string()), "load malformed values");
     Check(config.audioVolume == 1 && config.pipOpacity == 0.9f && config.nisSharpness == Config{}.nisSharpness &&

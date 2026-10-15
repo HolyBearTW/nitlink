@@ -8,16 +8,20 @@
       const locales = (window.navigator && window.navigator.languages && window.navigator.languages.length)
         ? window.navigator.languages
         : [window.navigator && window.navigator.language];
-      return locales.some(locale => typeof locale === 'string' &&
-        ['zh-tw', 'zh-hant-tw'].includes(locale.toLowerCase()))
-        ? 'zh-TW' : 'en-US';
+      for (const locale of locales) {
+        if (typeof locale !== 'string') continue;
+        const tag = locale.toLowerCase();
+        if (['zh-cn', 'zh-sg', 'zh-hans'].includes(tag) || tag.startsWith('zh-hans-')) return 'zh-CN';
+        if (['zh-tw', 'zh-hant-tw'].includes(tag)) return 'zh-TW';
+      }
+      return 'en-US';
     };
     const standaloneLanguageKey = 'nitlink.languagePreference';
     const standalonePreference = (() => {
       if (hasWebViewHost()) return 'system';
       try {
         const saved = window.localStorage.getItem(standaloneLanguageKey);
-        return ['system', 'en-US', 'zh-TW'].includes(saved) ? saved : 'system';
+        return ['system', 'en-US', 'zh-TW', 'zh-CN'].includes(saved) ? saved : 'system';
       } catch (_) {
         return 'system';
       }
@@ -28,6 +32,30 @@
       const value = selected[key] || englishLocale[key];
       return (typeof value === 'string' && value.length > 0) ? value : key;
     };
+    // Translate display-only endpoint labels; raw driver diagnostics stay available in logs.
+    const endpointLabels = [
+      ["exclusive suspended: window inactive, hidden, minimized or regaining focus", "audio.endpoint.0"],
+      ["Compatibility shared (Windows conversion)", "audio.endpoint.1"],
+      ["Native shared low-period", "audio.endpoint.2"],
+      ["Waiting for playback endpoint", "audio.endpoint.3"],
+      ["Exclusive event", "audio.endpoint.4"],
+      ["driver alignment applied", "audio.endpoint.5"],
+      ["driver stream latency", "audio.endpoint.6"],
+      ["exclusive fallback:", "audio.endpoint.7"],
+      ["exclusive min", "audio.endpoint.8"],
+      ["native min", "audio.endpoint.9"],
+      ["actual block", "audio.endpoint.10"],
+      ["requested", "audio.endpoint.11"],
+      ["default", "audio.endpoint.12"],
+      ["actual", "audio.endpoint.13"],
+      ["capture", "audio.endpoint.14"],
+      ["stream", "audio.endpoint.15"],
+      ["unknown", "audio.endpoint.16"],
+      ["fallback:", "audio.endpoint.17"],
+      ["frames", "audio.endpoint.18"]
+    ];
+    const localizeEndpointInfo = info => endpointLabels.reduce(
+      (text, [phrase, key]) => text.split(phrase).join(t(key)), String(info || ""));
     const applyTranslations = locale => {
       currentLocale = localeResources[locale] ? locale : 'en-US';
       document.documentElement.lang = currentLocale;
@@ -50,7 +78,7 @@
       const h1 = document.querySelector('.topbar h1');
       if (h1 && titleKey) h1.textContent = t(titleKey);
       const language = document.getElementById('language-select');
-      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW') {
+      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW' && language.value !== 'zh-CN') {
         language.value = 'system';
       }
     };
@@ -64,8 +92,7 @@
     // A real NitLink host will immediately push its effective locale. When
     // this file is opened directly for static testing, use the browser-local
     // preference instead so the language selector still has visible effect.
-    const standaloneLocale = standalonePreference === 'zh-TW' ? 'zh-TW'
-      : standalonePreference === 'en-US' ? 'en-US' : detectStandaloneLocale();
+    const standaloneLocale = standalonePreference === 'system' ? detectStandaloneLocale() : standalonePreference;
     applyTranslations(standaloneLocale);
 
     // Rail navigation. Every pane stays in the DOM so applyState can keep
@@ -100,14 +127,72 @@
       if (!hasWebViewHost()) languageSelect.value = standalonePreference;
       languageSelect.addEventListener('change', () => {
         const preference = languageSelect.value;
-        applyTranslations(preference === 'zh-TW' ? 'zh-TW'
-          : preference === 'en-US' ? 'en-US' : detectStandaloneLocale());
+        applyTranslations(preference === 'system' ? detectStandaloneLocale() : preference);
         if (!hasWebViewHost()) {
           try { window.localStorage.setItem(standaloneLanguageKey, preference); } catch (_) {}
         }
         post('setLanguage', preference);
       });
     }
+
+    for (const [id, action] of [['audio-fifo','setAudioFifoMs'], ['audio-render','setAudioRenderMs']]) {
+      document.getElementById(id)?.addEventListener('change', e => {
+        const n = Number(e.target.value);
+        if (!Number.isInteger(n) || n < 3 || n > 100) { e.target.reportValidity(); return; }
+        post(action, n);
+      });
+    }
+    document.getElementById('audio-exclusive')?.addEventListener('change', e => post('setAudioExclusive', e.target.checked));
+    document.getElementById('audio-drift')?.addEventListener('change', e => post('setAudioDrift', e.target.checked));
+    document.getElementById('audio-refresh')?.addEventListener('click', () => post('ready'));
+
+    // Diagnostics are a presentation preference, off at every application start.
+    // Hiding the panel never changes audio processing or cumulative counters.
+    document.getElementById('audio-debug')?.addEventListener('change', e => {
+      document.getElementById('audio-diagnostics').hidden = !e.target.checked;
+      e.target.setAttribute('aria-expanded', String(e.target.checked));
+    });
+
+    // Small help buttons support pointer hover, keyboard focus and touch/click.
+    // A fixed tooltip stays inside the viewport even in the narrow side panel.
+    (() => {
+      const tip = document.getElementById('audio-tooltip');
+      let anchor = null, hideTimer;
+      const hide = () => { clearTimeout(hideTimer); tip.hidden = true; anchor = null; };
+      const hideSoon = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hide, 150); };
+      const show = button => {
+        clearTimeout(hideTimer);
+        anchor = button;
+        tip.textContent = t(button.dataset.audioHelp);
+        tip.hidden = false;
+        const rect = button.getBoundingClientRect();
+        const left = Math.max(12, Math.min(rect.left, window.innerWidth-tip.offsetWidth-12));
+        const below = rect.bottom+8;
+        const top = below+tip.offsetHeight <= window.innerHeight-12 ? below : Math.max(12,rect.top-tip.offsetHeight-8);
+        tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+      };
+      document.querySelectorAll('[data-audio-help]').forEach(button => {
+        button.addEventListener('mouseenter', () => show(button));
+        button.addEventListener('mouseleave', e => {
+          if (document.activeElement !== button && e.relatedTarget !== tip) hideSoon();
+        });
+        button.addEventListener('focus', () => show(button));
+        button.addEventListener('blur', hide);
+        button.addEventListener('click', () => show(button));
+      });
+      tip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+      tip.addEventListener('mouseleave', () => {
+        if (document.activeElement !== anchor) hideSoon();
+      });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+      document.addEventListener('click', e => {
+        if (anchor && e.target !== anchor && !tip.contains(e.target)) hide();
+      });
+      document.addEventListener('scroll', () => {
+        if (anchor && document.activeElement === anchor) show(anchor); else hide();
+      }, true);
+      window.addEventListener('resize', hide);
+    })();
 
     document.addEventListener('click', e => {
       let actionEl = e.target.closest('[data-action]');
@@ -556,7 +641,7 @@
         e.stopPropagation();
         togglePop();
       });
-      document.addEventListener('click', e => {
+    document.addEventListener('click', e => {
         if (!pop.contains(e.target) && !trigger.contains(e.target)) closePop();
       });
       document.addEventListener('keydown', e => {
@@ -695,6 +780,33 @@
           s.presentPacing === 'captured' ? t('value.captureRate')      : t('value.displayRefresh'));
       }
       setToggle('toggle-mute', s.audioMuted);
+      for (const [id, key] of [['audio-fifo','audioFifoMs'], ['audio-render','audioRenderMs']]) {
+        const input = document.getElementById(id);
+        if (input && document.activeElement !== input && Number.isFinite(s[key])) input.value = s[key];
+      }
+      const exclusiveInput = document.getElementById('audio-exclusive');
+      if (exclusiveInput && typeof s.audioExclusive === 'boolean') exclusiveInput.checked = s.audioExclusive;
+      const renderInput = document.getElementById('audio-render');
+      if (renderInput) renderInput.disabled = s.audioExclusiveActive === true;
+      const driftInput = document.getElementById('audio-drift');
+      if (driftInput && typeof s.audioDrift === 'boolean') driftInput.checked = s.audioDrift;
+      setText('audio-status', s.audioStreaming
+        ? `${t('audio.running')} · ${t(s.audioExclusiveActive ? 'audio.exclusiveMode' : 'audio.sharedMode')}`
+        : t('audio.waiting'));
+      const health = document.getElementById('audio-health');
+      if (health && typeof s.audioFillMs === 'number') {
+        const ms = value => Number.isFinite(value) ? value.toFixed(2) : '--';
+        health.textContent = `${s.audioStreaming ? t('audio.running') : t('audio.waiting')} · ${s.audioAdaptive ? 'Sinc SRC' : t('audio.fallback')} · ${s.audioDrift ? t('audio.driftOn') : t('audio.off')}\n` +
+          (s.audioExclusiveActive
+            ? `${t('audio.exclusiveAuto')} · ${t('audio.block')} ${ms(s.audioEffectiveMs)} ms\nFIFO ${ms(s.audioFillMs)} ms (${t('audio.afterPump')})\n`
+            : `${t('audio.requested')} ${ms(s.audioRenderMs)} ms → ${t('audio.effective')} ${ms(s.audioEffectiveMs)} ms\nFIFO ${ms(s.audioFillMs)} ms + ${t('audio.queued')} ${ms(s.audioQueueMs)} ms (${t('audio.afterPump')})\n`) +
+          `FIFO ${t('audio.average')} ${ms(s.audioAverageMs)} ms [${ms(s.audioMinMs)}–${ms(s.audioMaxMs)}]\n` +
+          `${t('audio.period')} ${ms(s.audioPeriodUs / 1000)} ms · ${t('audio.correction')} ${s.audioPpm} ppm\n` +
+          `${t('audio.clockEstimate')} ${s.audioClockValid ? s.audioEstimatedPpm + ' ppm' : t('audio.clockLearning')}\n` +
+          `${t('audio.underrunEvents')} ${s.audioUnderrunEvents ?? 0} · ${t('audio.reloads')} ${s.audioReloads ?? 0}\n` +
+          `${t('audio.underruns')} ${s.audioUnderruns} · ${t('audio.dropped')} ${s.audioOverruns} · ${t('audio.resyncs')} ${s.audioResyncs}\n` +
+          localizeEndpointInfo(s.audioEndpointInfo);
+      }
 
       if (typeof s.volume === 'number') {
         const slider = document.getElementById('slider-volume');

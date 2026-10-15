@@ -338,11 +338,21 @@ void WebViewSettings::Show(bool visible) {
         // since last show: DXGI swap chain may have resized but the
         // controller wouldn't have been told.
         m_controller->put_Bounds(ComputeBounds());
+        ShowBrowserSurfaces();
         m_controller->put_IsVisible(TRUE);
         m_controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
         WVLog(L"Show(true): overlay visible");
     } else {
         m_controller->put_IsVisible(FALSE);
+        // Collapse the hidden control to an empty rectangle. The browser's
+        // child window belongs to another process, so its hide reaches the
+        // desktop compositor later than our own frames do; in a window on the
+        // desktop that could leave the panel's last picture standing over
+        // the video until the mouse disturbed it. An empty window has no
+        // picture to leave behind. Show(true) restores the bounds first.
+        m_controller->put_Bounds(RECT{0, 0, 0, 0});
+        HideBrowserSurfaces();
+        RefreshComposition();
         // Return keyboard focus to the parent so hotkeys + key events
         // (Esc, F1, etc.) continue to be processed by the main window.
         SetFocus(m_parent);
@@ -351,8 +361,60 @@ void WebViewSettings::Show(bool visible) {
 }
 
 void WebViewSettings::Resize() {
-    if (!m_controller) return;
+    // A hidden control stays collapsed; Show(true) sizes it to the window.
+    if (!m_controller || !m_visible) return;
     m_controller->put_Bounds(ComputeBounds());
+}
+
+// The browser draws the panel into a layered child window owned by its GPU
+// process ("Intermediate D3D Window"). Hiding the control hides the browser's
+// own windows, but that drawing surface keeps its visible style, and on the
+// desktop the compositor could keep showing its last picture until the main
+// window moved. Hide it from here as well, and show it again before the
+// control returns. SWP_ASYNCWINDOWPOS posts the request to its owner, so this
+// thread never waits on the browser process.
+namespace {
+constexpr UINT kSurfaceFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
+bool IsBrowserSurface(HWND hwnd) {
+    wchar_t cls[64]{};
+    GetClassNameW(hwnd, cls, 64);
+    return wcscmp(cls, L"Intermediate D3D Window") == 0;
+}
+}
+
+void WebViewSettings::HideBrowserSurfaces() {
+    m_hiddenSurfaces.clear();
+    EnumChildWindows(m_parent, [](HWND hwnd, LPARAM param) -> BOOL {
+        if (IsBrowserSurface(hwnd) && (GetWindowLongW(hwnd, GWL_STYLE) & WS_VISIBLE)) {
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, kSurfaceFlags | SWP_HIDEWINDOW);
+            reinterpret_cast<std::vector<HWND>*>(param)->push_back(hwnd);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&m_hiddenSurfaces));
+    if (!m_hiddenSurfaces.empty())
+        WVLog(L"Show(false): browser surfaces hidden: " + std::to_wstring(m_hiddenSurfaces.size()));
+}
+
+// On the desktop the compositor could keep the panel's last picture on screen
+// after everything above was hidden, until the main window moved. Moving the
+// window one pixel and back in the same instant is batched into one frame by
+// the compositor and makes it recompose the window. A window covering its
+// monitor (fullscreen) never showed the leftover and is left alone.
+void WebViewSettings::RefreshComposition() {
+    RECT rc{};
+    if (!GetWindowRect(m_parent, &rc)) return;
+    MONITORINFO mi{sizeof(mi)};
+    HMONITOR monitor = MonitorFromWindow(m_parent, MONITOR_DEFAULTTONEAREST);
+    if (monitor && GetMonitorInfoW(monitor, &mi) && EqualRect(&rc, &mi.rcMonitor)) return;
+    constexpr UINT flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    SetWindowPos(m_parent, nullptr, rc.left + 1, rc.top, 0, 0, flags);
+    SetWindowPos(m_parent, nullptr, rc.left, rc.top, 0, 0, flags);
+}
+
+void WebViewSettings::ShowBrowserSurfaces() {
+    for (HWND hwnd : m_hiddenSurfaces)
+        if (IsWindow(hwnd)) SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, kSurfaceFlags | SWP_SHOWWINDOW);
+    m_hiddenSurfaces.clear();
 }
 
 RECT WebViewSettings::ComputeBounds() const {
