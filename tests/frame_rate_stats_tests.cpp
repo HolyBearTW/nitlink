@@ -132,16 +132,24 @@ int main()
                 busyReadback.presentFps == 60, "a window without observed classifications is Unknown");
         auto& localization = Localization::Instance();
         for (const auto language : {LanguagePreference::English,
-                                    LanguagePreference::TraditionalChinese}) {
+                                    LanguagePreference::TraditionalChinese,
+                                    LanguagePreference::SimplifiedChinese}) {
             localization.SetPreference(language);
             const bool english = language == LanguagePreference::English;
-            Require(localization.Get(L"overlay.presentFps") ==
-                        (english ? L"Present FPS" : L"呈現 FPS") &&
-                    localization.Get(L"overlay.captureFps") ==
-                        (english ? L"Capture FPS" : L"擷取 FPS") &&
-                    localization.Get(L"overlay.contentFps") ==
-                        (english ? L"Content FPS (est.)" : L"內容變化 FPS（估計）"),
-                    "both languages must label the distinct content/capture/present metrics");
+            const bool simplified = language == LanguagePreference::SimplifiedChinese;
+            const auto presentRate = english ? L"Present rate"
+                : simplified ? L"呈现频率" : L"呈現幀率";
+            const auto presentFps = english ? L"Present FPS"
+                : simplified ? L"呈现 FPS" : L"呈現 FPS";
+            const auto captureFps = english ? L"Capture FPS"
+                : simplified ? L"采集 FPS" : L"擷取 FPS";
+            const auto contentFps = english ? L"Content FPS (est.)"
+                : simplified ? L"内容变化 FPS（估算）" : L"內容變化 FPS（估計）";
+            Require(localization.Get(L"overlay.presentRate") == presentRate &&
+                    localization.Get(L"overlay.presentFps") == presentFps &&
+                    localization.Get(L"overlay.captureFps") == captureFps &&
+                    localization.Get(L"overlay.contentFps") == contentFps,
+                    "all three languages must label the distinct content, capture and present metrics");
         }
         std::cout << "PASS independent rates, missing differ, resets, sample intervals and dropped frames\n";
     } catch (const std::exception& error) {

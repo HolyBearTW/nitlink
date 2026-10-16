@@ -1,5 +1,6 @@
 #include "app/WebViewSettings.h"
 #include "app/settings_message.h"
+#include "app/hdmi_source.h"
 #include "app/webview_lifecycle.h"
 #include "app/webview_policy.h"
 
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <vector>
 
 using Microsoft::WRL::Callback;
@@ -61,6 +63,285 @@ std::wstring Script(ICoreWebView2* view, const wchar_t* script) {
     if (!PumpUntil([&] { return result->done; })) throw std::runtime_error("script timed out");
     Hr(result->hr);
     return result->value;
+}
+
+void PushManualState(WebViewSettings& host, std::string_view manual, std::wstring_view label) {
+    std::wstringstream state;
+    state << L"{\"state\":{\"manualHdmiSource\":\""
+          << std::wstring(manual.begin(), manual.end())
+          << L"\",\"manualHdmiSourceCustom\":\"\",\"effectiveHdmiSource\":\"" << label
+          << L"\",\"manualHdmiSourceOptions\":[";
+    bool first = true;
+    for (const auto& [value, name] : NitLink::kManualHdmiSources) {
+        if (!first) state << L",";
+        first = false;
+        state << L"{\"value\":\"" << std::wstring(value.begin(), value.end())
+              << L"\",\"label\":\"" << name << L"\"}";
+    }
+    state << L"]}}";
+    host.PostMessage(state.str());
+}
+
+void OtherEditorLocalesTest(WebViewSettings& host, ICoreWebView2* view,
+                            std::vector<std::wstring>& messages) {
+    // These fixed fixture strings need no escaping. Use the common resolver so
+    // native effective identity and the actual WebView summary agree.
+    const auto pushOther = [&](const wchar_t* locale, std::wstring_view custom,
+                               std::wstring_view detected = L"Detected PS5") {
+        const auto effective = NitLink::GetEffectiveHdmiSourceLabel("other", detected, {}, custom);
+        std::wstringstream state;
+        state << L"{\"state\":{\"locale\":\"" << locale
+              << L"\",\"languagePreference\":\"" << locale
+              << L"\",\"manualHdmiSource\":\"other\",\"manualHdmiSourceCustom\":\"" << custom
+              << L"\",\"effectiveHdmiSource\":\"" << effective << L"\"}}";
+        host.PostMessage(state.str());
+    };
+    const auto firstMessage = messages.size();
+    for (const auto locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        pushOther(locale, L"Steam Deck");
+        const auto ready = std::wstring(L"document.documentElement.lang === '") + locale +
+            L"' && document.getElementById('meta-hdmi-source').textContent === 'Steam Deck'";
+        Check(PumpUntil([&] { return Script(view, ready.c_str()) == L"true"; }),
+              "saved custom source reaches each locale");
+        Check(Script(view, LR"JS((() => {
+            const strings = window.NitLinkLocales[document.documentElement.lang];
+            const translated = (selector, key) => document.querySelector(selector).textContent === strings[key];
+            return translated('#hdmi-source-trigger option[value=other]', 'hdmiSource.otherOption') &&
+                translated('#hdmi-source-trigger option[value=auto]', 'value.auto') &&
+                translated('#hdmi-source-label', 'meta.hdmiSource') &&
+                translated('#hdmi-source-custom-row label', 'hdmiSource.customNameShort') &&
+                document.getElementById('hdmi-source-custom-edit').title === strings['hdmiSource.editName'] &&
+                translated('#hdmi-source-custom-editor label', 'hdmiSource.customName') &&
+                translated('#hdmi-source-custom-save', 'hdmiSource.save') &&
+                translated('#hdmi-source-custom-cancel', 'hdmiSource.cancel') &&
+                translated('#hdmi-source-custom-error', 'hdmiSource.invalidCustom');
+        })())JS") == L"true", "Other, Auto, custom name, Save, Cancel and error strings use the active locale");
+
+        auto count = messages.size();
+        Check(Script(view, LR"JS((() => {
+            const input = document.getElementById('hdmi-source-custom-input');
+            document.getElementById('hdmi-source-custom-edit').click();
+            const saved = input.value === 'Steam Deck' && document.activeElement === input;
+            input.value = 'unsaved draft';
+            document.getElementById('hdmi-source-custom-cancel').click();
+            const cancelled = document.getElementById('hdmi-source-custom-editor').hidden &&
+                document.activeElement === document.getElementById('hdmi-source-trigger') &&
+                document.getElementById('meta-hdmi-source').textContent === 'Steam Deck';
+            document.getElementById('hdmi-source-custom-edit').click();
+            return saved && cancelled && input.value === 'Steam Deck';
+        })())JS") == L"true" && messages.size() == count,
+            "Cancel posts no draft, retains the saved source and restores the editor from saved state");
+        Script(view, L"document.getElementById('hdmi-source-custom-input').value='x'.repeat(65); document.getElementById('hdmi-source-custom-save').click()");
+        Check(Script(view, LR"JS(!document.getElementById('hdmi-source-custom-error').hidden &&
+            !document.getElementById('hdmi-source-custom-editor').hidden &&
+            document.getElementById('hdmi-source-custom-error').textContent ===
+                window.NitLinkLocales[document.documentElement.lang]['hdmiSource.invalidCustom'])JS") == L"true" &&
+            messages.size() == count, "invalid edits show the localized error without changing saved identity");
+        Script(view, L"document.getElementById('hdmi-source-custom-cancel').click()");
+
+        pushOther(locale, L"");
+        Check(PumpUntil([&] {
+            return Script(view, L"document.getElementById('meta-hdmi-source').textContent === 'Detected PS5'") == L"true";
+        }), "unset Other summary uses the effective Auto identity in every locale");
+        count = messages.size();
+        Check(Script(view, LR"JS((() => {
+            document.getElementById('hdmi-source-custom-edit').click();
+            document.getElementById('hdmi-source-custom-input').value = 'unsaved source';
+            document.getElementById('hdmi-source-custom-cancel').click();
+            return document.getElementById('meta-hdmi-source').textContent === 'Detected PS5' &&
+                document.getElementById('hdmi-source-custom-editor').hidden;
+        })())JS") == L"true" && messages.size() == count,
+            "cancelling an unset Other draft preserves the effective Auto source without posting");
+        for (const auto blank : {L"''", L"' \\u3000\\u00a0 '"}) {
+            count = messages.size();
+            const auto save = std::wstring(L"document.getElementById('hdmi-source-custom-edit').click(); ") +
+                L"document.getElementById('hdmi-source-custom-input').value=" + blank +
+                L"; document.getElementById('hdmi-source-custom-save').click()";
+            Script(view, save.c_str());
+            Check(PumpUntil([&] { return messages.size() == count + 1; }),
+                  "blank and Unicode-whitespace saves post exactly one native update");
+            const auto cleared = NitLink::ParseSettingsMessage(messages.back());
+            Check(cleared && cleared->action == L"setManualHdmiSourceCustom" && cleared->text.empty(),
+                  "blank and Unicode-whitespace custom names normalize to an empty saved value");
+            pushOther(locale, blank == std::wstring_view(L"''") ? L"" : L" \u3000\u00a0 ");
+            const auto restored = std::wstring(L"(() => { document.getElementById('hdmi-source-custom-edit').click(); ") +
+                L"const matches = document.getElementById('hdmi-source-custom-input').value === " + blank +
+                L"; document.getElementById('hdmi-source-custom-cancel').click(); return matches && " +
+                L"document.getElementById('meta-hdmi-source').textContent === 'Detected PS5'; })()";
+            Check(PumpUntil([&] {
+                return Script(view, restored.c_str()) == L"true";
+            }), "blank and Unicode-whitespace native state uses the Auto fallback without Other filler");
+        }
+
+        pushOther(locale, L"", L"");
+        Check(PumpUntil([&] {
+            return Script(view, LR"JS(document.getElementById('meta-hdmi-source').textContent ===
+                window.NitLinkLocales[document.documentElement.lang]['meta.none'] &&
+                document.getElementById('hdmi-source-trigger').title ===
+                    window.NitLinkLocales[document.documentElement.lang]['meta.hdmiSourceInfo'])JS") == L"true";
+        }), "unknown Other source shows the localized none marker without inventing identity");
+
+        count = messages.size();
+        Script(view, L"document.getElementById('hdmi-source-custom-edit').click(); document.getElementById('hdmi-source-custom-input').value='熊'; document.getElementById('hdmi-source-custom-save').click()");
+        Check(PumpUntil([&] { return messages.size() == count + 1; }),
+              "one Unicode character is accepted by the local custom editor");
+        const auto single = NitLink::ParseSettingsMessage(messages.back());
+        Check(single && single->action == L"setManualHdmiSourceCustom" && single->text == L"熊",
+              "native custom-source validation preserves a one-character local name");
+        pushOther(locale, L"熊");
+        Check(PumpUntil([&] {
+            return Script(view, L"document.getElementById('meta-hdmi-source').textContent === '熊'") == L"true";
+        }), "one-character native identity is displayed intact in every locale");
+    }
+    for (size_t i = firstMessage; i < messages.size(); ++i) {
+        const auto action = NitLink::ParseSettingsMessage(messages[i]);
+        Check(action && action->action == L"setManualHdmiSourceCustom",
+              "custom editor emits only identity updates, never capture or HDR actions");
+    }
+}
+
+void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* view,
+                            std::vector<std::wstring>& messages) {
+    // Keep the controller visible inside the hidden fixture so WebView2 does
+    // not suspend viewport updates while checking responsive layout.
+    host.Show(true);
+    PushManualState(host, "switch2", L"Switch 2");
+    Check(PumpUntil([&] {
+        return Script(view, L"document.getElementById('hdmi-source-trigger').value === 'switch2' && document.getElementById('hdmi-source-trigger').options.length === 9") == L"true";
+    }), "manual picker receives the shared native options and effective identity");
+    const auto beforeOpen = messages.size();
+    Script(view, L"document.getElementById('source-trigger').click()");
+    Check(PumpUntil([&] { return messages.size() == beforeOpen + 1; }) &&
+          NitLink::ParseSettingsMessage(messages.back())->action == L"getDeviceList",
+          "original source menu keeps its explicit device refresh on opening");
+    Check(Script(view, LR"JS((() => {
+        const source = document.getElementById('source-popover');
+        const picker = document.getElementById('hdmi-source-picker');
+        const resolution = source.querySelector(':scope > .source-popover-select-row');
+        return source.dataset.open === 'true' && picker.previousElementSibling.textContent === window.NitLinkLocales['zh-TW']['source.manualFormat'] &&
+            picker.getBoundingClientRect().bottom <= resolution.getBoundingClientRect().top &&
+            resolution.querySelector('label').textContent === window.NitLinkLocales['zh-TW']['source.resolution'] &&
+            source.querySelectorAll(':scope > .source-popover-select-row').length === 3 &&
+            document.querySelector('#hdmi-source-trigger option[value=auto]').textContent === '自動' &&
+            document.querySelector('#hdmi-source-trigger option[value=other]').textContent === '其他…' &&
+            document.getElementById('hdmi-source-trigger').selectedOptions[0].value === 'switch2';
+    })())JS") == L"true", "manual format heading precedes HDMI identity, followed by resolution, framerate and format");
+    Check(Script(view, LR"JS((() => {
+        const manual = document.getElementById('hdmi-source-trigger');
+        const resolution = document.querySelector('#source-popover > .source-popover-select-row select');
+        const same = (a, b, properties) => properties.every(property => getComputedStyle(a)[property] === getComputedStyle(b)[property]);
+        return manual.tagName === 'SELECT' && resolution.tagName === 'SELECT' &&
+            same(manual, resolution, ['backgroundColor','color','fontFamily','fontSize','fontWeight','lineHeight','borderTopColor','borderTopWidth','borderRadius','paddingTop','paddingBottom','paddingLeft','paddingRight','height','appearance']) &&
+            same(manual.parentElement, resolution.parentElement, ['gridTemplateColumns','gap','paddingTop','paddingBottom','paddingLeft','paddingRight']) &&
+            same(document.getElementById('hdmi-source-label'), resolution.previousElementSibling, ['color','fontSize','fontWeight']) &&
+            Math.abs(manual.getBoundingClientRect().left - resolution.getBoundingClientRect().left) < 1 &&
+            Math.abs(manual.getBoundingClientRect().width - resolution.getBoundingClientRect().width) < 1;
+    })())JS") == L"true", "actual WebView computed style, borders, spacing and column alignment match the existing selects");
+    Check(Script(view, LR"JS((() => {
+        const manual = document.getElementById('hdmi-source-trigger');
+        const resolution = document.querySelector('#source-popover > .source-popover-select-row select');
+        resolution.focus();
+        const focusedBorder = getComputedStyle(resolution).borderTopColor;
+        manual.focus();
+        return getComputedStyle(manual).borderTopColor === focusedBorder;
+    })())JS") == L"true", "HDMI select shares the existing focus border style");
+    Script(view, LR"JS(window.__captureLabels = JSON.stringify(['meta-source','meta-resolution','meta-format','pacing-val','toggle-hdr'].map(id => {
+        const el = document.getElementById(id); return [el.textContent, el.className];
+    })))JS");
+    const auto firstMessage = messages.size();
+    for (const auto& [value, name] : NitLink::kManualHdmiSources) {
+        const auto count = messages.size();
+        const auto click = L"document.getElementById('hdmi-source-trigger').value='" +
+            std::wstring(value.begin(), value.end()) + L"'; document.getElementById('hdmi-source-trigger').dispatchEvent(new Event('change', {bubbles:true}))";
+        Script(view, click.c_str());
+        Check(PumpUntil([&] { return messages.size() > count; }), "identity selection reaches native bridge");
+        const auto parsed = NitLink::ParseSettingsMessage(messages.back());
+        Check(parsed && parsed->action == L"setManualHdmiSource" &&
+              parsed->text == std::wstring(value.begin(), value.end()), "identity payload uses canonical value");
+        PushManualState(host, value, name);
+        const auto selected = L"document.getElementById('hdmi-source-trigger').selectedOptions[0].value === '" +
+            std::wstring(value.begin(), value.end()) + L"'";
+        Check(PumpUntil([&] { return Script(view, selected.c_str()) == L"true"; }), "native selection updates check state");
+        if (value == "other") Script(view, L"document.getElementById('hdmi-source-custom-cancel').click()");
+    }
+    Check(messages.size() == firstMessage + NitLink::kManualHdmiSources.size(),
+          "identity picker never enumerates devices or changes capture format");
+    Check(Script(view, LR"JS(JSON.stringify(['meta-source','meta-resolution','meta-format','pacing-val','toggle-hdr'].map(id => {
+        const el = document.getElementById(id); return [el.textContent, el.className];
+    })) === window.__captureLabels)JS") == L"true", "identity leaves live signal, format, HDR and pacing controls unchanged");
+
+    Script(view, L"document.getElementById('hdmi-source-custom-edit').click(); document.getElementById('hdmi-source-custom-input').value='unsaved draft'");
+    Check(Script(view, L"document.getElementById('hdmi-source-custom-input').click(); document.getElementById('source-popover').dataset.open === 'true'") == L"true",
+          "nested custom input does not toggle its containing source menu");
+    host.PostMessage(LR"({"state":{"manualHdmiSource":"other","manualHdmiSourceCustom":"Steam Deck","effectiveHdmiSource":"Steam Deck"}})");
+    Check(PumpUntil([&] { return Script(view, L"document.getElementById('meta-hdmi-source').textContent === 'Steam Deck'") == L"true"; }), "custom effective name reaches picker");
+    Check(Script(view, L"document.getElementById('hdmi-source-custom-input').value === 'unsaved draft' && !document.getElementById('hdmi-source-custom-editor').hidden") == L"true",
+          "periodic native state preserves a custom edit in progress");
+    auto count = messages.size();
+    Script(view, L"document.getElementById('hdmi-source-custom-input').value='x'.repeat(65); document.getElementById('hdmi-source-custom-save').click()");
+    Check(Script(view, L"!document.getElementById('hdmi-source-custom-error').hidden && !document.getElementById('hdmi-source-custom-editor').hidden") == L"true" && messages.size() == count,
+          "overlength custom edit remains open without posting");
+    Script(view, L"document.getElementById('hdmi-source-custom-input').value='Deck\\u0085PC'; document.getElementById('hdmi-source-custom-save').click()");
+    Check(messages.size() == count, "custom controls cannot cross the UI bridge");
+    Script(view, LR"JS(document.getElementById('hdmi-source-custom-input').value='  Deck "<b>& PC</b>\\  '; document.getElementById('hdmi-source-custom-save').click())JS");
+    Check(PumpUntil([&] { return messages.size() > count; }), "custom edit save posts through real serializer");
+    const auto custom = NitLink::ParseSettingsMessage(messages.back());
+    Check(custom && custom->action == L"setManualHdmiSourceCustom" && custom->text == L"Deck \"<b>& PC</b>\\",
+          "custom bridge safely preserves quotes, markup and backslash while trimming");
+    host.PostMessage(LR"({"state":{"manualHdmiSource":"other","manualHdmiSourceCustom":"Deck \"<b>& PC</b>\\","effectiveHdmiSource":"Deck \"<b>& PC</b>\\"}})");
+    Check(PumpUntil([&] { return Script(view, LR"JS(document.getElementById('meta-hdmi-source').textContent === 'Deck "<b>& PC</b>\\' && !document.getElementById('meta-hdmi-source').children.length)JS") == L"true"; }),
+          "custom name renders as literal text, never HTML");
+    OtherEditorLocalesTest(host, view, messages);
+    host.PostMessage(LR"({"state":{"locale":"zh-TW","languagePreference":"zh-TW","manualHdmiSource":"auto","manualHdmiSourceCustom":"Steam Deck","effectiveHdmiSource":"Detected PS5"}})");
+    Check(PumpUntil([&] { return Script(view, L"document.getElementById('hdmi-source-trigger').selectedOptions[0].textContent === '自動' && document.getElementById('hdmi-source-trigger').title.includes('Detected PS5') && document.getElementById('hdmi-source-custom-row').hidden") == L"true"; }),
+          "Auto retains detector identity in tooltip and ignores preserved custom text");
+    count = messages.size();
+    Script(view, L"chrome.webview.postMessage({action:'setManualHdmiSource',value:'<invalid>'}); chrome.webview.postMessage({action:'setManualHdmiSourceCustom',value:'Deck\\nPC'}); chrome.webview.postMessage({action:'setManualHdmiSourceCustom',value:'x'.repeat(65)})");
+    Check(PumpUntil([&] { return messages.size() == count + 3; }), "invalid fixtures reach native validation boundary");
+    // This host records raw transport messages. Application validates with
+    // ParseSettingsMessage before dispatching any config or capture action.
+    for (size_t i = count; i < messages.size(); ++i)
+        Check(!NitLink::ParseSettingsMessage(messages[i]), "native parser rejects invalid WebView identity and custom values");
+    host.PostMessage(LR"({"state":{"manualHdmiSource":"other","manualHdmiSourceCustom":"Steam Deck","effectiveHdmiSource":"Steam Deck"}})");
+    Check(PumpUntil([&] { return Script(view, L"!document.getElementById('hdmi-source-custom-row').hidden && document.getElementById('meta-hdmi-source').textContent === 'Steam Deck'") == L"true"; }),
+          "existing Other custom identity remains visible and editable after reopening settings");
+    Check(Script(view, LR"JS((() => {
+        const trigger = document.getElementById('hdmi-source-trigger');
+        document.getElementById('hdmi-source-custom-edit').click();
+        const editing = document.activeElement === document.getElementById('hdmi-source-custom-input') && document.activeElement.value === 'Steam Deck';
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+        return editing && document.activeElement === trigger && document.getElementById('hdmi-source-custom-editor').hidden &&
+            document.getElementById('source-popover').dataset.open === 'true';
+    })())JS") == L"true", "Escape cancels custom editing while retaining original source menu and select focus");
+    Check(Script(view, L"document.getElementById('hdmi-source-custom-edit').click(); document.querySelector('main').click(); document.getElementById('source-popover').dataset.open === 'false' && document.getElementById('hdmi-source-custom-editor').hidden") == L"true",
+          "outside click closes the source menu and its custom editor");
+
+    PushManualState(host, "auto", L"Detected PS5");
+    Check(PumpUntil([&] { return Script(view, L"document.getElementById('hdmi-source-trigger').value === 'auto'") == L"true"; }), "native Auto state reaches select");
+    Script(view, L"document.getElementById('source-trigger').click()");
+    Check(Script(view, L"document.getElementById('source-popover').dataset.open === 'true' && document.getElementById('hdmi-source-trigger').value === 'auto' && document.querySelectorAll('#source-popover > .source-popover-select-row').length === 3") == L"true",
+          "reopening source menu retains identity listeners and native selection beside the format cascade");
+
+    SetWindowPos(window, nullptr, 0, 0, 1280, 800, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    host.Resize();
+    Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+        const source = document.getElementById('source-popover').getBoundingClientRect();
+        const manual = document.getElementById('hdmi-source-picker').getBoundingClientRect();
+        const resolution = document.querySelector('#source-popover > .source-popover-select-row').getBoundingClientRect();
+        return window.innerWidth > 1000 && manual.top >= source.top && manual.bottom <= resolution.top && manual.right <= source.right;
+    })())JS") == L"true"; }), "desktop identity stays below manual format heading and above resolution");
+    SetWindowPos(window, nullptr, 0, 0, 440, 650, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    host.Resize();
+    Check(PumpUntil([&] { return Script(view, LR"JS((() => {
+        const source = document.getElementById('source-popover').getBoundingClientRect();
+        const manual = document.getElementById('hdmi-source-picker').getBoundingClientRect();
+        const resolution = document.querySelector('#source-popover > .source-popover-select-row').getBoundingClientRect();
+        return window.innerWidth < 600 && manual.top >= source.top && manual.bottom <= resolution.top && manual.right <= window.innerWidth;
+    })())JS") == L"true"; }), "compact identity stays below manual format heading and above resolution without overflow");
+    Script(view, L"document.querySelector('main').click()");
+    SetWindowPos(window, nullptr, 0, 0, 800, 600, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    host.Resize();
+    host.Show(false);
 }
 }
 
@@ -161,6 +442,7 @@ int main(int argc, char** argv) {
         host.PostMessage(LR"({"state":{"locale":"zh-TW","languagePreference":"zh-TW","audioVolume":0.75}})");
         Check(PumpUntil([&] { return Script(view, L"document.documentElement.lang") == L"\"zh-TW\""; }),
               "native state reaches trusted page");
+        ManualSourcePickerTest(host, window, view, messages);
         host.PostMessage(LR"({"state":{"noSignalMode":"image","noSignalImage":"C:\\photo.png","noSignalImageAvailable":true}})");
         Check(PumpUntil([&] { return Script(view, L"document.getElementById('no-signal-mode-val').textContent === window.NitLinkLocales['zh-TW']['value.customImage']") == L"true"; }),
               "custom image label available");

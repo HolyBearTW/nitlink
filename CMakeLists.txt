@@ -23,6 +23,8 @@ set(NITLINK_SOURCES
     src/app/application.h
     src/app/config.cpp
     src/app/config.h
+    src/app/hdmi_source.h
+    src/app/hdmi_source_presence.h
     src/app/localization.cpp
     src/app/localization.h
     src/app/game_database.cpp
@@ -85,6 +87,7 @@ set(NITLINK_SOURCES
     src/discord/pipe_transport.cpp
     src/discord/discord_rpc.cpp
     src/discord/discord_rpc.h
+    src/discord/activity_fields.h
     src/app.rc
 )
 
@@ -450,4 +453,9 @@ if(BUILD_TESTING)
     add_executable(NitLinkNoiseFloorTests tests/noise_floor_tests.cpp)
     target_include_directories(NitLinkNoiseFloorTests PRIVATE ${CMAKE_SOURCE_DIR}/src/capture)
     add_test(NAME noise_floor COMMAND NitLinkNoiseFloorTests)
+
+    add_executable(NitLinkManualHdmiSourceTests tests/manual_hdmi_source_tests.cpp
+        src/app/config.cpp src/app/settings_message.cpp src/app/game_database.cpp)
+    target_include_directories(NitLinkManualHdmiSourceTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME manual_hdmi_source COMMAND NitLinkManualHdmiSourceTests)
 endif()

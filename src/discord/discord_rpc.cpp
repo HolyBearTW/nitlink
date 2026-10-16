@@ -1,6 +1,7 @@
 #include "pipe_transport.h"
 #include <algorithm>
 #include "discord_rpc.h"
+#include "activity_fields.h"
 #include <debugapi.h>
 #include <sstream>
 #include <vector>
@@ -140,8 +141,8 @@ void DiscordRPC::SetActivity(const std::wstring& details,
     if (details.size() > 1024 || state.size() > 1024 || largeImageText.size() > 1024 || largeImageKey.size() > 1024)
         return;
     std::lock_guard<std::mutex> lock(m_activityMutex);
-    m_pendingDetails        = details;
-    m_pendingState          = state;
+    m_pendingDetails        = GetDiscordActivityField(details);
+    m_pendingState          = GetDiscordActivityField(state);
     m_pendingStartTimeUnix  = std::chrono::duration_cast<std::chrono::seconds>(
         startTime.time_since_epoch()).count();
     m_pendingLargeImageKey  = largeImageKey;
@@ -238,10 +239,11 @@ void DiscordRPC::WorkerLoop()
         if (doClear) {
             cmd << ",\"activity\":null}}";
         } else {
-            cmd << ",\"activity\":{"
-                << "\"details\":\"" << EscapeJson(WideToUtf8(details)) << "\","
-                << "\"state\":\""   << EscapeJson(WideToUtf8(state))   << "\","
-                << "\"timestamps\":{\"start\":" << startUnix << "}";
+            cmd << ",\"activity\":{\"timestamps\":{\"start\":" << startUnix << "}";
+            if (!details.empty())
+                cmd << ",\"details\":\"" << EscapeJson(WideToUtf8(details)) << "\"";
+            if (!state.empty())
+                cmd << ",\"state\":\"" << EscapeJson(WideToUtf8(state)) << "\"";
             if (!largeKey.empty()) {
                 cmd << ",\"assets\":{"
                     << "\"large_image\":\"" << EscapeJson(largeKey) << "\","
