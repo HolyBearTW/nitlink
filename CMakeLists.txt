@@ -174,6 +174,9 @@ add_custom_target(NitLinkRuntimeResources
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/locales/zh-CN.js
         $<TARGET_FILE_DIR:NitLink>/locales/zh-CN.js
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/locales/de-DE.js
+        $<TARGET_FILE_DIR:NitLink>/locales/de-DE.js
 )
 add_dependencies(NitLink NitLinkRuntimeResources)
 
