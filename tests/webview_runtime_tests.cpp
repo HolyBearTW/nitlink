@@ -97,7 +97,7 @@ void OtherEditorLocalesTest(WebViewSettings& host, ICoreWebView2* view,
         host.PostMessage(state.str());
     };
     const auto firstMessage = messages.size();
-    for (const auto locale : {L"en-US", L"zh-TW"}) {
+    for (const auto locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
         pushOther(locale, L"Steam Deck");
         const auto ready = std::wstring(L"document.documentElement.lang === '") + locale +
             L"' && document.getElementById('meta-hdmi-source').textContent === 'Steam Deck'";
@@ -108,7 +108,9 @@ void OtherEditorLocalesTest(WebViewSettings& host, ICoreWebView2* view,
             const translated = (selector, key) => document.querySelector(selector).textContent === strings[key];
             return translated('#hdmi-source-trigger option[value=other]', 'hdmiSource.otherOption') &&
                 translated('#hdmi-source-trigger option[value=auto]', 'value.auto') &&
+                translated('#hdmi-source-label', 'meta.hdmiSource') &&
                 translated('#hdmi-source-custom-row label', 'hdmiSource.customNameShort') &&
+                document.getElementById('hdmi-source-custom-edit').title === strings['hdmiSource.editName'] &&
                 translated('#hdmi-source-custom-editor label', 'hdmiSource.customName') &&
                 translated('#hdmi-source-custom-save', 'hdmiSource.save') &&
                 translated('#hdmi-source-custom-cancel', 'hdmiSource.cancel') &&
