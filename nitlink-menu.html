@@ -549,9 +549,6 @@
     .game-editor-previews { display: flex; align-items: center; gap: 24px; margin: 16px 0; }
     .game-editor-previews figure { margin: 0; }
     .game-editor-previews figcaption { margin-top: 5px; color: var(--ink3); font-size: 11px; }
-    .game-discord-original { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
-    #game-discord-original-art { flex: 0 0 40px; width: 40px; }
-    #game-discord-original-art img { object-fit: contain; }
     .game-cover { min-width: 0; position: relative; background: #202020; border: 2px solid transparent; border-radius: 7px; padding: 4px; color: var(--ink2); cursor: pointer; text-align: left; }
     .game-cover:hover { border-color: #547596; }
     .game-cover:disabled { cursor: wait; }
@@ -562,8 +559,7 @@
     .game-gallery[data-shape="landscape"] .game-art,
     .game-gallery[data-shape="all"] .game-cover-tile[data-shape="landscape"] .game-art { aspect-ratio: 16 / 9; }
     .game-gallery[data-shape="all"] .game-cover-tile[data-shape="portrait"] .game-art { aspect-ratio: 2 / 3; }
-    .game-discord-preview { margin-top: 12px; padding: 16px; border-radius: 7px; background: #191a1e; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; align-items: center; }
-    .game-discord-preview[data-size="compact"] { grid-template-columns: 64px minmax(0,1fr); gap: 12px; }
+    .game-discord-preview { margin-top: 0; padding: 16px; border-radius: 7px; background: #191a1e; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; align-items: center; }
     #game-discord-art img { object-fit: contain; }
     .game-discord-text { min-width: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
     .game-discord-text strong { display: block; color: var(--ink); margin-bottom: 3px; }
@@ -757,8 +753,8 @@
                 </div>
               </article>
               <article class="game-panel">
-                <div class="game-panel-header"><h2 data-i18n="game.discordPreview"></h2><span class="game-eyebrow" data-i18n="game.preview"></span></div>
-                <div class="game-panel-body"><p class="game-note" data-i18n="game.discordHelp"></p><div class="game-actions"><button type="button" class="game-button" id="game-discord-size-large" data-i18n="game.preview84" aria-pressed="true"></button><button type="button" class="game-button" id="game-discord-size-compact" data-i18n="game.preview64" aria-pressed="false"></button></div><div class="game-discord-preview"><div class="game-art" id="game-discord-art"></div><div class="game-discord-text"><strong id="game-discord-name">NitLink</strong><p id="game-discord-title"></p><p id="game-discord-signal"></p><span class="game-discord-time" id="game-discord-time"></span></div></div><p class="game-note" id="game-discord-name-status"></p><p class="game-status" id="game-discord-image-status"></p></div>
+                <div class="game-panel-header"><h2 data-i18n="game.discordPreview"></h2></div>
+                <div class="game-panel-body"><div class="game-discord-preview"><div class="game-art" id="game-discord-art"></div><div class="game-discord-text"><strong id="game-discord-name">NitLink</strong><p id="game-discord-title"></p><p id="game-discord-signal"></p><span class="game-discord-time" id="game-discord-time"></span></div></div></div>
               </article>
             </div>
           </div>

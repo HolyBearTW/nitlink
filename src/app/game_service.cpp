@@ -711,6 +711,11 @@ std::shared_ptr<const Image> GameService::FindImage(std::wstring_view uri) const
     const auto it = m_images.find(std::wstring(uri));
     return it == m_images.end() ? nullptr : it->second;
 }
+std::wstring GameService::CacheDiscordImage(std::shared_ptr<const Image> image,std::wstring_view identity) {
+    if(!image){std::lock_guard lock(m_mutex);m_pinnedDiscordImage.clear();return {};}
+    if(image->png.empty()||image->png.size()>2*1024*1024)return {};
+    return StoreImage(std::move(image),identity,true);
+}
 void GameService::Publish(Result result, const Cancelled& cancelled) {
     std::lock_guard lock(m_mutex);
     if (!cancelled() && m_results.size() < 64) m_results.push_back(std::move(result));
@@ -755,20 +760,21 @@ std::wstring GameService::LoadFinalImage(std::wstring_view key,const Cancelled& 
     if(cancelled())return {};
     auto image=ReadImageCache(FinalImagePath(key));return image&&!cancelled()?StoreImage(std::move(image),L"generated:"+std::wstring(key)):L"";
 }
-std::wstring GameService::StoreImage(std::shared_ptr<Image> image,std::wstring_view identity){
+std::wstring GameService::StoreImage(std::shared_ptr<const Image> image,std::wstring_view identity,bool discord){
     const std::wstring url(identity);
     std::lock_guard lock(m_mutex);
-    if(const auto cached=m_imageUrls.find(url);cached!=m_imageUrls.end())return cached->second;
+    if(const auto cached=m_imageUrls.find(url);cached!=m_imageUrls.end()){if(discord)m_pinnedDiscordImage=cached->second;return cached->second;}
     // A Worker page has 50 covers. Keep a complete page plus search/library
     // thumbnails so a visible validated image is not evicted before selection.
     while (!m_imageOrder.empty() && (m_images.size() >= 128 || m_imageBytes + image->png.size() > 64 * 1024 * 1024)) {
         const auto [oldUrl, uri] = m_imageOrder.front();
         m_imageOrder.pop_front();
-        if (uri == m_pinnedImage||uri==m_pinnedSourceImage) { m_imageOrder.emplace_back(oldUrl, uri); continue; }
+        if (uri == m_pinnedImage||uri==m_pinnedSourceImage||uri==m_pinnedDiscordImage) { m_imageOrder.emplace_back(oldUrl, uri); continue; }
         m_imageBytes -= m_images.at(uri)->png.size();
         m_images.erase(uri); m_imageUrls.erase(oldUrl);
     }
     const auto uri = std::wstring(ImageOrigin) + std::to_wstring(++m_imageSequence) + L".png";
+    if(discord)m_pinnedDiscordImage=uri;
     m_imageBytes += image->png.size();
     m_images.emplace(uri, std::move(image));
     m_imageUrls.emplace(url, uri);

@@ -5395,11 +5395,20 @@ void Application::ConsumeGameResults()
     // IPC acknowledgements arrive independently of game actions. Refresh only
     // the preview state; never resend activity or reset its timestamp here.
     const auto discordStatus=std::wstring(m_discord?m_discord->ImageStatus():L"unavailable")+L":"+
-        (m_discord?m_discord->NameStatus():L"unverified");
+        (m_discord?m_discord->NameStatus():L"unverified")+L":"+(m_discord?m_discord->ImageError():L"")+L":"+
+        (m_discord?m_discord->ActivityStatus():L"unavailable");
     if(discordStatus!=m_lastDiscordPreviewStatus){m_lastDiscordPreviewStatus=discordStatus;PushCurrentGameState();}
     for (const auto& result : m_gameService->TakeResults()) {
         if (result.locale != Localization::Instance().LocaleName()) continue;
         if(!result.platform.empty() && (result.operation==Games::Operation::Search||result.operation==Games::Operation::Covers||result.operation==Games::Operation::Resolve||result.operation==Games::Operation::Image||result.operation==Games::Operation::LibraryImages) && result.platform!=GetGameArtworkPlatform())continue;
+        const auto rememberFallback=[&](uint32_t id,const auto& covers){
+            if(GetGameArtworkPlatform()!=L"switch")return;
+            for(const auto& cover:covers)if(cover.provider==L"nintendo-tw"&&cover.shape==L"square"&&cover.isOfficial&&Games::IsNintendoArtworkUrl(cover.url)){
+                m_discordTaiwanFallbacks[id]=cover.url;break;
+            }
+        };
+        for(const auto& game:result.reply.games)rememberFallback(game.id,game.artworkSources);
+        if(result.gameId)rememberFallback(result.gameId,result.reply.artworkSources);
         bool changed = false;
         if(result.operation==Games::Operation::RenderArtwork){
             const auto found=m_config->onlineGames.find(m_config->currentGameId);
@@ -5502,6 +5511,7 @@ void Application::ConsumeGameResults()
 void Application::PushCurrentGameState()
 {
     if (!m_config || !m_webviewSettings) return;
+    SyncDiscordImagePreview();
     std::wstring name, displayName,officialQuery;
     uint32_t id = 0, coverId = 0;
     bool manual = false;
@@ -5531,6 +5541,11 @@ void Application::PushCurrentGameState()
          <<L","<<SerializeArtworkMetadataProperties(it!=m_config->onlineGames.end()?static_cast<const Games::ArtworkMetadata&>(it->second):Games::ArtworkMetadata{})
          << L",\"discordConnected\":" << (m_discord && m_discord->IsConnected() ? L"true" : L"false")
          <<L",\"discordActualImageStatus\":"<<quoted(m_discord?m_discord->ImageStatus():L"unavailable")
+         <<L",\"discordRpcStatus\":"<<quoted(m_discord?m_discord->ActivityStatus():L"unavailable")
+         <<L",\"discordClientDisplayVerified\":false"
+         <<L",\"discordImage\":"<<quoted(m_currentDiscordImage)
+         <<L",\"discordUsingFallback\":"<<(m_discordImageSnapshot.usingFallback?L"true":L"false")
+         <<L",\"discordImageError\":"<<quoted(m_discord?m_discord->ImageError():L"")
          << L",\"discordImageStatus\":" << quoted(it!=m_config->onlineGames.end()&&it->second.artworkMode!=L"original"?L"localEditOnly":it!=m_config->onlineGames.end()&&!it->second.coverUrl.empty()&&m_currentGameImage.empty()?L"localImageUnavailable":m_discord ? m_discord->ImageStatus() : L"unavailable")
          << L",\"discordNameStatus\":" << quoted(m_discord ? m_discord->NameStatus() : L"unverified")
          << L",\"startUnix\":" << std::chrono::duration_cast<std::chrono::seconds>(m_discordActivityStart.time_since_epoch()).count()
@@ -5603,7 +5618,6 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
         m_discordActivityStart = std::chrono::system_clock::now();
     const auto sourceLabel = GetEffectiveHdmiSourceLabel();
     const auto signalLabel = GetDiscordSignalLabel();
-    const auto rangeLabel = GetConfirmedHdmiRangeLabel();
     if (m_config->currentGameId.empty()) {
         // Viewer: source in details, actual signal in state. Discord supplies
         // the application name; do not repeat it as "In NitLink".
@@ -5611,45 +5625,49 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
             ComposeHdmiPresenceDetails(sourceLabel, Tr(L"discord.sourcePrefix")),
             signalLabel,
             m_discordActivityStart,
-            "nitlink-logo",
+            "", // The shipped Discord application has no uploaded image assets.
             L"NitLink",
             sourceLabel.empty()?L"NitLink":sourceLabel
         );
         return;
     }
 
-    // Look up the human-readable title from the catalog. If a currentGameId
-    // is somehow not in the catalog (manual edit of config?), fall back to
-    // the id itself as the display string.
-    const auto* entry = FindGameById(m_config->currentGameId);
-    std::wstring title;
-    std::string imageKey = "nitlink-logo";
+    const auto title=GetCurrentGameDisplayName();
     const auto online = m_config->onlineGames.find(m_config->currentGameId);
-    if (online != m_config->onlineGames.end()) {
-        title = online->second.DisplayName(Localization::Instance().LocaleName());
-        // Only validated local artwork reaches RPC; a persisted URL alone is
-        // insufficient. Nintendo downloads require exact provider membership.
-        if (!m_currentGameImage.empty() && Games::IsCoverUrl(online->second.coverUrl))
-            imageKey.assign(online->second.coverUrl.begin(), online->second.coverUrl.end());
-        else if(!online->second.id&&entry)imageKey=m_config->currentGameId;
-    } else if (entry) {
-        title = GameTitleWide(entry->title);
-        imageKey = m_config->currentGameId;
-    } else {
-        for (char c : m_config->currentGameId) title.push_back(static_cast<wchar_t>(c));
+    // Source validation stays native. The emitted value is the original
+    // public URL, never the WebView URI, local edit/cache path, or game ID.
+    const auto imageKey=DiscordCoverImage(online==m_config->onlineGames.end()?nullptr:&online->second,
+        m_gameService && m_gameService->FindImage(m_currentGameImage)!=nullptr);
+    const std::wstring imageKeyWide(imageKey.begin(),imageKey.end()); // DiscordCoverImage returns validated ASCII URLs.
+    std::string fallbackImage;
+    std::vector<std::string> fallbackImages;
+    if(online!=m_config->onlineGames.end()&&GetGameArtworkPlatform()==L"switch")
+        if(const auto fallback=m_discordTaiwanFallbacks.find(online->second.id);fallback!=m_discordTaiwanFallbacks.end())
+            for(auto c:fallback->second)fallbackImage.push_back(static_cast<char>(c));
+    if(online!=m_config->onlineGames.end()&&m_coverGameId==online->second.id){
+        std::vector<const Games::Cover*> candidates;
+        for(const auto& [_,cover]:m_gameCovers)
+            if(cover.shape==L"square"&&cover.provider!=L"nintendo-hk-store"&&cover.url!=imageKeyWide&&Games::IsCoverUrl(cover.url))candidates.push_back(&cover);
+        std::stable_sort(candidates.begin(),candidates.end(),[](const auto* a,const auto* b){
+            const auto rank=[](const auto* cover){return cover->provider==L"nintendo-tw"?0:cover->provider==L"steamgriddb"?1:2;};
+            return rank(a)<rank(b);
+        });
+        for(const auto* cover:candidates){
+            if(fallbackImages.size()>=12)break;
+            std::string url;url.reserve(cover->url.size());
+            for(const auto ch:cover->url)url.push_back(static_cast<char>(ch));
+            fallbackImages.push_back(std::move(url));
+        }
     }
-
-    // Use the game id as the Discord art asset key. The user must have
-    // uploaded an asset with this exact name to their Discord Developer
-    // Portal for the image to render. If no asset exists, Discord falls
-    // back to no image: the text still shows fine.
     m_discord->SetActivity(
         title,                                      // "Spider-Man 2"
         signalLabel,
         m_discordActivityStart,
-        imageKey,                                   // checked HTTPS URL or legacy asset
+        imageKey,                                   // checked public HTTPS URL or omitted
         title,                                      // tooltip when hovering image
-        sourceLabel.empty()?L"NitLink":sourceLabel
+        sourceLabel.empty()?L"NitLink":sourceLabel,
+        fallbackImage,
+        fallbackImages
     );
 }
 
@@ -5729,9 +5747,26 @@ void Application::UpdateTaskbarIcon(const std::wstring& iconPath)
 // HDR/SDR describes the confirmed HDMI INPUT, including the initial probe;
 // output off or NV12 capture must not relabel an HDR source as SDR.
 // An unavailable/unknown detector contributes no HDR/SDR suffix.
+std::wstring Application::GetCurrentGameDisplayName() const
+{
+    if (!m_config || m_config->currentGameId.empty()) return {};
+    if (const auto game=m_config->onlineGames.find(m_config->currentGameId);game!=m_config->onlineGames.end())
+        return game->second.DisplayName(Localization::Instance().LocaleName());
+    if (const auto* game=FindGameById(m_config->currentGameId)) return GameTitleWide(game->title);
+    return {}; // An unknown storage key is never a user-facing game name.
+}
+
 std::wstring Application::GetGameArtworkPlatform() const
 {
     return Games::ArtworkPlatformForSource(m_config?std::string_view(m_config->manualHdmiSource):"auto",GetEffectiveHdmiSourceLabel());
+}
+
+void Application::SyncDiscordImagePreview()
+{
+    auto snapshot=m_discord?m_discord->GetImageSnapshot():DiscordRPC::ImageSnapshot{};
+    if(snapshot.revision!=m_discordImageSnapshot.revision||snapshot.image!=m_discordImageSnapshot.image||snapshot.url!=m_discordImageSnapshot.url)
+        m_currentDiscordImage=m_gameService?m_gameService->CacheDiscordImage(snapshot.image,L"discord:"+std::to_wstring(snapshot.revision)):L"";
+    m_discordImageSnapshot=std::move(snapshot);
 }
 
 void Application::RefreshGameArtworkContext()
@@ -5741,7 +5776,7 @@ void Application::RefreshGameArtworkContext()
     m_gameArtworkPlatform=platform;
     if(m_gameService)m_gameService->Cancel();
     m_searchGames.clear();m_searchDefaultCovers.clear();m_gameCovers.clear();m_coverImages.clear();
-    m_coverGameId=0;
+    m_discordTaiwanFallbacks.clear();m_coverGameId=0;
     if(m_gameService&&m_config&&!m_config->onlineGames.empty()) {
         Games::Request hydrate;hydrate.operation=Games::Operation::LibraryImages;
         hydrate.locale=Localization::Instance().LocaleName();hydrate.platform=platform;

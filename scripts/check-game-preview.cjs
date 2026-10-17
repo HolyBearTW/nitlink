@@ -27,6 +27,7 @@ const {installExactDocument}=require('./preview-browser.cjs');
   const timerBefore = JSON.parse(fs.readFileSync(profile,'utf8')).currentStartUnix;
   const start = await page.evaluate(()=>document.getElementById('game-discord-time').textContent);
   assert.match(await page.locator('#game-cover-mode').textContent(),/手動/);
+  assert.equal(Math.round((await page.locator('#game-discord-art').boundingBox()).width),84,'Discord activity artwork remains 84px wide');
   await page.screenshot({path:path.join(output,'full-zh-TW.png')});
   const geometry = [];
   for (const locale of ['zh-TW','zh-CN','en-US']) {

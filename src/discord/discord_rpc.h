@@ -8,6 +8,9 @@
 #include <mutex>
 #include <cstdint>
 #include <functional>
+#include <set>
+#include <vector>
+#include "image_proxy.h"
 
 namespace NitLink {
 
@@ -32,8 +35,17 @@ public:
     bool IsConnected() const { return m_connected; }
     // IPC acceptance is reported separately from actual client rendering.
     const wchar_t* ImageStatus() const;
+    const wchar_t* ActivityStatus() const;
+    std::wstring ImageError() const;
     const wchar_t* NameStatus() const;
     void RetryImage(); // Explicit user retry; never changes the activity timer.
+    struct ImageSnapshot {
+        std::string url;
+        std::shared_ptr<const Games::Image> image;
+        bool usingFallback=false;
+        uint64_t revision=0;
+    };
+    ImageSnapshot GetImageSnapshot() const;
 
     // Activity = "details" line shown under the app name in the user's profile.
     // Example: details = "Playing Saros", state = "Boss Fight 3 of 6"
@@ -42,7 +54,9 @@ public:
                      std::chrono::system_clock::time_point startTime,
                      const std::string& largeImageKey = "",
                      const std::wstring& largeImageText = L"",
-                     const std::wstring& activityName = L"");
+                     const std::wstring& activityName = L"",
+                     const std::string& fallbackImageUrl = "",
+                     const std::vector<std::string>& fallbackImageUrls = {});
 
     void ClearActivity();
 
@@ -51,6 +65,7 @@ private:
     bool OpenConnection();
     // The private opener seam lets tests use isolated local pipes.
     std::function<HANDLE()> m_pipeOpener;
+    std::function<DiscordImageCheck(std::string_view, std::string_view, HANDLE)> m_imageProbe;
     enum class Opcode : uint32_t {
         Handshake = 0,
         Frame     = 1,
@@ -62,6 +77,7 @@ private:
     bool SendFrame(Opcode op, const std::string& payload);
     bool ReadFrame(Opcode& op, std::string& payload);
     void WorkerLoop();
+    void RejectImageLocked(const std::string& image, const std::wstring& reason, bool rpcError);
     static std::string EscapeJson(const std::string& s);
     static std::string WideToUtf8(const std::wstring& w);
 
@@ -71,7 +87,7 @@ private:
     std::string         m_applicationId;
 
     // Pending activity (set from main thread, sent from worker)
-    std::mutex          m_activityMutex;
+    mutable std::mutex  m_activityMutex;
     bool                m_activityDirty = false;
     bool                m_clearRequested = false;
     std::wstring        m_pendingDetails;
@@ -79,9 +95,18 @@ private:
     int64_t             m_pendingStartTimeUnix = 0;
     std::string         m_pendingLargeImageKey;
     std::wstring        m_pendingLargeImageText;
-    enum class ImageState { Unavailable, Asset, ExternalPending, ExternalAccepted, Fallback };
+    enum class ImageState { Unavailable, Asset, ExternalPending, ExternalAccepted, ExternalAvailable,
+                            ExternalUnresolved, ProxyFailed, RpcError };
     std::atomic<ImageState> m_imageState{ImageState::Unavailable};
-    std::string m_rejectedImageKey;
+    enum class ActivityState { Idle, Pending, Accepted, Error };
+    std::atomic<ActivityState> m_activityState{ActivityState::Idle};
+    std::set<std::string> m_rejectedImages;
+    std::string m_requestedImageKey;
+    std::vector<std::string> m_fallbackImageUrls;
+    bool m_usingFallbackImage=false;
+    std::shared_ptr<const Games::Image> m_proxyImage;
+    std::wstring m_imageError;
+    uint64_t m_imageRevision = 0;
     std::wstring m_pendingName;
     enum class NameState { Unverified, Accepted, Unsupported };
     std::atomic<NameState> m_nameState{NameState::Unverified};

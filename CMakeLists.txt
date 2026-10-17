@@ -101,6 +101,9 @@ set(NITLINK_SOURCES
     src/discord/pipe_transport.cpp
     src/discord/discord_rpc.cpp
     src/discord/discord_rpc.h
+    src/discord/activity_reply.h
+    src/discord/image_proxy.cpp
+    src/discord/image_proxy.h
     src/discord/activity_fields.h
     src/app.rc
 )
@@ -261,17 +264,29 @@ if(BUILD_TESTING)
     target_link_libraries(NitLinkNativeSecurityTests PRIVATE ole32 windowscodecs shlwapi)
     add_test(NAME native_input_security COMMAND NitLinkNativeSecurityTests)
 
-    add_executable(NitLinkPipeSecurityTests tests/pipe_security_tests.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp)
+    add_executable(NitLinkPipeSecurityTests tests/pipe_security_tests.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp src/discord/image_proxy.cpp)
     target_include_directories(NitLinkPipeSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(NitLinkPipeSecurityTests PRIVATE advapi32 windowsapp)
+    target_link_libraries(NitLinkPipeSecurityTests PRIVATE advapi32 windowsapp winhttp windowscodecs ole32)
     add_test(NAME pipe_security COMMAND NitLinkPipeSecurityTests)
 
     add_executable(NitLinkDiscordPresenceTests tests/discord_presence_tests.cpp
-        src/app/localization.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp)
+        src/app/localization.cpp src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp src/discord/image_proxy.cpp)
     target_include_directories(NitLinkDiscordPresenceTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(NitLinkDiscordPresenceTests PRIVATE advapi32 windowsapp)
+    target_link_libraries(NitLinkDiscordPresenceTests PRIVATE advapi32 windowsapp winhttp windowscodecs ole32)
     add_test(NAME discord_presence COMMAND NitLinkDiscordPresenceTests)
     set_tests_properties(discord_presence PROPERTIES TIMEOUT 90)
+
+    add_executable(NitLinkDiscordImageTests tests/discord_image_tests.cpp
+        src/discord/pipe_transport.cpp src/discord/discord_rpc.cpp src/discord/image_proxy.cpp)
+    target_include_directories(NitLinkDiscordImageTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkDiscordImageTests PRIVATE advapi32 windowsapp winhttp windowscodecs ole32)
+    add_test(NAME discord_images COMMAND NitLinkDiscordImageTests)
+    set_tests_properties(discord_images PROPERTIES TIMEOUT 60)
+
+    add_executable(NitLinkDiscordReplyTests tests/discord_reply_tests.cpp)
+    target_include_directories(NitLinkDiscordReplyTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkDiscordReplyTests PRIVATE windowsapp)
+    add_test(NAME discord_reply_json COMMAND NitLinkDiscordReplyTests)
 
     add_executable(NitLinkMediaSecurityTests tests/media_security_tests.cpp)
     target_include_directories(NitLinkMediaSecurityTests PRIVATE ${CMAKE_SOURCE_DIR}/src)

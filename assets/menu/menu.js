@@ -1203,11 +1203,6 @@
       el('game-adjust-cover').addEventListener('click',()=>editCover({id:current.coverId,image:current.sourceImage||current.image}));
       el('game-detail-use-original').addEventListener('click',()=>{post('selectGameCover',{gameId:current.id,coverId:detailsCover});el('game-cover-details').close();});
       el('game-detail-adjust').addEventListener('click',()=>{const cover=covers.find(cover=>cover.id===detailsCover);el('game-cover-details').close();editCover(cover);});
-      const localEffect=document.createElement('p');localEffect.className='game-note';localEffect.hidden=true;
-      document.querySelector('.game-discord-preview').before(localEffect);
-      const actualArtwork=document.createElement('div');actualArtwork.className='game-discord-original';actualArtwork.hidden=true;
-      const actualArt=document.createElement('div');actualArt.className='game-art';actualArt.id='game-discord-original-art';
-      const actualText=document.createElement('span');actualText.className='game-note';actualArtwork.append(actualArt,actualText);el('game-discord-image-status').before(actualArtwork);
       const renderCovers = () => {
         const ids=new Set(covers.map(cover=>cover.id));
         for(const [id,entry] of coverCards)if(!ids.has(id)){clearTimeout(entry.art._imageTimer);entry.tile.remove();coverCards.delete(id);}
@@ -1348,10 +1343,6 @@
       el('game-name-save').addEventListener('click',()=>{post('setGameCustomName',{key:renameKey,name:el('game-custom-name').value.trim()});el('game-rename-editor').hidden=true;});
       el('game-name-reset').addEventListener('click',()=>{post('setGameCustomName',{key:renameKey,name:''});el('game-rename-editor').hidden=true;});
       el('game-name-cancel').addEventListener('click',()=>{el('game-rename-editor').hidden=true;});
-      ['large','compact'].forEach(size=>el('game-discord-size-'+size).addEventListener('click',()=>{
-        document.querySelector('.game-discord-preview').dataset.size=size;
-        ['large','compact'].forEach(other=>el('game-discord-size-'+other).setAttribute('aria-pressed',String(other===size)));
-      }));
       const renderLibrary = () => {
         el('game-favorites-empty').hidden=library.favorites.length>0;el('game-recent-empty').hidden=library.recent.length>0;
         const title = game => game.customName || game.displayNames?.[currentLocale] || game.displayName || game.name;
@@ -1410,22 +1401,18 @@
         el('game-cover-mode').textContent = current.key ? t(current.manualCover ? 'game.manualMode' : 'game.autoMode') : '';
         image(el('game-current-art'), current.image);
         const edited=current.artworkMode==='fit'||current.artworkMode==='crop';
-        const remotePreview=['externalAccepted','externalPending','unavailable','probeAccepted','previewOnly','localEditOnly'].includes(current.discordImageStatus);
-        image(el('game-discord-art'), remotePreview&&current.image?current.image:'assets/nitlink.svg');
-        el('game-discord-art').title=t(remotePreview?'game.discordArtworkPreview':'game.discordArtworkFallback');
+        const remotePreview=['externalAccepted','externalAvailable','externalPending','unavailable','probeAccepted','previewOnly','localEditOnly'].includes(current.discordImageStatus);
+        const discordArt=current.discordImage||(!current.discordUsingFallback&&remotePreview?current.image:'');
+        image(el('game-discord-art'),edited?current.image:discordArt||(!current.discordUsingFallback?'assets/nitlink.svg':''),current.discordUsingFallback&&!discordArt&&['externalPending','externalAccepted'].includes(current.discordActualImageStatus)?'loading':'empty');
         el('game-current-artwork-tag').hidden=!current.isOfficial;
         el('game-current-artwork-tag').textContent=edited?t(current.isOfficial?'game.derivedOfficial':'game.derivedArtwork'):current.isOfficial?t(current.language==='zh-TW'?'game.officialBadge':'game.officialArtwork')+' · '+(current.provider==='playstation-tw'?t('game.playstationTaiwan'):current.provider==='nintendo-hk-store'?t('game.hkStore'):current.provider==='nintendo-hk-eshop'?'Nintendo eShop CDN':'Nintendo Taiwan'):'';
         el('game-current-artwork-tag').hidden=!current.isOfficial&&!edited;
-        localEffect.hidden=!edited;localEffect.textContent=t('game.edit.localEffect');actualArtwork.hidden=!edited;
-        if(edited){image(actualArt,['asset','fallback','localImageUnavailable'].includes(current.discordActualImageStatus)?'assets/nitlink.svg':current.sourceImage||'assets/nitlink.svg');actualText.textContent=t('game.edit.discordOriginal')+' · '+t('game.discordImage.'+(current.discordActualImageStatus||'unavailable'));}
         window.NitLinkArtworkEditor?.update(current);
         el('game-adjust-cover').disabled=!current.coverId||!current.image;
         el('game-discord-title').textContent = current.displayName || live.effectiveHdmiSource || t('game.none');
         el('game-discord-name').textContent = current.discordNameStatus === 'accepted' ? live.effectiveHdmiSource || 'NitLink' : 'NitLink';
-        el('game-discord-name-status').textContent = t('game.discordName.'+(current.discordNameStatus||'unverified'));
         el('game-discord-signal').textContent = typeof live.discordSignal === 'string' ? live.discordSignal : (live.negotiatedWidth>0&&live.negotiatedHeight>0&&live.negotiatedFps>0
           ? `${live.negotiatedWidth}×${live.negotiatedHeight} · ${live.negotiatedFps} FPS` : '');
-        el('game-discord-image-status').textContent = t(`game.discordImage.${current.discordImageStatus || 'unavailable'}`);
         el('game-clear').disabled = !current.key; el('game-save-quality').disabled = !current.key;
         el('game-current-favorite').disabled=!current.key;el('game-current-rename').disabled=!current.key;
         el('game-current-favorite').textContent=t(library.favorites.some(game=>game.key===current.key)?'game.removeFavorite':'game.addFavorite');

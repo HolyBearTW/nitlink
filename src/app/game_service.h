@@ -141,13 +141,14 @@ public:
     void Cancel();
     std::vector<Result> TakeResults();
     std::shared_ptr<const Image> FindImage(std::wstring_view uri) const;
+    std::wstring CacheDiscordImage(std::shared_ptr<const Image> image, std::wstring_view identity);
     void PinImage(std::wstring uri,std::wstring source = {});
 private:
     void Run(std::stop_token stop);
     void Publish(Result result, const Cancelled&);
     std::wstring LoadArtworkImage(std::wstring_view url, const Cancelled&,std::wstring* actualShape=nullptr);
     std::wstring LoadFinalImage(std::wstring_view key,const Cancelled&);
-    std::wstring StoreImage(std::shared_ptr<Image> image,std::wstring_view identity);
+    std::wstring StoreImage(std::shared_ptr<const Image> image,std::wstring_view identity,bool discord=false);
     std::unique_ptr<Provider> m_provider;
     std::unique_ptr<ArtworkProvider> m_artworkProvider;
     mutable std::mutex m_mutex;
@@ -161,6 +162,7 @@ private:
     uint64_t m_imageSequence = 0;
     std::wstring m_pinnedImage;
     std::wstring m_pinnedSourceImage;
+    std::wstring m_pinnedDiscordImage;
     std::atomic<uint64_t> m_generation{0};
     std::jthread m_worker;
 };
