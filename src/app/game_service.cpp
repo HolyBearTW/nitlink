@@ -59,8 +59,8 @@ std::filesystem::path ImageCachePath(std::wstring_view url) {
     BCRYPT_ALG_HANDLE algorithm=nullptr;
     if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0)return {};
     unsigned char digest[32]{};
-    const std::string ascii="v3:"+std::string(url.begin(),url.end());
-    const auto status=BCryptHash(algorithm,nullptr,0,reinterpret_cast<PUCHAR>(const_cast<char*>(ascii.data())),static_cast<ULONG>(ascii.size()),digest,sizeof(digest));
+    const std::string utf8="v3:"+winrt::to_string(url);
+    const auto status=BCryptHash(algorithm,nullptr,0,reinterpret_cast<PUCHAR>(const_cast<char*>(utf8.data())),static_cast<ULONG>(utf8.size()),digest,sizeof(digest));
     BCryptCloseAlgorithmProvider(algorithm,0);if(status<0)return {};
     constexpr wchar_t hex[]=L"0123456789abcdef";std::wstring key;
     for(auto byte:digest){key.push_back(hex[byte>>4]);key.push_back(hex[byte&15]);}
