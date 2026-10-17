@@ -5246,7 +5246,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
     };
     if (action == L"cancelGameSearch") { m_gameService->Cancel();m_readyAutoCover.reset();m_coverRequest=0; return true; }
     if(action==L"addGameFavorite" || action==L"removeGameFavorite"){
-        const std::string key(message.text.begin(),message.text.end());
+        const std::string key=WideToUtf8(message.text);
         auto* game=EnsureSavedGame(key);if(!game){notice(L"invalidChoice");return true;}
         game->favorite=action==L"addGameFavorite";
         if(!m_config->Save("nitlink.json"))notice(L"saveFailed");
@@ -5254,7 +5254,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         PushGameLibrary();return true;
     }
     if(action==L"setGameCustomName"){
-        const std::string key(message.key.begin(),message.key.end());
+        const std::string key=WideToUtf8(message.key);
         auto* game=EnsureSavedGame(key);if(!game){notice(L"invalidChoice");return true;}
         game->customName=message.text;
         if(!m_config->Save("nitlink.json"))notice(L"saveFailed");else notice(L"nameSaved");
@@ -5310,7 +5310,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         return true;
     }
     if (action == L"setGame") {
-        const std::string key(message.text.begin(), message.text.end());
+        const std::string key = WideToUtf8(message.text);
         const bool existed=m_config->onlineGames.contains(key);
         const auto id = Games::DynamicId(key);
         if (id) {
