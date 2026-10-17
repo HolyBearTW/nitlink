@@ -674,7 +674,11 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
                     summary.tabIndex >= 0;
             }) &&
             document.querySelector('#holy-bear-product-title').textContent === 'NitLink 1.2.4 HolyBear Edition' &&
-            (heroText.match(/1\.2\.4/g) || []).length === 1 &&
+            // The injected product version is 1.2.4, and the upstream-base
+            // subtitle now independently names 1.2.4 as well.
+            (heroText.match(/1\.2\.4/g) || []).length === 2 &&
+            pane.querySelector('[data-i18n="about.subtitle"]').textContent ===
+                '非官方社群整合版本 · 基於 NitLink 1.2.4' &&
             !pane.querySelector('#holy-bear-version, #holy-bear-latest-version, .about-detail-list') &&
             document.querySelector('#holy-bear-last-check').closest('.about-update') !== null &&
             document.querySelector('#holy-bear-update-status').textContent === window.NitLinkLocales['zh-TW']['update.current'] &&
