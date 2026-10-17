@@ -41,6 +41,12 @@ void TestRegistryAndPersistence() {
     Check(astro->artworkSources.size()==1&&astro->artworkSources.front().provider==L"playstation-tw","native Sony provenance");
     const auto& cover=astro->artworkSources.front();
     Check(cover.language==L"en-US"&&cover.shape==L"square"&&cover.kind==L"squareIcon","Taiwan page does not imply Traditional Chinese artwork");
+    Check(SearchThumbnailArtworkPriority(cover)==0,"Astro Bot's official square is eligible for search thumbnails");
+    const auto ragnarok=provider->Lookup(5296432,L"zh-TW");
+    Check(ragnarok.has_value()&&ragnarok->artworkSources.size()==1&&
+          ragnarok->artworkSources.front().provider==L"playstation-tw"&&
+          SearchThumbnailArtworkPriority(ragnarok->artworkSources.front())==0,
+          "the second registered PlayStation game retains its official square thumbnail");
     Check(provider->Allows(cover.url)&&!provider->Allows(L"https://image.api.playstation.com/vulcan/other.png"),"downloads require exact approved registry membership");
     for(const auto* bad:{L"http://image.api.playstation.com/vulcan/a.png",L"https://image.api.playstation.com.evil.test/vulcan/a.png",L"https://image.api.playstation.com:443/vulcan/a.png",L"https://image.api.playstation.com/vulcan/../a.png",L"https://image.api.playstation.com/vulcan/a.png?redirect=x"})Check(!IsPlayStationArtworkUrl(bad),"Sony URL boundary rejects unsafe authority/path/query");
     SavedGame game;game.id=astro->id;game.name=astro->name;game.displayNames[L"zh-TW"]=astro->displayName;

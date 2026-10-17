@@ -1051,7 +1051,24 @@
       let coverProvider='all',officialStatus='idle',officialProvider='';
       el('game-choose-source').addEventListener('click',event=>{event.stopPropagation();el('source-trigger').click();el('hdmi-source-trigger').focus();});
       let coverPage = 0, coverHasMore = false, coverTotal = 0, coverView = '', detailsCover = 0;
-      const gameCards = new Map(), coverCards = new Map(), favoriteCards = new Map(), recentCards = new Map();
+      const gameCards = new Map(), coverCards = new Map(), coverGroupHeadings = new Map(), favoriteCards = new Map(), recentCards = new Map();
+      let readyCoverBatch=0,appliedCoverBatch=0;
+      const automaticCoverPriority=cover=>{
+        if(cover.provider==='nintendo-tw'&&current.locale!=='zh-TW')return 5;
+        if(cover.provider==='nintendo-hk-store')return 5;
+        if(cover.isOfficial)return cover.shape==='square'?0:cover.shape==='landscape'?1:cover.shape==='portrait'?2:5;
+        return cover.shape==='square'?3:cover.provider==='steamgriddb'&&cover.shape==='portrait'?4:5;
+      };
+      const applyAutomaticCoverWhenReady=()=>{
+        if(!current.id||current.manualCover||current.finalImageKey||readyCoverBatch!==coverRequest||
+           appliedCoverBatch===coverRequest||shape!=='all'||coverProvider!=='all'||coverPage!==0)return;
+        if([...coverCards.values()].some(entry=>entry.art.dataset.imageState==='loading'))return;
+        appliedCoverBatch=coverRequest;
+        const chosen=covers.filter(cover=>coverCards.get(cover.id)?.art.dataset.imageState==='ok'&&automaticCoverPriority(cover)<5)
+          .sort((a,b)=>automaticCoverPriority(a)-automaticCoverPriority(b))[0];
+        post('applyAutoGameCover',{gameId:current.id,request:coverRequest,coverId:chosen?.id||0});
+      };
+      el('game-gallery').addEventListener('artworkstate',applyAutomaticCoverWhenReady,true);
       const updateSearchArtworkGeometry = art => {
         const model=art?._searchModel;
         const provider=String(model?.coverProvider||'');
@@ -1127,6 +1144,7 @@
         if (searchStatus === 'loading') searchStatus = 'cancelled';
       };
       const stopCovers = () => {
+        readyCoverBatch=0;appliedCoverBatch=0;
         clearTimeout(coverTimer); clearTimeout(coverImageTimer); coverRequest = ++sequence;
         const pending=settleImages(covers, coverCards);
         if (coverStatus === 'loading'||pending) coverStatus = 'cancelled';
@@ -1161,15 +1179,48 @@
           wrap.append(card,favorite); gameCards.set(game.id, {card, art, favorite}); el('game-results').appendChild(wrap);
         });
       };
-      const officialCover=cover=>cover.isOfficial===true&&(['nintendo-tw','nintendo-hk-eshop'].includes(cover.provider)||cover.provider==='nintendo-hk-store');
+      const officialCover=cover=>cover.isOfficial===true;
+      const officialBadgeKey=cover=>cover.provider==='nintendo-tw'||(cover.languageVerified&&cover.language==='zh-TW')?'game.officialBadge':'game.officialArtwork';
       const coverOrientation=entry=>{
         const width=Number(entry.art.dataset.width),height=Number(entry.art.dataset.height);
         return entry.art.dataset.imageState==='ok'&&width&&height?(width===height?'square':height>width?'portrait':'landscape'):entry.model.shape;
+      };
+      const sortCoverTiles=()=>{
+        const shapeRank=cover=>{const entry=coverCards.get(cover.id),orientation=entry?coverOrientation(entry):cover.shape;return orientation==='square'?0:['portrait','landscape'].includes(orientation)?1:2;};
+        const providerRank=cover=>cover.provider==='nintendo-tw'?0:cover.provider==='nintendo-hk-eshop'?1:cover.provider==='playstation-tw'?2:3;
+        const groupKey=cover=>officialCover(cover)?'official':shapeRank(cover)===0?'square':'community';
+        const groupRank=cover=>({official:0,square:1,community:2})[groupKey(cover)];
+        const ordered=covers.map((cover,index)=>({cover,index,entry:coverCards.get(cover.id)}))
+          .filter(item=>item.entry)
+          .sort((a,b)=>groupRank(a.cover)-groupRank(b.cover)||shapeRank(a.cover)-shapeRank(b.cover)||providerRank(a.cover)-providerRank(b.cover)||a.index-b.index);
+        const groups=[];
+        ordered.forEach(item=>{
+          const key=groupKey(item.cover);
+          let group=groups[groups.length-1];
+          if(!group||group.key!==key){group={key,items:[]};groups.push(group);}
+          group.items.push(item);
+        });
+        const desired=[],active=new Set();
+        groups.forEach(group=>{
+          active.add(group.key);
+          let heading=coverGroupHeadings.get(group.key);
+          if(!heading){heading=document.createElement('h3');heading.className='game-artwork-heading';coverGroupHeadings.set(group.key,heading);}
+          heading.dataset.coverGroup=group.key;
+          heading.dataset.i18n=group.key==='official'?'game.officialGroup':group.key==='square'?'game.square':'game.communityGroup';
+          heading.textContent=t(heading.dataset.i18n);
+          heading.hidden=group.items.every(item=>item.entry.tile.hidden);
+          desired.push(heading,...group.items.map(item=>item.entry.tile));
+        });
+        for(const [key,heading] of coverGroupHeadings)if(!active.has(key)){heading.remove();coverGroupHeadings.delete(key);}
+        const gallery=el('game-gallery'),keep=new Set(desired);
+        [...gallery.children].forEach(child=>{if(!keep.has(child))child.remove();});
+        desired.forEach((node,index)=>{if(gallery.children[index]!==node)gallery.insertBefore(node,gallery.children[index]||null);});
       };
       const refreshCover=entry=>{
         const orientation=coverOrientation(entry);
         entry.tile.hidden=(shape!=='all'&&['square','portrait','landscape'].includes(orientation)&&orientation!==shape)||entry.art.dataset.imageState==='failed';
         entry.tile.dataset.shape=orientation||'';
+        entry.tile.dataset.official=String(officialCover(entry.model));
         entry.card.disabled=entry.art.dataset.imageState!=='ok';
         entry.card.title=entry.art.dataset.imageState==='failed'?t('game.imageFailed'):entry.card.disabled?t('game.status.loading'):t('game.selectCover');
       };
@@ -1179,8 +1230,12 @@
         image(el('game-cover-detail-art'),cover.image,cover.imageStatus||'empty');
         const width=Number(art?.dataset.width)||0,height=Number(art?.dataset.height)||0;
         const orientation=width&&height?(width===height?'square':height>width?'portrait':'landscape'):cover.shape;
-        const fields=[['game.artworkSource',cover.sourceLabel||'SteamGridDB'],['game.author',cover.author||t('game.authorUnknown')],
-          ['game.coverLanguage',cover.languageVerified?t('game.coverLanguage.'+cover.language):t('game.coverLanguage.unknown')],
+        const taiwan=cover.isOfficial===true&&cover.provider==='nintendo-tw';
+        // These are user-facing provider defaults, not upstream verification.
+        // Keep explicit community language metadata when a source supplies it.
+        const language=taiwan?'zh-TW':cover.languageVerified?cover.language:cover.provider==='steamgriddb'?'en-US':'unknown';
+        const fields=[['game.artworkSource',cover.sourceLabel||'SteamGridDB'],['game.author',taiwan?t('game.nintendoTaiwan'):cover.author||t('game.authorUnknown')],
+          ['game.coverLanguage',t('game.coverLanguage.'+language)],
           ['game.artworkType',t('game.kind.'+(cover.kind||'cover'))],['game.orientation',t('game.'+(['square','portrait','landscape'].includes(orientation)?orientation:'orientationPending'))],
           ['game.previewDimensions',width&&height?`${width} × ${height}`:t('game.orientationPending')]];
         if(cover.region)fields.push(['game.region',cover.region]);
@@ -1211,7 +1266,6 @@
         const ids=new Set(covers.map(cover=>cover.id));
         for(const [id,entry] of coverCards)if(!ids.has(id)){clearTimeout(entry.art._imageTimer);entry.tile.remove();coverCards.delete(id);}
         el('game-gallery').dataset.shape=shape;
-        let officialIndex=0,communityIndex=0;
         covers.forEach(cover=>{
           let entry=coverCards.get(cover.id);
           if(!entry){
@@ -1225,23 +1279,19 @@
             const caption=document.createElement('span');caption.className='game-cover-caption';
             entry={tile,card,art,badge,kind,info,caption,meta,model:cover};
             card.addEventListener('click',()=>{if(entry.art.dataset.imageState==='ok')post('selectGameCover',{gameId:current.id,coverId:cover.id});});
-            art.addEventListener('artworkstate',()=>{refreshCover(entry);updateStatus();});
+            art.addEventListener('artworkstate',()=>{refreshCover(entry);sortCoverTiles();updateStatus();});
             info.addEventListener('click',()=>showCoverDetails(entry.model));meta.append(kind,caption,info);tile.append(card,badge,meta);coverCards.set(cover.id,entry);
           }else if(!cover.image&&entry.model.image){cover.image=entry.model.image;cover.imageStatus=entry.model.imageStatus;}
           entry.model=cover;entry.card.dataset.coverId=String(cover.id);entry.card.dataset.provider=cover.provider||'steamgriddb';entry.card.dataset.kind=cover.kind||'cover';entry.card.setAttribute('aria-pressed',String(current.coverId===cover.id));
           entry.caption.hidden=!cover.productTitle;entry.caption.textContent=[cover.productTitle,cover.productPlatform,cover.productRelease].filter(Boolean).join(' · ');entry.caption.title=entry.caption.textContent;
-          entry.card.setAttribute('aria-label',t('game.selectCover')+(officialCover(cover)?' · '+t('game.officialBadge'):''));
+          entry.card.setAttribute('aria-label',t('game.selectCover')+(officialCover(cover)?' · '+t(officialBadgeKey(cover)):''));
           entry.info.setAttribute('aria-label',t('game.artworkDetails'));entry.info.title=t('game.artworkDetails');
-          entry.badge.hidden=!officialCover(cover)&&!cover.synthetic;entry.badge.textContent=cover.synthetic?t('game.sampleBadge'):t('game.officialBadge');
+          entry.badge.hidden=!(officialCover(cover)&&officialBadgeKey(cover)==='game.officialBadge')&&!cover.synthetic;entry.badge.textContent=cover.synthetic?t('game.sampleBadge'):t(officialBadgeKey(cover));
           entry.kind.hidden=cover.kind!=='logo'&&cover.kind!=='logoOnly';entry.kind.textContent='Logo';
           image(entry.art,cover.image,cover.imageStatus||'loading');
           refreshCover(entry);
-          const container=el(cover.isOfficial?'game-official-gallery':'game-gallery'),index=cover.isOfficial?officialIndex++:communityIndex++;
-          if(container.children[index]!==entry.tile)container.insertBefore(entry.tile,container.children[index]||null);
         });
-        el('game-official-section').hidden=officialIndex===0;el('game-community-heading').hidden=officialIndex===0||communityIndex===0;
-        el('game-official-gallery').dataset.catalogue=String(covers.some(cover=>cover.provider==='nintendo-hk-store'));
-        el('game-official-section').dataset.catalogue=el('game-official-gallery').dataset.catalogue;
+        sortCoverTiles();
       };
       const updateStatus = () => {
         const failed = ['offline', 'timeout', 'workerError', 'invalid', 'rateLimited', 'upstreamUnavailable'];
@@ -1254,18 +1304,16 @@
         const matching=covers.filter(cover=>{const entry=coverCards.get(cover.id),orientation=entry&&coverOrientation(entry);return shape==='all'||!['square','portrait','landscape'].includes(orientation)||orientation===shape;});
         const visible=matching.filter(cover=>coverCards.get(cover.id)?.art.dataset.imageState!=='failed');
         const imageFailures=matching.length-visible.length;
-        const officialVisible=visible.some(cover=>cover.isOfficial);
-        el('game-official-section').hidden=!officialVisible;
-        el('game-community-heading').hidden=!officialVisible||!visible.some(cover=>!cover.isOfficial);
         el('game-cover-status').textContent = t(`game.status.${coverStatus}`) + (visible.length ? ` · ${t('game.coverCount').replace('{count}',visible.length)}` : '')+
-          (imageFailures?' · '+t('game.failedCoverCount').replace('{count}',imageFailures):'');
+          (!visible.length&&imageFailures?' · '+t('game.failedCoverCount').replace('{count}',imageFailures):'');
         el('game-query-trace').hidden = !window.NitLinkPreview || !queriedTerms.length;
         el('game-query-trace').textContent = `${t('game.queriedTerms')} · ${queriedTerms.join(' / ')}`;
         if (window.NitLinkPreview) {
           const key = window.NitLinkPreview.mode === 'real' ? 'game.realPreview' : 'game.fixture';
           el('game-preview-mode-note').dataset.i18n = key; el('game-preview-mode-note').textContent = t(key);
         }
-        el('game-cover-status').dataset.error = String(failed.includes(coverStatus)||imageFailures>0);
+        el('game-cover-status').hidden = visible.length > 0;
+        el('game-cover-status').dataset.error = String(failed.includes(coverStatus)||(!visible.length&&imageFailures>0));
         el('game-cover-empty').hidden = visible.length > 0;
         el('game-cover-empty').textContent = t(imageFailures&&!visible.length?'game.noUsableCovers':covers.length&&!visible.length&&['ok','partial'].includes(coverStatus)?'game.noShapeCovers':coverStatus === 'idle' ? 'game.coverIdle' : `game.status.${coverStatus}`);
         el('game-gallery').setAttribute('aria-busy', String(coverStatus === 'loading'));
@@ -1282,6 +1330,7 @@
         el('game-store-status').textContent=t(officialProvider==='nintendo-tw'?'game.nintendoTaiwan':officialProvider==='playstation-tw'?'game.playstationTaiwan':'game.hkStore')+' · '+t('game.status.'+storeStatus);
       };
       const loadCovers = () => {
+        readyCoverBatch=0;appliedCoverBatch=0;
         stopSearch();
         clearTimeout(coverTimer); clearTimeout(coverImageTimer); coverRequest = ++sequence;
         const view=`${current.dataMode||'native'}:${current.key}:${shape}:${coverPage}:${coverProvider}:${el('game-official-query').value.trim()}`;
@@ -1440,10 +1489,11 @@
         const changed=current.key!==state.key||current.dataMode!==state.dataMode;
         const platformChanged=!!current.artworkPlatform&&current.artworkPlatform!==state.artworkPlatform;
         const localeChanged=!!current.locale&&current.locale!==state.locale;
-        if(changed||platformChanged){stopSearch();stopCovers();shape='all';if(platformChanged)coverProvider='all';officialStatus='idle';officialProvider='';const known=results.find(game=>game.id===state.id);const saved=library.games.find(game=>game.key===state.key);el('game-official-query').value=state.officialQuery||saved?.displayNames?.['zh-TW']||known?.displayName||state.name||'';}
+        if(changed||platformChanged){stopSearch();stopCovers();shape='all';coverProvider='all';officialStatus='idle';officialProvider='';const known=results.find(game=>game.id===state.id);const saved=library.games.find(game=>game.key===state.key);el('game-official-query').value=state.officialQuery||saved?.displayNames?.['zh-TW']||known?.displayName||state.name||'';}
         if(platformChanged){results=[];searchStatus='idle';covers=[];renderResults();}
         if (current.locale && current.locale !== state.locale) {
           stopCovers();
+          if(!state.manualCover&&!state.finalImageKey){shape='all';coverProvider='all';coverPage=0;}
           clearTimeout(debounce); clearTimeout(searchTimer); searchRequest = ++sequence;
           results = []; searchStatus = 'idle'; renderResults();
         }
@@ -1451,7 +1501,7 @@
         if (changed||platformChanged) {
           notice = '';coverPage=0;coverHasMore=false;coverTotal=0;
           loadCovers();
-        }else if(localeChanged){renderCovers();if(el('game-cover-details').open)showCoverDetails(covers.find(cover=>cover.id===detailsCover),false);}
+        }else if(localeChanged){loadCovers();if(el('game-cover-details').open)showCoverDetails(covers.find(cover=>cover.id===detailsCover),false);}
       };
       window._updateGameLive = state => {
         live = {...live, ...state};
@@ -1495,8 +1545,10 @@
           clearTimeout(coverImageTimer);
           const requested=coverRequest;
           coverImageTimer=setTimeout(()=>{
-            if(requested===coverRequest&&settleImages(covers,coverCards,'failed')){coverStatus='timeout';updateStatus();}
+            if(requested===coverRequest&&settleImages(covers,coverCards,'failed')){coverStatus='timeout';updateStatus();applyAutomaticCoverWhenReady();}
           },45000);
+        } else if(event.kind==='coversComplete'&&event.request===coverRequest&&event.gameId===current.id&&event.shape===shape){
+          readyCoverBatch=coverRequest;applyAutomaticCoverWhenReady();
         } else if (event.kind === 'image') {
           const entry = event.coverId ? (event.request === coverRequest && coverCards.get(event.coverId)) :
             (event.request === searchRequest && gameCards.get(event.gameId));

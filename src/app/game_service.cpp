@@ -396,6 +396,7 @@ Reply ParseReply(const HttpReply& http, bool covers) {
                     Text(object, L"displayName"), Text(object, L"source", 64)};
                 if (game.name.empty()) continue;
                 if (game.displayName.empty()) game.displayName = game.name;
+                game.displayNameLanguage=Text(object,L"displayNameLanguage",16);
                 out.games.push_back(std::move(game));
             }
         }
@@ -491,6 +492,7 @@ public:
         LoadExpansions();
         const auto primaryPath = L"/games/search?q=" + Encode(query) + L"&lang=" + std::wstring(locale);
         auto primary = Get(primaryPath, false, cancelled);
+        for(auto& game:primary.games)game.displayName=LocalizedGameName(game.name,game.displayName,locale,game.displayNameLanguage);
         std::vector<std::wstring> terms{std::wstring(query)}, suggestions;
         for (const auto& group : expansions) {
             const bool match = std::any_of(group.aliases.begin(), group.aliases.end(), [&](const auto& alias) {
@@ -541,8 +543,11 @@ public:
             for (const auto& [source, status] : item.reply.lookups) combined.lookups[item.term + L" · " + source] = status;
             for (const auto& term : item.reply.resolvedQueries)
                 if (resolved.size() < 24 && resolved.insert(term).second) combined.resolvedQueries.push_back(term);
-            for (const auto& game : item.reply.games)
-                if (ids.insert(game.id).second) combined.games.push_back(game);
+            for (auto game : item.reply.games)
+                if (ids.insert(game.id).second){
+                    game.displayName=LocalizedGameName(game.name,game.displayName,locale,game.displayNameLanguage);
+                    combined.games.push_back(std::move(game));
+                }
         }
         combined.totalCount = combined.games.size();
         combined.status = !combined.games.empty() ? (unavailable || partial ? L"partial" : L"ok") :
@@ -718,7 +723,9 @@ std::wstring GameService::CacheDiscordImage(std::shared_ptr<const Image> image,s
 }
 void GameService::Publish(Result result, const Cancelled& cancelled) {
     std::lock_guard lock(m_mutex);
-    if (!cancelled() && m_results.size() < 64) m_results.push_back(std::move(result));
+    // Reserve the terminal notification even if cached images fill the queue.
+    if (!cancelled() && (m_results.size() < 64 || result.operation==Operation::CoverImagesComplete))
+        m_results.push_back(std::move(result));
 }
 void GameService::PinImage(std::wstring uri,std::wstring source) {
     std::lock_guard lock(m_mutex);
@@ -1019,15 +1026,25 @@ void GameService::Run(std::stop_token stop) {
                 }
                 const auto imageDeadline = Clock::now() + std::chrono::seconds(30);
                 auto candidates=base.reply.artworkSources;candidates.insert(candidates.end(),base.reply.covers.begin(),base.reply.covers.end());
+                std::vector<Cover> loaded;
                 for (const auto& cover : candidates) {
                     if (cancelled()) break;
                     auto image = base; image.reply = {}; image.reply.page=request.page;image.operation = Operation::Image; image.coverId = cover.id;
                     auto resolvedCover=cover;std::wstring actualShape;
                     if (Clock::now() < imageDeadline) image.imageUri = LoadArtworkImage(cover.thumb, cancelled,&actualShape);
                     if(resolvedCover.shape.empty()&&!actualShape.empty())resolvedCover.shape=actualShape;
+                    if(!image.imageUri.empty()){
+                        loaded.push_back(resolvedCover);
+                    }
                     image.reply.covers={std::move(resolvedCover)};
                     image.imageStatus = image.imageUri.empty() ? L"failed" : L"ok";
                     Publish(std::move(image), cancelled);
+                }
+                if(!cancelled()){
+                    auto complete=base;complete.operation=Operation::CoverImagesComplete;complete.reply={};
+                    complete.reply.page=request.page;
+                    complete.reply.covers=std::move(loaded);
+                    Publish(std::move(complete),cancelled);
                 }
             }
         } catch (...) { base.reply = {}; Publish(std::move(base), cancelled); }

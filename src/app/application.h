@@ -291,6 +291,8 @@ private:
     std::map<uint32_t, Games::Cover> m_gameCovers;
     std::map<uint32_t, std::wstring> m_coverImages;
     uint32_t m_coverGameId = 0;
+    uint32_t m_coverRequest = 0;
+    std::optional<Games::Result> m_readyAutoCover;
     std::wstring m_currentGameImage;
     std::wstring m_currentGameSourceImage;
     std::map<std::string,std::wstring> m_libraryImages;

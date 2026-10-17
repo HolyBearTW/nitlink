@@ -4,6 +4,7 @@ This adapter exercises the production UI/bridge protocol. It is not evidence
 that the unbuilt Windows host or a Discord client has passed validation.
 """
 import concurrent.futures
+import ctypes
 import hashlib
 import io
 import json
@@ -43,6 +44,23 @@ def text(value, limit=256):
 
 def number(value):
     return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 0xffffffff
+
+def localized_game_name(original, display, locale, language=''):
+    display=display if text(display) and display else original
+    if locale in ('en-US','de-DE') and (str(language).startswith('zh') or re.search(r'[\u3400-\u9fff\uf900-\ufaff]',display)):
+        return original
+    if locale=='zh-CN':
+        try:
+            convert=ctypes.WinDLL('kernel32',use_last_error=True).LCMapStringEx
+            convert.argtypes=[ctypes.c_wchar_p,ctypes.c_ulong,ctypes.c_wchar_p,ctypes.c_int,ctypes.c_wchar_p,ctypes.c_int,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_ssize_t]
+            convert.restype=ctypes.c_int
+            count=convert('zh-CN',0x02000000,display,-1,None,0,None,None,0)
+            if count>0:
+                buffer=ctypes.create_unicode_buffer(count)
+                if convert('zh-CN',0x02000000,display,-1,buffer,count,None,None,0)==count:return buffer.value
+        except (AttributeError,OSError):pass
+        if language in ('zh-hant','zh-TW'):return original
+    return display
 
 def fetch_json(path):
     with LOCK:
@@ -117,7 +135,10 @@ def search(query, locale, platform='unknown'):
                 continue
             seen.add(game['id'])
             display = game.get('displayName')
+            language=game.get('displayNameLanguage','')
+            display=localized_game_name(game['name'],display,locale,language)
             games.append({'id':game['id'],'name':game['name'],'displayName':display if text(display) and display else game['name'],
+                          'displayNameLanguage':language if text(language,16) else '',
                           'source':game.get('source') if text(game.get('source'),64) else 'steamgriddb','dataMode':'real'})
     status = 'partial' if partial or (games and unavailable) else 'ok' if games else 'upstreamUnavailable' if unavailable else 'empty'
     if not games and all(reply['status'] != 'ok' for reply in replies):
@@ -305,7 +326,11 @@ def library(params):
                 loaded=json.loads(path.read_text(encoding='utf-8'))
                 if isinstance(loaded.get('records'),dict) and len(loaded['records'])<=256: profile=loaded
         except (OSError,ValueError,TypeError): pass
-        if action=='load': return {'status':'ok',**profile}
+        if action=='load':
+            for record in profile['records'].values():
+                if isinstance(record,dict) and text(record.get('name')) and isinstance(record.get('displayNames'),dict):
+                    record['displayNames']={locale:localized_game_name(record['name'],name,locale) for locale,name in record['displayNames'].items() if text(name)}
+            return {'status':'ok',**profile}
         key=params.get('key',[''])[0]
         if key and not re.fullmatch(r'[a-z0-9_-]{1,64}',key): return {'status':'invalid'}
         if action=='current':

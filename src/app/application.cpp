@@ -1231,6 +1231,10 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
                     : requested == L"zh-CN" ? "zh-CN"
                     : requested == L"de-DE" ? "de-DE" : "system";
                 Localization::Instance().SetPreference(m_config->language);
+                // Search results belong to their effective locale. Do not
+                // relabel a previous zh-TW result as en-US/zh-CN/de-DE on save.
+                m_searchGames.clear();m_searchDefaultCovers.clear();
+                m_readyAutoCover.reset();m_coverRequest=0;
                 if (m_overlay && !m_overlay->RefreshTextFormats()) {
                     AppLog(L"setLanguage: failed to refresh overlay text formats");
                 }
@@ -5218,12 +5222,8 @@ Games::SavedGame* Application::EnsureSavedGame(const std::string& key)
     if(const auto existing=m_config->onlineGames.find(key);existing!=m_config->onlineGames.end()){
         if(const auto known=m_searchGames.find(existing->second.id);known!=m_searchGames.end()&&!known->second.displayName.empty())
             existing->second.displayNames[Localization::Instance().LocaleName()]=known->second.displayName;
-        if(!existing->second.manualCover)if(const auto known=m_searchGames.find(existing->second.id);known!=m_searchGames.end()){
-            if(const auto* cover=Games::PreferredActivityArtwork(known->second.artworkSources);
-               cover&&(existing->second.coverId!=cover->id||existing->second.coverUrl!=cover->url)){
-                Games::SelectArtwork(existing->second,*cover);m_libraryImages.erase(key);if(key==m_config->currentGameId)m_currentGameImage.clear();
-            }
-        }
+        // Restore the saved choice immediately; automatic replacement waits
+        // for the complete gallery image batch and WebView image readiness.
         return &existing->second;
     }
     if(m_config->onlineGames.size()>=256)return nullptr;
@@ -5231,8 +5231,6 @@ Games::SavedGame* Application::EnsureSavedGame(const std::string& key)
     const auto id=Games::DynamicId(key);
     if(id){const auto found=m_searchGames.find(id);if(found==m_searchGames.end())return nullptr;
         game.id=id;game.name=found->second.name;game.displayNames[Localization::Instance().LocaleName()]=found->second.displayName;
-        if(const auto* cover=Games::PreferredActivityArtwork(found->second.artworkSources))Games::SelectArtwork(game,*cover);
-        else if(const auto cover=m_searchDefaultCovers.find(id);cover!=m_searchDefaultCovers.end()&&Games::ActivityArtworkPriority(cover->second)<4)Games::SelectArtwork(game,cover->second);
     }else{const auto* builtin=FindGameById(key);if(!builtin)return nullptr;game.name=GameTitleWide(builtin->title);}
     auto [saved,inserted]=m_config->onlineGames.emplace(key,std::move(game));
     (void)inserted;
@@ -5246,7 +5244,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
     const auto notice = [&](const wchar_t* key) {
         if (m_webviewSettings) m_webviewSettings->PostMessage(L"{\"gameNotice\":\"" + std::wstring(key) + L"\"}");
     };
-    if (action == L"cancelGameSearch") { m_gameService->Cancel(); return true; }
+    if (action == L"cancelGameSearch") { m_gameService->Cancel();m_readyAutoCover.reset();m_coverRequest=0; return true; }
     if(action==L"addGameFavorite" || action==L"removeGameFavorite"){
         const std::string key(message.text.begin(),message.text.end());
         auto* game=EnsureSavedGame(key);if(!game){notice(L"invalidChoice");return true;}
@@ -5264,6 +5262,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         PushGameLibrary();return true;
     }
     if (action == L"searchGames") {
+        m_readyAutoCover.reset();m_coverRequest=0;
         Games::Request request;
         request.operation = Games::Operation::Search; request.request = message.request;
         request.platform=GetGameArtworkPlatform();
@@ -5272,6 +5271,37 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         m_searchDefaultCovers.clear();
         m_gameService->Submit(std::move(request));
         return true;
+    }
+    if(action==L"applyAutoGameCover"){
+        if(!m_readyAutoCover||message.request!=m_coverRequest||message.request!=m_readyAutoCover->request||
+           message.gameId!=m_coverGameId||message.gameId!=m_readyAutoCover->gameId||
+           m_readyAutoCover->locale!=Localization::Instance().LocaleName()||
+           m_readyAutoCover->platform!=GetGameArtworkPlatform())return true;
+        auto batch=std::move(*m_readyAutoCover);m_readyAutoCover.reset();
+        const auto saved=m_config->onlineGames.find(m_config->currentGameId);
+        if(saved==m_config->onlineGames.end()||saved->second.id!=message.gameId)return true;
+        if(saved->second.manualCover||!saved->second.finalImageKey.empty())return true;
+        if(!message.coverId){
+            // A previous automatic Taiwan choice must not survive a locale
+            // change when every eligible replacement failed to load.
+            if(Games::AutomaticArtworkLocaleAllowed(saved->second.provider,batch.locale))return true;
+            Games::SelectArtwork(saved->second,Games::Cover{});
+            m_currentGameImage.clear();m_currentGameSourceImage.clear();
+            m_libraryImages.erase(saved->first);m_librarySourceImages.erase(saved->first);
+        }else{
+            if(!Games::AutomaticActivityArtwork(saved->second,batch.reply.covers,true,batch.locale))return true;
+            const auto cover=std::find_if(batch.reply.covers.begin(),batch.reply.covers.end(),[&](const auto& item){return item.id==message.coverId;});
+            const auto image=m_coverImages.find(message.coverId);
+            if(cover==batch.reply.covers.end()||Games::ActivityArtworkPriority(*cover,batch.locale)>=Games::UnavailableActivityArtwork||
+               image==m_coverImages.end()||image->second.empty()||!m_gameService->FindImage(image->second))return true;
+            Games::SelectArtwork(saved->second,*cover);
+            m_currentGameImage=m_currentGameSourceImage=image->second;
+            m_libraryImages[saved->first]=m_librarySourceImages[saved->first]=image->second;
+        }
+        m_gameService->PinImage(m_currentGameImage,m_currentGameSourceImage);
+        UpdateDiscordForCurrentGame(true);
+        if(!m_config->Save("nitlink.json"))notice(L"saveFailed");
+        PushCurrentGameState();PushGameLibrary();return true;
     }
     if (action == L"getGameCovers") {
         if (Games::DynamicId(m_config->currentGameId) == message.gameId)
@@ -5298,6 +5328,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         if(!key.empty()&&!saved){notice(L"invalidChoice");return true;}
         m_gameFromLibrary=existed;
         if (changed) {
+            m_readyAutoCover.reset();m_coverRequest=0;
             m_gameService->Cancel(); m_currentGameImage.clear();m_currentGameSourceImage.clear(); m_gameService->PinImage({});
             m_gameCovers.clear(); m_coverImages.clear(); m_coverGameId = 0;
             m_config->currentGameId = key;
@@ -5321,6 +5352,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         return true;
     }
     if (action == L"clearGame") {
+        m_readyAutoCover.reset();m_coverRequest=0;
         const bool changed = !m_config->currentGameId.empty();
         m_gameService->Cancel(); m_config->currentGameId.clear(); m_currentGameImage.clear();m_currentGameSourceImage.clear(); m_gameService->PinImage({});
         m_gameCovers.clear(); m_coverImages.clear(); m_coverGameId = 0;
@@ -5339,6 +5371,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         m_gameService->Submit(std::move(request));return true;
     }
     if (action == L"selectGameCover" || action == L"restoreAutoCover") {
+        m_readyAutoCover.reset();
         const auto it = m_config->onlineGames.find(m_config->currentGameId);
         if (it == m_config->onlineGames.end()) { notice(L"invalidChoice"); return true; }
         auto& game = it->second;
@@ -5391,7 +5424,7 @@ void Application::RequestGameCovers(uint32_t requestId, std::wstring shape, uint
     request.coverId = game.coverId;
     request.finalImageKey=game.finalImageKey;request.sourceImageKey=game.sourceImageKey;
     request.page = page;
-    m_coverGameId = game.id; m_gameCovers.clear(); m_coverImages.clear();
+    m_coverGameId = game.id;m_coverRequest=requestId;m_readyAutoCover.reset(); m_gameCovers.clear(); m_coverImages.clear();
     m_gameService->Submit(std::move(request));
 }
 
@@ -5406,7 +5439,7 @@ void Application::ConsumeGameResults()
     if(discordStatus!=m_lastDiscordPreviewStatus){m_lastDiscordPreviewStatus=discordStatus;PushCurrentGameState();}
     for (const auto& result : m_gameService->TakeResults()) {
         if (result.locale != Localization::Instance().LocaleName()) continue;
-        if(!result.platform.empty() && (result.operation==Games::Operation::Search||result.operation==Games::Operation::Covers||result.operation==Games::Operation::Resolve||result.operation==Games::Operation::Image||result.operation==Games::Operation::LibraryImages) && result.platform!=GetGameArtworkPlatform())continue;
+        if(!result.platform.empty() && (result.operation==Games::Operation::Search||result.operation==Games::Operation::Covers||result.operation==Games::Operation::Resolve||result.operation==Games::Operation::Image||result.operation==Games::Operation::LibraryImages||result.operation==Games::Operation::CoverImagesComplete) && result.platform!=GetGameArtworkPlatform())continue;
         const auto rememberFallback=[&](uint32_t id,const auto& covers){
             if(GetGameArtworkPlatform()!=L"switch")return;
             for(const auto& cover:covers)if(cover.provider==L"nintendo-tw"&&cover.shape==L"square"&&cover.isOfficial&&Games::IsNintendoArtworkUrl(cover.url)){
@@ -5446,6 +5479,10 @@ void Application::ConsumeGameResults()
             for (const auto& cover : result.reply.covers) m_gameCovers.emplace(cover.id, cover);
             for(const auto& cover:result.reply.artworkSources)m_gameCovers.emplace(cover.id,cover);
             const auto it = m_config->onlineGames.find(m_config->currentGameId);
+        } else if(result.operation==Games::Operation::CoverImagesComplete){
+            if(result.gameId!=m_coverGameId||result.request!=m_coverRequest)continue;
+            if(result.shape==L"all"&&result.coverProvider==L"all"&&result.reply.page==0)
+                m_readyAutoCover=result;
         } else if(result.operation==Games::Operation::Image&&!result.coverId){
             const auto key=Games::GameKey(result.gameId);
             const auto saved=m_config->onlineGames.find(key);
@@ -5454,13 +5491,7 @@ void Application::ConsumeGameResults()
                (!saved->second.coverId||(!result.reply.covers.empty()&&saved->second.coverId==result.reply.covers.front().id))))m_libraryImages[key]=result.imageUri;
             if(!result.reply.covers.empty()){
                 const auto& cover=result.reply.covers.front();
-                if(Games::ActivityArtworkPriority(cover)<4)m_searchDefaultCovers[result.gameId]=cover;
-                const auto found=m_config->onlineGames.find(key);
-                if(found!=m_config->onlineGames.end()&&!found->second.manualCover&&
-                   (!found->second.coverId||found->second.coverShape!=L"square")&&cover.shape==L"square"){
-                    auto& game=found->second;Games::SelectArtwork(game,cover);
-                    m_config->Save("nitlink.json");
-                }
+                if(Games::ActivityArtworkPriority(cover,result.locale)<Games::UnavailableActivityArtwork)m_searchDefaultCovers[result.gameId]=cover;
             }
             PushGameLibrary();
         } else if(result.operation==Games::Operation::LibraryImages){
@@ -5476,23 +5507,6 @@ void Application::ConsumeGameResults()
             const auto it = m_config->onlineGames.find(m_config->currentGameId);
             if(!result.reply.covers.empty()&&result.reply.covers.front().id==result.coverId)
                 m_gameCovers[result.coverId]=result.reply.covers.front();
-            if(it!=m_config->onlineGames.end()&&it->second.id==result.gameId&&!it->second.manualCover&&
-               it->second.finalImageKey.empty()&&result.reply.page==0&&result.shape==L"all"&&
-               result.coverProvider==L"all"&&!result.imageUri.empty()){
-                const auto cover=m_gameCovers.find(result.coverId);
-                if(cover!=m_gameCovers.end()){
-                    Games::Cover selected;
-                    static_cast<Games::ArtworkMetadata&>(selected)=static_cast<const Games::ArtworkMetadata&>(it->second);
-                    selected.shape=it->second.coverShape;
-                    const auto candidatePriority=Games::ActivityArtworkPriority(cover->second);
-                    const auto selectedPriority=Games::ActivityArtworkPriority(selected);
-                    if(candidatePriority<4&&(candidatePriority<selectedPriority||it->second.coverId==result.coverId)){
-                        const bool selectionChanged=it->second.coverId!=cover->second.id||it->second.coverUrl!=cover->second.url||it->second.coverShape!=cover->second.shape;
-                        Games::SelectArtwork(it->second,cover->second);changed=changed||selectionChanged;
-                        if(selectionChanged)m_currentGameImage.clear();
-                    }
-                }
-            }
             if (it != m_config->onlineGames.end() && it->second.coverId == result.coverId) {
                 m_currentGameSourceImage=result.imageUri;m_librarySourceImages[it->first]=result.imageUri;
                 if(it->second.finalImageKey.empty()){m_currentGameImage = result.imageUri; m_libraryImages[m_config->currentGameId]=result.imageUri;}
@@ -5643,8 +5657,8 @@ void Application::UpdateDiscordForCurrentGame(bool preserveStartTime)
 
     const auto title=GetCurrentGameDisplayName();
     const auto online = m_config->onlineGames.find(m_config->currentGameId);
-    // Source validation stays native. The emitted value is the original
-    // public URL, never the WebView URI, local edit/cache path, or game ID.
+    // Source validation stays native. Use the original public URL or Nintendo
+    // Taiwan's existing fixed padding URL, never a WebView/local path or game ID.
     const auto imageKey=DiscordCoverImage(online==m_config->onlineGames.end()?nullptr:&online->second,
         m_gameService && m_gameService->FindImage(m_currentGameImage)!=nullptr);
     const std::wstring imageKeyWide(imageKey.begin(),imageKey.end()); // DiscordCoverImage returns validated ASCII URLs.
@@ -5783,6 +5797,7 @@ void Application::RefreshGameArtworkContext()
     const auto platform=GetGameArtworkPlatform();
     if(platform==m_gameArtworkPlatform)return;
     m_gameArtworkPlatform=platform;
+    m_readyAutoCover.reset();m_coverRequest=0;
     if(m_gameService)m_gameService->Cancel();
     m_searchGames.clear();m_searchDefaultCovers.clear();m_gameCovers.clear();m_coverImages.clear();
     m_discordTaiwanFallbacks.clear();m_coverGameId=0;

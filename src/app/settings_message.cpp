@@ -206,6 +206,11 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
         for(auto c:key->second.text){if(c>127)return std::nullopt;id.push_back(static_cast<char>(c));}
         if(!FindGameById(id)&&!Games::DynamicId(id))return std::nullopt;
         result.key=key->second.text;result.text=name->second.text;
+    } else if(action==L"applyAutoGameCover"){
+        if(!value||value->kind!=Value::Kind::Object||value->fields.size()!=3||
+           !Uint(*value,L"gameId",0xffffffffu,result.gameId)||!result.gameId||
+           !Uint(*value,L"request",0xffffffffu,result.request)||!result.request||
+           !Uint(*value,L"coverId",0xffffffffu,result.coverId))return std::nullopt;
     } else if (action == L"searchGames" || action == L"getGameCovers" || action == L"selectGameCover") {
         if (!value || value->kind != Value::Kind::Object) return std::nullopt;
         if (action == L"searchGames") {

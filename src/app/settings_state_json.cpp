@@ -139,6 +139,7 @@ std::wstring SerializeGameResult(const Games::Result& result)
     const auto quoted = [](std::wstring_view text) { return L"\"" + JsonEscapeWide(text) + L"\""; };
     const wchar_t* kind = result.operation == Games::Operation::Search ? L"search" :
         result.operation == Games::Operation::Covers ? L"covers" :
+        result.operation == Games::Operation::CoverImagesComplete ? L"coversComplete" :
         result.operation == Games::Operation::CurrentImage ? L"currentImage" :
         result.operation == Games::Operation::Image ? L"image" : L"resolve";
     std::wostringstream json;

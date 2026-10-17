@@ -7,7 +7,7 @@
   let fixtures=[],current={},records={},generation=0,bridgeSequence=0,scenario='ok',nameCapability='unverified',acceptedImageUrls=[];
   let mode=location.protocol==='http:'&&params.get('mode')!=='fixture'?'real':'fixture';
   let showSynthetic=false,initialSearch,restoreSequence=0,initialSearchAllowed=true,controlsInitialized=false;
-  let activationSequence=0,activationWrites=Promise.resolve(),activationPending=false;
+  let activationSequence=0,activationWrites=Promise.resolve(),activationPending=false,pendingAutoBatch=null;
   const state={locale:params.get('lang')||'zh-TW',languagePreference:params.get('lang')||'zh-TW',panelSide:params.get('layout')||'full',activeDevice:'AVerMedia Live Gamer ULTRA 2.1 · Host fixture',captureDevices:['AVerMedia Live Gamer ULTRA 2.1 · Host fixture','Elgato 4K Pro · Host fixture'],manualHdmiSource:'switch2',effectiveHdmiSource:'Nintendo Switch 2',manualHdmiSourceCustom:'',negotiatedWidth:1920,negotiatedHeight:1080,negotiatedFps:60,negotiatedFpsNumerator:60,negotiatedFpsDenominator:1,negotiatedFormat:'NV12',resolutionText:'1920×1080 / 60 FPS',linkText:'HDMI',latencyText:'8 ms',preventSleep:true,availableFormats:[{width:1920,height:1080,fps:60,fpsNumerator:60,fpsDenominator:1,format:'NV12'},{width:3840,height:2160,fps:60,fpsNumerator:60,fpsDenominator:1,format:'P010'}],captureFormatOverride:{width:0,height:0,fps:0,fpsNumerator:0,fpsDenominator:1,format:''},gameList:[{id:'spider-man-2',title:"Marvel's Spider-Man 2"},{id:'astro-bot',title:'Astro Bot'}]};
   state.discordSignal='1920×1080 · 60 FPS';
   const sourceNames={switch2:'Switch 2',switch:'Switch',ps5:'PS5',ps4:'PS4',xbox_series:'Xbox Series X|S',xbox_one:'Xbox One',pc:'PC'};
@@ -29,19 +29,22 @@
     return taiwan.length?taiwan:candidates.filter(cover=>cover.provider==='nintendo-hk-eshop');
   };
   const activityArtworkPriority=cover=>{
-    if(cover.provider!=='nintendo-hk-store'&&cover.shape==='square')return 0;
+    if(cover.provider==='nintendo-tw'&&state.locale!=='zh-TW')return 5;
+    if(cover.isOfficial&&cover.provider!=='nintendo-hk-store'&&cover.shape==='square')return 0;
     if(cover.isOfficial&&cover.provider!=='nintendo-hk-store'&&cover.shape==='landscape')return 1;
     if(cover.isOfficial&&cover.provider!=='nintendo-hk-store'&&cover.shape==='portrait')return 2;
-    if(!cover.isOfficial&&cover.provider==='steamgriddb'&&cover.shape==='portrait')return 3;
-    return 4;
+    if(cover.provider!=='nintendo-hk-store'&&cover.shape==='square')return 3;
+    if(!cover.isOfficial&&cover.provider==='steamgriddb'&&cover.shape==='portrait')return 4;
+    return 5;
   };
   const preferredSeed=id=>preferredSources(officialGames.get(id)?.artworkSources||[])
-    .filter(cover=>activityArtworkPriority(cover)<4).sort((a,b)=>activityArtworkPriority(a)-activityArtworkPriority(b))[0];
-  const savedActivityPriority=record=>activityArtworkPriority({...record,shape:record.coverShape||''});
+    .filter(cover=>activityArtworkPriority(cover)<5).sort((a,b)=>activityArtworkPriority(a)-activityArtworkPriority(b))[0];
   state.holyBearUpdate={current:document.querySelector('meta[name="nitlink-version"]')?.content||'',status:'never',automatic:false};
   if(!['zh-TW','zh-CN','en-US','de-DE'].includes(state.locale))state.locale=state.languagePreference='zh-TW';
   window.NitLinkPreview={mode};
-  const emit=message=>listeners.forEach(listener=>listener({data:message}));
+  // WebView2 serializes native messages; preview models must not share mutable
+  // objects with the UI's loading-state bookkeeping either.
+  const emit=message=>listeners.forEach(listener=>listener({data:structuredClone(message)}));
   const api=(operation,value={})=>new Promise(resolve=>{
     if(location.protocol!=='http:'){resolve({status:'offline'});return;}
     const id=++bridgeSequence,script=document.createElement('script');
@@ -51,8 +54,13 @@
     script.src='preview/bridge.js?'+new URLSearchParams({operation,locale:state.locale,platform:artworkPlatform(),bridgeId:String(id),profile:params.get('profile')||'default',...value});document.head.appendChild(script);
   });
   window.NitLinkPreviewBridge={deliver:(id,reply)=>jobs.get(id)?.finish(reply)};
-  const cancel=()=>{++generation;for(const job of [...jobs.values()])if(!['library','capabilities'].includes(job.operation))job.finish({status:'cancelled'});};
+  const cancel=()=>{++generation;pendingAutoBatch=null;for(const job of [...jobs.values()])if(!['library','capabilities'].includes(job.operation))job.finish({status:'cancelled'});};
   const now=()=>Math.floor(Date.now()/1000);
+  const localizedGameName=record=>{
+    if(record.customName)return record.customName;
+    const display=record.displayNames?.[state.locale]||record.name;
+    return ['en-US','de-DE'].includes(state.locale)&&/[\u3400-\u9fff\uf900-\ufaff]/.test(display)?record.name:display;
+  };
   const saveRecord=async key=>{
     if(location.protocol==='http:'){const reply=await api('library',{mode,action:'upsert',key,record:JSON.stringify(records[key])});if(reply.status!=='ok')emit({gameNotice:'saveFailed'});}
     else try{localStorage.setItem('nitlink.gamePreview.'+mode,JSON.stringify({records,current}));}catch(_){}
@@ -62,7 +70,7 @@
     else try{localStorage.setItem('nitlink.gamePreview.'+mode,JSON.stringify({records,current}));}catch(_){}
   };
   const push=()=>{
-    if(current.key&&records[current.key]){const record=records[current.key];current={...current,...record,displayName:record.customName||record.displayNames?.[state.locale]||record.name};}
+    if(current.key&&records[current.key]){const record=records[current.key];current={...current,...record,displayName:localizedGameName(record)};}
     current.locale=state.locale;current.dataMode=mode;current.discordConnected=false;
     current.artworkPlatform=artworkPlatform();current.discordRpcStatus='previewOnly';current.discordClientDisplayVerified=false;
     current.officialQuery=current.displayNames?.['zh-TW']||current.name||'';
@@ -88,7 +96,7 @@
       const officialGame=officialGames.get(record.id);
       if(officialGame)record.displayNames={...record.displayNames,...officialGame.displayNames};
       const official=preferredSeed(record.id);
-      if(official&&(!record.manualCover&&(activityArtworkPriority(official)<savedActivityPriority(record))||record.manualCover&&record.coverId===official.id)){
+      if(official&&record.manualCover&&record.coverId===official.id){
         const same=record.coverId===official.id;selectArtwork(record,official);
         if(!record.finalImageKey)record.image=mode==='fixture'?(fixtures.find(game=>game.id===record.id)?.artworkSources?.[0]?.image||''):same?record.image||'':'';
         await saveRecord(record.key);
@@ -98,8 +106,7 @@
     // activity time and explicit manual choices. Synthetic art is never a default.
     if(mode==='fixture')for(const record of Object.values(records)){
       if(!record.manualCover&&/-fixture\.svg$/.test(record.coverUrl||'')){
-        const cover=fixtures.find(game=>game.id===record.id)?.covers?.square?.find(cover=>!cover.synthetic);
-        if(cover){Object.assign(record,{coverId:cover.id,coverUrl:cover.url||cover.image,coverThumb:cover.thumb||cover.image,image:cover.image});await saveRecord(record.key);}
+        Object.assign(record,{coverId:0,coverUrl:'',coverThumb:'',image:''});await saveRecord(record.key);
       }
     }
     document.getElementById('game-preview-scenario').disabled=mode==='real';
@@ -114,7 +121,8 @@
     if(records[key]){const record=records[key],known=games.get(record.id),displayName=known?.titles?.[state.locale]||known?.displayName;if(displayName)record.displayNames[state.locale]=displayName;return record;}
     const game=games.get(Number(key.replace('sgdb-','')))||(mode==='fixture'&&fixtures.find(game=>'sgdb-'+game.id===key))||state.gameList.find(game=>game.id===key);if(!game)return null;
     const name=game.name||game.title;
-    const cover=preferredSeed(game.id)||(game.defaultCover&&activityArtworkPriority(game.defaultCover)<4?game.defaultCover:null)||game.covers?.square?.find(cover=>!cover.synthetic);
+    // New games have no selected cover until the complete image batch settles.
+    const cover=null;
     return records[key]={key,id:typeof game.id==='number'?game.id:0,name,displayNames:mode==='fixture'&&game.titles?{...game.titles}:{[state.locale]:game.displayName||name},customName:'',coverId:cover?.id||0,coverUrl:cover?.url||cover?.image||'',coverThumb:cover?.thumb||cover?.image||'',image:cover?.image||'',...artwork(cover),manualCover:false,favorite:false,lastUsedUtc:0,dataMode:mode};
   };
   const later=(callback,token,ms=350)=>setTimeout(()=>{if(token===generation)callback();},ms);
@@ -147,9 +155,9 @@
       if(!['ok','empty','partial'].includes(reply.status))failed=true;
       return (reply.covers||[]).filter(cover=>cover.provider==='steamgriddb'&&cover.isOfficial!==true&&cover.shape===shape);
     };
-    // Search tiles are horizontal: official landscape, community landscape,
-    // official portrait, then community portrait. Activity art has its own rank.
-    await tryCandidates(officialFor('landscape'));
+    // The registered PlayStation images are square; they remain valid search
+    // thumbnails even though the result tiles use a landscape layout.
+    await tryCandidates([...officialFor('landscape'),...officialFor('square').filter(cover=>cover.provider==='playstation-tw')]);
     if(!image&&token===generation)await tryCandidates(await searchOfficialLandscape());
     if(!image&&token===generation)await tryCandidates(await communityFor('landscape'));
     if(!image&&token===generation)await tryCandidates(officialFor('portrait'));
@@ -157,11 +165,6 @@
     if(token!==generation)return;
     if(chosen){
       game.defaultCover=chosen;
-      const key='sgdb-'+game.id;
-      const record=records[key],priority=activityArtworkPriority(chosen);
-      if(record&&!record.manualCover&&!record.finalImageKey&&priority<4&&(priority<savedActivityPriority(record)||record.coverId===chosen.id)){
-        selectArtwork(record,chosen);record.image=image;record.sourceImage=image;saveRecord(key);push();
-      }
     }
     emit({gameEvent:{kind:'image',request:game.thumbnailRequest,gameId:game.id,coverId:0,locale:game.thumbnailLocale,
       coverIdSelected:chosen?.id||0,coverProvider:chosen?.provider||'',coverShape:chosen?.shape||'',coverIsOfficial:chosen?.isOfficial===true,coverUrlSelected:chosen?.url||'',image,imageStatus:image?'ok':failed?'failed':'missing'}});
@@ -176,7 +179,10 @@
       cancel();const token=generation,locale=state.locale;
       if(mode==='real'){
         const reply=await api('search',{query:value.query});if(token!==generation)return;
-        (reply.games||[]).forEach(game=>{game.imageStatus='loading';game.thumbnailRequest=value.request;game.thumbnailLocale=locale;games.set(game.id,game);});emit({gameEvent:{...reply,kind:'search',request:value.request,locale}});
+        (reply.games||[]).forEach(game=>{
+          if(['en-US','de-DE'].includes(locale)&&(/[\u3400-\u9fff\uf900-\ufaff]/.test(game.displayName||'')||String(game.displayNameLanguage||'').startsWith('zh')))game.displayName=game.name;
+          game.imageStatus='loading';game.thumbnailRequest=value.request;game.thumbnailLocale=locale;games.set(game.id,game);
+        });emit({gameEvent:{...reply,kind:'search',request:value.request,locale}});
         // Enrich every result with bounded concurrency. Known official images do
         // not need a covers lookup and must not wait behind unrelated titles.
         const queue=[...(reply.games||[])].sort((a,b)=>Number(!!b.artworkSources?.length)-Number(!!a.artworkSources?.length));
@@ -202,6 +208,24 @@
     if(action==='addGameFavorite'||action==='removeGameFavorite'){const record=ensure(value);if(!record)return;record.favorite=action==='addGameFavorite';await saveRecord(value);push();emit({gameNotice:record.favorite?'favoriteAdded':'favoriteRemoved'});return;}
     if(action==='setGameCustomName'){const record=ensure(value.key);if(!record)return;record.customName=value.name.trim();await saveRecord(value.key);push();emit({gameNotice:'nameSaved'});return;}
     if(action==='clearGame'){cancel();const sequence=++activationSequence,selectedMode=mode;activationPending=false;const cleared={key:'',id:0,coverId:0,startUnix:now(),libraryRestored:true};if(location.protocol==='http:'){activationWrites=activationWrites.catch(()=>{}).then(()=>api('library',{mode:selectedMode,action:'current',key:'',start:String(cleared.startUnix)}));await activationWrites;}if(sequence===activationSequence&&mode===selectedMode){current=cleared;if(location.protocol!=='http:')await saveCurrent();push();}return;}
+    if(action==='applyAutoGameCover'){
+      const batch=pendingAutoBatch;
+      if(!batch||batch.token!==generation||batch.request!==value.request||batch.gameId!==value.gameId||current.key!==batch.key)return;
+      pendingAutoBatch=null;
+      const record=records[current.key];
+      if(!record||record.manualCover||record.finalImageKey||batch.shape!=='all'||batch.provider!=='all'||batch.page)return;
+      if(!value.coverId){
+        if(record.provider==='nintendo-tw'&&state.locale!=='zh-TW'){
+          Object.assign(record,artwork(null),{coverId:0,coverUrl:'',coverThumb:'',image:'',sourceImage:''});
+          push();await saveRecord(record.key);
+        }
+        return;
+      }
+      const cover=batch.candidates.find(cover=>cover.id===value.coverId&&cover.image&&cover.imageStatus==='ok'&&activityArtworkPriority(cover)<5);
+      if(!cover)return;
+      selectArtwork(record,cover);record.image=cover.image;record.sourceImage=cover.image;
+      push();await saveRecord(record.key);return;
+    }
     if(action==='getGameCovers'){
       cancel();const token=generation,locale=state.locale;let reply;
       const liveCovers=mode==='real'||value.provider==='nintendo';
@@ -212,15 +236,22 @@
       if(token!==generation)return;coversById.clear();candidates.forEach(cover=>coversById.set(cover.id,cover));
       const record=records[current.key];
       emit({gameEvent:{...reply,kind:'covers',request:value.request,gameId:value.gameId,locale,shape:value.shape}});
-      const applyAutomatic=cover=>{
-        const priority=activityArtworkPriority(cover);
-        if(record&&current.id===value.gameId&&!record.manualCover&&!record.finalImageKey&&value.shape==='all'&&value.provider==='all'&&!value.page&&cover.image&&priority<4&&
-          (priority<savedActivityPriority(record)||record.coverId===cover.id)){
-          selectArtwork(record,cover);record.image=cover.image;record.sourceImage=cover.image;push();
-        }
+      const complete=()=>{
+        if(token!==generation||current.id!==value.gameId)return;
+        pendingAutoBatch={token,key:current.key,gameId:value.gameId,request:value.request,shape:value.shape,provider:value.provider||'all',page:value.page||0,candidates};
+        emit({gameEvent:{kind:'coversComplete',request:value.request,gameId:value.gameId,locale,shape:value.shape}});
       };
-      if(!liveCovers){candidates.forEach((cover,index)=>later(()=>{applyAutomatic(cover);if(record?.coverId===cover.id){record.image=cover.image;push();saveRecord(record.key);}emit({gameEvent:{kind:'image',request:value.request,gameId:value.gameId,coverId:cover.id,locale,image:art(cover),imageStatus:'ok'}});},token,80+index*60));return;}
-      await imageBatch(candidates.map(cover=>({cover,url:cover.thumb||cover.url})),token,(item,image)=>{item.cover.image=image.image||'';item.cover.imageStatus=image.status==='ok'?'ok':'failed';applyAutomatic(item.cover);emit({gameEvent:{kind:'image',request:value.request,gameId:value.gameId,coverId:item.cover.id,locale,image:image.image||'',imageStatus:item.cover.imageStatus}});if(current.key&&records[current.key]?.coverId===item.cover.id){const selected=records[current.key];if(!selected.finalImageKey){selected.image=image.image||'';selected.sourceImage=selected.image;}push();}});if(current.key)await saveRecord(current.key);return;
+      if(!liveCovers){
+        await Promise.all(candidates.map((cover,index)=>new Promise(resolve=>setTimeout(()=>{
+          if(token===generation){cover.imageStatus=scenario==='imageFailure'?'failed':'ok';cover.image=cover.imageStatus==='ok'?art(cover):'';
+            emit({gameEvent:{kind:'image',request:value.request,gameId:value.gameId,coverId:cover.id,locale,image:cover.image,imageStatus:cover.imageStatus}});}
+          resolve();
+        },80+index*60))));complete();return;
+      }
+      await imageBatch(candidates.map(cover=>({cover,url:cover.thumb||cover.url})),token,(item,image)=>{item.cover.image=image.image||'';item.cover.imageStatus=image.status==='ok'?'ok':'failed';emit({gameEvent:{kind:'image',request:value.request,gameId:value.gameId,coverId:item.cover.id,locale,image:image.image||'',imageStatus:item.cover.imageStatus}});if(current.key&&records[current.key]?.coverId===item.cover.id){const selected=records[current.key];if(!selected.finalImageKey){selected.image=image.image||'';selected.sourceImage=selected.image;}push();}});
+      // Finish the prior record write before acknowledging the new automatic
+      // selection, so a slower empty-cover write cannot overwrite its save.
+      if(token===generation&&current.key)await saveRecord(current.key);complete();return;
     }
     if(action==='selectGameCover'){const cover=coversById.get(value.coverId);if(!cover?.image||cover.imageStatus==='failed'){emit({gameNotice:'imageFailed'});return;}if(current.id===value.gameId){const record=records[current.key];selectArtwork(record,cover);Object.assign(record,{image:cover.image,sourceImage:cover.image,manualCover:true,artworkMode:'original',finalImageKey:'',sourceImageKey:''});push();await saveRecord(current.key);emit({gameNotice:'coverSaved'});}return;}
     if(action==='renderGameArtwork'){
@@ -231,9 +262,9 @@
       if(result.status!=='ok'){emit({gameNotice:'artworkFailed'});return;}
       const {status,...rendered}=result;Object.assign(record,rendered,{manualCover:true});await saveRecord(key);push();emit({gameNotice:'artworkSaved'});return;
     }
-    if(action==='restoreAutoCover'){if(current.key){const record=records[current.key],official=preferredSeed(record.id);Object.assign(record,artwork(official),{manualCover:false,coverId:official?.id||0,coverUrl:official?.url||'',coverThumb:official?.thumb||'',coverShape:official?.shape||'',image:'',sourceImage:'',artworkMode:'original',finalImageKey:'',sourceImageKey:''});await saveRecord(current.key);push();emit({gameNotice:'autoRestored'});}return;}
+    if(action==='restoreAutoCover'){if(current.key){const record=records[current.key];Object.assign(record,artwork(null),{manualCover:false,coverId:0,coverUrl:'',coverThumb:'',coverShape:'',image:'',sourceImage:'',artworkMode:'original',finalImageKey:'',sourceImageKey:''});await saveRecord(current.key);push();emit({gameNotice:'autoRestored'});}return;}
     if(action==='saveGameSettings'){emit({gameNotice:'qualitySaved'});return;}
-    if(action==='setLanguage'){state.locale=value==='system'?'zh-TW':value;state.languagePreference=value;push();return;}
+    if(action==='setLanguage'){cancel();games.clear();state.locale=value==='system'?'zh-TW':value;state.languagePreference=value;push();return;}
     if(action==='cyclePanelSide'){layout({full:'right',right:'left',left:'full'}[state.panelSide]||'full');push();return;}
     if(action==='setManualHdmiSource'){const previous=artworkPlatform();state.manualHdmiSource=value;state.effectiveHdmiSource=value==='auto'?detectedSource:value==='other'?state.manualHdmiSourceCustom||detectedSource:sourceNames[value]||value;if(previous!==artworkPlatform()){cancel();games.clear();coversById.clear();}push();return;}
     if(action==='setManualHdmiSourceCustom'){const previous=artworkPlatform();state.manualHdmiSourceCustom=value;state.effectiveHdmiSource=value||detectedSource;if(previous!==artworkPlatform()){cancel();games.clear();coversById.clear();}push();return;}

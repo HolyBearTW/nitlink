@@ -24,6 +24,7 @@ struct Game {
     std::wstring name, displayName, source;
     std::vector<Cover> artworkSources;
     std::wstring displayNameSource;
+    std::wstring displayNameLanguage;
 };
 // Taiwan is primary for Switch. A Hong Kong eShop CDN image is a fallback
 // only when Taiwan has no mapping. The Hong Kong Store image endpoint is
@@ -51,27 +52,41 @@ inline const Cover* PreferredTaiwanLandscapeArtwork(const std::vector<Cover>& co
     return found==covers.end()?nullptr:&*found;
 }
 inline int SearchThumbnailArtworkPriority(const Cover& cover) {
-    if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&cover.shape==L"landscape")return 0;
+    if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&
+       (cover.shape==L"landscape"||(cover.provider==L"playstation-tw"&&cover.shape==L"square")))return 0;
     if(!cover.isOfficial&&cover.provider==L"steamgriddb"&&cover.shape==L"landscape")return 1;
     if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&cover.shape==L"portrait")return 2;
     if(!cover.isOfficial&&cover.provider==L"steamgriddb"&&cover.shape==L"portrait")return 3;
     return 4;
 }
-inline int ActivityArtworkPriority(const Cover& cover) {
-    if(cover.provider!=L"nintendo-hk-store"&&cover.shape==L"square")return 0;
+inline constexpr int UnavailableActivityArtwork = 5;
+// Source availability and manual choices are independent of the UI locale.
+// Only the automatic default skips Nintendo Taiwan outside Traditional Chinese.
+inline bool AutomaticArtworkLocaleAllowed(std::wstring_view provider, std::wstring_view locale) {
+    return provider!=L"nintendo-tw"||locale==L"zh-TW";
+}
+inline int ActivityArtworkPriority(const Cover& cover, std::wstring_view locale) {
+    if(!AutomaticArtworkLocaleAllowed(cover.provider,locale))return UnavailableActivityArtwork;
+    if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&cover.shape==L"square")return 0;
     if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&cover.shape==L"landscape")return 1;
     if(cover.isOfficial&&cover.provider!=L"nintendo-hk-store"&&cover.shape==L"portrait")return 2;
-    if(!cover.isOfficial&&cover.provider==L"steamgriddb"&&cover.shape==L"portrait")return 3;
-    return 4;
+    if(cover.provider!=L"nintendo-hk-store"&&cover.shape==L"square")return 3;
+    if(!cover.isOfficial&&cover.provider==L"steamgriddb"&&cover.shape==L"portrait")return 4;
+    return UnavailableActivityArtwork;
 }
-inline const Cover* PreferredActivityArtwork(const std::vector<Cover>& covers) {
+inline const Cover* PreferredActivityArtwork(const std::vector<Cover>& covers, std::wstring_view locale) {
     const Cover* preferred=nullptr;
-    int priority=4;
+    int priority=UnavailableActivityArtwork;
     for(const auto& cover:covers){
-        const auto candidate=ActivityArtworkPriority(cover);
+        const auto candidate=ActivityArtworkPriority(cover,locale);
         if(candidate<priority){preferred=&cover;priority=candidate;}
     }
     return preferred;
+}
+inline const Cover* AutomaticActivityArtwork(const SavedGame& game,
+    const std::vector<Cover>& loaded, bool complete, std::wstring_view locale) {
+    if(!complete||game.manualCover||!game.finalImageKey.empty())return nullptr;
+    return PreferredActivityArtwork(loaded,locale);
 }
 inline void SelectArtwork(SavedGame& game,const Cover& cover){
     if(game.coverId!=cover.id||game.coverUrl!=cover.url){game.artworkMode=L"original";game.finalImageKey.clear();game.sourceImageKey.clear();game.cropX=game.cropY=.5;game.artworkZoom=1;}
@@ -92,7 +107,7 @@ struct Reply {
     std::wstring officialStatus,officialProvider;
 };
 struct Image { std::vector<unsigned char> png; uint32_t width=0,height=0; };
-enum class Operation { Search, Covers, Resolve, CurrentImage, Image, LibraryImages, RenderArtwork };
+enum class Operation { Search, Covers, Resolve, CurrentImage, Image, LibraryImages, RenderArtwork, CoverImagesComplete };
 struct Request {
     Operation operation = Operation::Search;
     uint32_t request = 0, gameId = 0, coverId = 0, page = 0;

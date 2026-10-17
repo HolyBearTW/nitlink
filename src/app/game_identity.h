@@ -1,5 +1,7 @@
 #pragma once
 
+#include <windows.h>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -30,6 +32,26 @@ inline bool IsLocale(std::wstring_view locale) {
 }
 inline bool IsCoverLanguage(std::wstring_view language) {
     return IsLocale(language) || language == L"ja-JP" || language == L"zxx";
+}
+inline std::wstring LocalizedGameName(std::wstring_view original, std::wstring_view display,
+    std::wstring_view locale, std::wstring_view language = {}) {
+    const auto hasHan=[](std::wstring_view text){return std::any_of(text.begin(),text.end(),[](wchar_t c){
+        return (c>=0x3400&&c<=0x9fff)||(c>=0xf900&&c<=0xfaff);
+    });};
+    // SGDB's original name is the English fallback. A Chinese fallback from
+    // upstream must never be stored as an English or German localized title.
+    if((locale==L"en-US"||locale==L"de-DE")&&(language.starts_with(L"zh")||hasHan(display)))return std::wstring(original);
+    if(locale==L"zh-CN"&&!display.empty()&&display.size()<=1024){
+        // Repair older cached Traditional-Chinese fallbacks by script
+        // conversion, not per-game aliases or an invented translation.
+        const auto length=static_cast<int>(display.size());
+        const int count=LCMapStringEx(L"zh-CN",LCMAP_SIMPLIFIED_CHINESE,display.data(),length,nullptr,0,nullptr,nullptr,0);
+        if(count>0){std::wstring simplified(count,L'\0');
+            if(LCMapStringEx(L"zh-CN",LCMAP_SIMPLIFIED_CHINESE,display.data(),length,simplified.data(),count,nullptr,nullptr,0)==count)return simplified;
+        }
+        return std::wstring(original);
+    }
+    return std::wstring(display.empty()?original:display);
 }
 inline bool ValidText(std::wstring_view text, size_t max = 256) {
     if (text.size() > max) return false;
@@ -169,7 +191,7 @@ struct SavedGame : ArtworkMetadata {
     std::wstring DisplayName(std::wstring_view locale) const {
         if (!customName.empty()) return customName;
         const auto it = displayNames.find(std::wstring(locale));
-        return it != displayNames.end() && !it->second.empty() ? it->second : name;
+        return LocalizedGameName(name,it!=displayNames.end()?std::wstring_view(it->second):std::wstring_view{},locale);
     }
 };
 inline bool ValidSavedGame(std::string_view key, const SavedGame& game) {
