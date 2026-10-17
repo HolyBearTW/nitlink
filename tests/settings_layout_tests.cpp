@@ -837,7 +837,7 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
         return text.includes('D3D11') && text.includes('P010 / NV12 / BGRA') && text.includes('HDR10') && text.includes('VRR') &&
             text.includes(window.NitLinkLocales['zh-TW']['about.holyBearDisclaimer']) &&
             !text.includes('1.2.4-holybear') && !text.includes('v1.2.5-holybear') &&
-            contributors.includes('CN_115 (@CN115)') && contributors.includes('聖小熊 (@HolyBearTW)') && contributors.includes('Noka123') &&
+            contributors.includes('CN_115 (@CN115)') && contributors.includes('聖小熊 (@HolyBearTW)') && contributors.includes('Noka123 (@Noka123)') &&
             !!document.querySelector('#about-contributors-body a[href="https://github.com/HolyBearTW"]') &&
             !!document.querySelector('#about-contributors-body a[href="https://github.com/CN115"]') &&
             !!document.querySelector('#about-contributors-body a[href="https://github.com/Noka123"]') &&
@@ -889,7 +889,8 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
                   pane.scrollWidth <= pane.clientWidth && document.documentElement.scrollWidth <= innerWidth &&
                   document.querySelector('#about-details-summary').textContent === locale['about.technicalInformation'] &&
                   document.querySelector('#about-contributors-summary').textContent === locale['about.contributors'] &&
-                  document.querySelector('[data-i18n="about.noka123Contribution"]').textContent === locale['about.noka123Contribution'] &&
+                  document.querySelector('[data-contributor="Noka123"]').parentElement.innerText.includes('Noka123 (@Noka123)') &&
+                  !document.querySelector('[data-i18n="about.noka123Contribution"]') &&
                   document.querySelector('#holy-bear-update-status').textContent === locale['update.available'].replace('{version}', '1.2.4.1-holybear') &&
                   document.querySelector('#holy-bear-release-link').href.endsWith('/v1.2.4.1-holybear');
           })())JS") == L"true", "Full and both Docked modes stack localized disclosures without clipping at 1080p and 1440p");
