@@ -94,14 +94,30 @@ bool ValidImage(const std::vector<unsigned char>& bytes, const std::wstring& mim
 }
 
 std::wstring DiscordImageProxyPath(std::string_view proxyImage, std::string_view original) {
-    if (original.size() > 512 || !Games::IsCoverUrl(std::wstring(original.begin(), original.end())) ||
+    if (!IsDiscordCoverUrl(std::wstring(original.begin(), original.end())) ||
         !proxyImage.starts_with("mp:external/")) return {};
     proxyImage.remove_prefix(12);
     const auto slash = proxyImage.find('/');
     if (slash == proxyImage.npos || slash == 0 || slash > 128 ||
         !std::all_of(proxyImage.begin(), proxyImage.begin()+slash, [](char c) {
             return (c>='a'&&c<='z') || (c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='-' || c=='_';
-        }) || proxyImage.substr(slash) != "/https/" + std::string(original.substr(8))) return {};
+        })) return {};
+    const auto target = proxyImage.substr(slash);
+    if (target != "/https/" + std::string(original.substr(8))) {
+        // Discord can move the exact, percent-encoded query into a separate
+        // path segment before /https/. Match it to our original URL byte for
+        // byte; never accept a different source, query, or arbitrary redirect.
+        const auto query = original.find('?');
+        if (query == original.npos) return {};
+        constexpr char hex[] = "0123456789ABCDEF";
+        std::string encoded;
+        for (const unsigned char c : original.substr(query)) {
+            if ((c>='a'&&c<='z') || (c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='-' || c=='_' || c=='.' || c=='~')
+                encoded.push_back(static_cast<char>(c));
+            else { encoded.push_back('%'); encoded.push_back(hex[c>>4]); encoded.push_back(hex[c&15]); }
+        }
+        if (target != "/" + encoded + "/https/" + std::string(original.substr(8, query-8))) return {};
+    }
     return L"/external/" + std::wstring(proxyImage.begin(), proxyImage.end());
 }
 

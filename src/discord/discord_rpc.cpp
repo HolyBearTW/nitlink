@@ -193,7 +193,7 @@ void DiscordRPC::SetActivity(const std::wstring& details,
     const auto startUnix=std::chrono::duration_cast<std::chrono::seconds>(startTime.time_since_epoch()).count();
     const auto normalizedText=largeImageText.size()<=128 ? GetDiscordActivityField(largeImageText) : std::wstring_view{};
     const std::wstring imageUrl(largeImageKey.begin(), largeImageKey.end());
-    const bool external = largeImageKey.size()<=300 && Games::IsCoverUrl(imageUrl);
+    const bool external = IsDiscordCoverUrl(imageUrl);
     const bool asset = !largeImageKey.empty() && largeImageKey.size()<=64 && !largeImageKey.starts_with("sgdb-") &&
         !std::all_of(largeImageKey.begin(),largeImageKey.end(),[](char c){return c>='0'&&c<='9';}) &&
         std::all_of(largeImageKey.begin(),largeImageKey.end(),[](char c){return(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';});

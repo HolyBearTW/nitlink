@@ -20,6 +20,11 @@ unsigned checks=0;
 void Check(bool ok, const char* message) { ++checks;if (!ok) throw std::runtime_error(message); }
 constexpr const char* Image="https://cdn2.steamgriddb.com/grid/72654158f52bf25f9a8101f78aceaa2f.jpg";
 constexpr const char* Proxy="mp:external/test-token/https/cdn2.steamgriddb.com/grid/72654158f52bf25f9a8101f78aceaa2f.jpg";
+constexpr const char* TaiwanPath="images.ctfassets.net/o5v89n4kg6h4/700100001307956ddd67898fb511f1832fdb42e339b7fb/6819da98d844cc69d3f34a5cabcf1bb4/650108130ba904b8d6407541d2ff3a996808b88745e808477ba03fa408aabb1e.jpg";
+const std::string TaiwanImage=std::string("https://")+TaiwanPath+"?w=400&fm=webp";
+const std::string TaiwanProxy=std::string("mp:external/test-token/%3Fw%3D400%26fm%3Dwebp/https/")+TaiwanPath;
+const std::string TaiwanPadded=std::string("https://")+TaiwanPath+"?w=512&h=512&fit=pad&bg=rgb:181d24&fm=png";
+const std::string TaiwanPaddedProxy=std::string("mp:external/test-token/%3Fw%3D512%26h%3D512%26fit%3Dpad%26bg%3Drgb%3A181d24%26fm%3Dpng/https/")+TaiwanPath;
 constexpr const char* SquareFallback1="https://cdn2.steamgriddb.com/grid/11111111111111111111111111111111.jpg";
 constexpr const char* SquareFallback1Proxy="mp:external/fallback-one/https/cdn2.steamgriddb.com/grid/11111111111111111111111111111111.jpg";
 constexpr const char* SquareFallback2="https://cdn2.steamgriddb.com/grid/22222222222222222222222222222222.png";
@@ -100,6 +105,43 @@ void TestSuccessfulNullEvent() {
     rpc.SetActivity(L"王國之淚",L"1920×1080 · 60 FPS",Started,Image,L"王國之淚",L"Switch 2");
     Sleep(2200);DWORD available=0;
     Check(PeekNamedPipe(pipe.server,nullptr,0,nullptr,&available,nullptr)&&available==0,"unchanged state does not resend activity");
+    rpc.Disconnect();
+}
+void TestQueryProxyAndExistingCdnPadding() {
+    // This is the query-segment layout captured from the real Discord reply.
+    Check(DiscordImageProxyPath(TaiwanProxy,TaiwanImage)==L"/external/"+std::wstring(winrt::to_hstring(TaiwanProxy.substr(12))),"captured Nintendo query proxy is accepted without changing its source");
+    Check(!DiscordImageProxyPath(TaiwanPaddedProxy,TaiwanPadded).empty(),"exact existing CDN padding query is preserved");
+    Check(DiscordImageProxyPath(TaiwanProxy,TaiwanPadded).empty(),"original and padded images are never confused");
+    for(const auto* query:{"%3Fw%3D401%26fm%3Dwebp", "%3Ffm%3Dwebp%26w%3D400", "%3Fw%253D400%26fm%3Dwebp", "%3Fw%3D400%26fm%3Dwebp%26url%3Dhttps%3A%2F%2Fevil.example", "../%3Fw%3D400%26fm%3Dwebp"}) {
+        const auto proxy=std::string("mp:external/test-token/")+query+"/https/"+TaiwanPath;
+        Check(DiscordImageProxyPath(proxy,TaiwanImage).empty(),"changed, double-encoded or injected queries are rejected");
+    }
+    Check(DiscordImageProxyPath(TaiwanProxy+"/extra",TaiwanImage).empty(),"extra proxy path rejected");
+    Games::SavedGame game;game.coverUrl=std::wstring(winrt::to_hstring(TaiwanImage));game.coverShape=L"landscape";
+    Check(DiscordCoverImage(&game,true)==TaiwanPadded,"original Nintendo landscape uses an existing public square padding URL");
+    game.artworkMode=L"fit";
+    Check(DiscordCoverImage(&game,true)==TaiwanPadded,"complete-image mode keeps the original content without a local upload");
+    game.artworkMode=L"crop";
+    Check(DiscordCoverImage(&game,true)==TaiwanImage,"custom local crop is never falsely claimed to be remotely hosted");
+    game.artworkMode=L"original";game.coverShape=L"square";
+    Check(DiscordCoverImage(&game,true)==TaiwanImage,"an existing square image needs no padding");
+    Check(TaiwanPadded.size()<=300 && IsDiscordCoverUrl(std::wstring(winrt::to_hstring(TaiwanPadded))),"public square URL fits the existing Discord length limit");
+    Check(!Games::IsCoverUrl(std::wstring(winrt::to_hstring(TaiwanPadded))),"Discord preset does not broaden library or WebView URL validation");
+    for(const auto* suffix:{"?w=1024&h=1024&fit=pad&bg=rgb:181d24&fm=png", "?w=512&h=512&fit=fill&bg=rgb:181d24&fm=png", "?w=512&h=512&fit=pad&bg=rgb:181d24&fm=png#extra", "?w=512&h=512&fit=pad&bg=rgb:181d24&fm=png&url=https://evil.example"})
+        Check(!IsDiscordCoverUrl(std::wstring(winrt::to_hstring(std::string("https://")+TaiwanPath+suffix))),"only the single bounded CDN preset is allowed");
+    const auto rejectSource=[&](std::string source){Check(!IsDiscordCoverUrl(std::wstring(winrt::to_hstring(source))),"wrong authority or Contentful space rejected");};
+    rejectSource("http://"+TaiwanPadded.substr(8));
+    rejectSource("https://evil.example/"+TaiwanPadded.substr(8));
+    auto wrongSpace=TaiwanPadded;wrongSpace.replace(wrongSpace.find("o5v89n4kg6h4"),12,"other-space1");rejectSource(wrongSpace);
+    Pipe pipe;DiscordRPC rpc;pipe.Connect(rpc);std::atomic<unsigned> probes=0;
+    DiscordRPCTestAccess::SetProbe(rpc,[&](auto proxy,auto original,HANDLE){
+        ++probes;
+        return DiscordImageCheck{DiscordImageProxyPath(proxy,original).empty()?DiscordImageCheckState::InvalidImage:DiscordImageCheckState::Available,200,0,{}};
+    });
+    rpc.SetActivity(L"時之笛",L"signal",Started,TaiwanPadded,L"時之笛",L"Switch 2");
+    const auto request=pipe.Receive();CheckImage(request,TaiwanPadded.c_str());pipe.Accept(request,TaiwanPaddedProxy.c_str());
+    WaitStatus(rpc,L"externalAvailable");
+    Check(probes==1&&rpc.GetImageSnapshot().url==TaiwanPadded&&!rpc.GetImageSnapshot().usingFallback,"query proxy acknowledgement preserves the chosen source and timestamp");
     rpc.Disconnect();
 }
 void TestMalformedReplyWorkerRecovery() {
@@ -254,13 +296,33 @@ int LiveProbe() {
     }
     rpc.ClearActivity();Sleep(2200);rpc.Disconnect();return 0;
 }
+int LiveSingleImage(const std::string& url) {
+    Check(IsDiscordCoverUrl(std::wstring(winrt::to_hstring(url))),"live image must satisfy the production URL policy");
+    DiscordRPC rpc;Check(rpc.Connect("1505211372286246944"),"live Discord connected");
+    rpc.SetActivity(L"NitLink complete-cover check",L"Existing public image; no upload",std::chrono::system_clock::now(),url,L"Full cover test",L"Switch 2");
+    const auto deadline=GetTickCount64()+20000;
+    while(GetTickCount64()<deadline) {
+        const std::wstring_view status=rpc.ImageStatus();
+        if(status==L"externalAvailable"||status==L"proxyFailed"||status==L"rpcError")break;
+        Sleep(50);
+    }
+    const auto snapshot=rpc.GetImageSnapshot();
+    const bool accepted=std::wstring_view(rpc.ActivityStatus())==L"accepted";
+    const bool readable=std::wstring_view(rpc.ImageStatus())==L"externalAvailable";
+    std::cout<<"large_image="<<snapshot.url<<"; rpcAccepted="<<accepted<<"; imageProxyAccessible="<<readable
+        <<"; proxyPreview="<<bool(snapshot.image)<<"; fallback="<<snapshot.usingFallback
+        <<"; error="<<winrt::to_string(rpc.ImageError())<<"; clientDisplayVerified=false\n";
+    rpc.ClearActivity();Sleep(2200);rpc.Disconnect();return accepted&&readable?0:1;
+}
 }
 int main(int argc,char** argv) {
     try {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         if(argc==2&&std::string_view(argv[1])=="--live")return LiveProbe();
+        if(argc==3&&std::string_view(argv[1])=="--live-image")return LiveSingleImage(argv[2]);
         const auto run=[](const char* name,auto test){std::cout<<"Checking "<<name<<std::endl;test();};
         run("selected URL",TestSelectionAndProxyValidation);run("window titles",TestGameWindowTitles);
+        run("captured query proxy and existing CDN padding",TestQueryProxyAndExistingCdnPadding);
         run("accepted response",TestSuccessfulNullEvent);run("worker recovery",TestMalformedReplyWorkerRecovery);
         run("name rejection",TestNameErrorKeepsImage);run("image retry",TestProxyFailureAndRetry);
         run("invalid images",TestUnresolvedAndInvalidWireImages);run("Taiwan fallback",TestTaiwanFallbackKeepsTimerAndSelection);

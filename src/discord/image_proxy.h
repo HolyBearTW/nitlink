@@ -9,14 +9,31 @@
 namespace NitLink {
 namespace Games { struct Image; }
 
+// Reuse Nintendo Taiwan's existing image CDN, with one fixed padding preset.
+// This is a public CDN URL, not a new service or an upload of a local edit.
+inline constexpr std::wstring_view DiscordTaiwanPadding =
+    L"?w=512&h=512&fit=pad&bg=rgb:181d24&fm=png";
+inline bool IsDiscordCoverUrl(std::wstring_view url) {
+    if (url.size() > 300) return false;
+    if (Games::IsCoverUrl(url)) return true;
+    if (!url.ends_with(DiscordTaiwanPadding)) return false;
+    const auto original = std::wstring(url.substr(0, url.size()-DiscordTaiwanPadding.size())) + L"?w=400&fm=webp";
+    return Games::IsNintendoTaiwanLineupImageUrl(original);
+}
+
 // A game/library ID and a WebView/cache URI are never Discord image assets.
 // The original public image remains a separate candidate for edited artwork.
 inline std::string DiscordCoverImage(const Games::SavedGame* game, bool locallyValidated) {
     if (!game || !locallyValidated || !Games::IsCoverUrl(game->coverUrl)) return {};
+    auto url = game->coverUrl;
+    if (game->coverShape != L"square" && game->artworkMode != L"crop" &&
+        Games::IsNintendoTaiwanLineupImageUrl(url))
+        url = url.substr(0, url.find(L'?')) + std::wstring(DiscordTaiwanPadding);
+    if (!IsDiscordCoverUrl(url)) return {};
     std::string image;
-    image.reserve(game->coverUrl.size());
+    image.reserve(url.size());
     // IsCoverUrl permits ASCII URLs only; game display names never take this path.
-    for (const auto code : game->coverUrl) image.push_back(static_cast<char>(code));
+    for (const auto code : url) image.push_back(static_cast<char>(code));
     return image;
 }
 

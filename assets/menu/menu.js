@@ -1405,9 +1405,13 @@
         el('game-cover-mode').textContent = current.key ? t(current.manualCover ? 'game.manualMode' : 'game.autoMode') : '';
         image(el('game-current-art'), current.image);
         const edited=current.artworkMode==='fit'||current.artworkMode==='crop';
-        const remotePreview=['externalAccepted','externalAvailable','externalPending','unavailable','probeAccepted','previewOnly','localEditOnly'].includes(current.discordImageStatus);
-        const discordArt=current.discordImage||(!current.discordUsingFallback&&remotePreview?current.image:'');
-        image(el('game-discord-art'),edited?current.image:discordArt||(!current.discordUsingFallback?'assets/nitlink.svg':''),current.discordUsingFallback&&!discordArt&&['externalPending','externalAccepted'].includes(current.discordActualImageStatus)?'loading':'empty');
+        const selectedArtwork=current.image||current.sourceImage||'';
+        // Prefer the pixels fetched from Discord's actual image proxy, including
+        // a fallback. Before that arrives, keep the selected cover visible.
+        const proxyArtwork=current.discordConnected&&current.discordActualImageStatus==='externalAvailable'
+          ?current.discordImage:'';
+        const discordPreview=proxyArtwork||selectedArtwork||(!current.key?'assets/nitlink.svg':'');
+        image(el('game-discord-art'),discordPreview,current.key&&!discordPreview?'loading':'empty');
         el('game-current-artwork-tag').hidden=!current.isOfficial;
         el('game-current-artwork-tag').textContent=edited?t(current.isOfficial?'game.derivedOfficial':'game.derivedArtwork'):current.isOfficial?t(current.language==='zh-TW'?'game.officialBadge':'game.officialArtwork')+' · '+(current.provider==='playstation-tw'?t('game.playstationTaiwan'):current.provider==='nintendo-hk-store'?t('game.hkStore'):current.provider==='nintendo-hk-eshop'?'Nintendo eShop CDN':'Nintendo Taiwan'):'';
         el('game-current-artwork-tag').hidden=!current.isOfficial&&!edited;
