@@ -1045,7 +1045,7 @@
       const el = id => document.getElementById(id);
       const query = el('game-query');
       let sequence = 0, searchRequest = 0, coverRequest = 0, debounce, searchTimer, coverTimer, coverImageTimer;
-      let current = {}, live = {}, results = [], covers = [], builtIn = [];
+      let current = {}, live = {}, results = [], covers = [];
       let library = {games:[],favorites:[],recent:[]}, librarySignature = '', renameKey = '';
       let shape = 'all', searchStatus = 'idle', coverStatus = 'idle', notice = '', suggestions = [], queriedTerms = [];
       let coverProvider='all',officialStatus='idle',officialProvider='';
@@ -1232,8 +1232,8 @@
         const orientation=width&&height?(width===height?'square':height>width?'portrait':'landscape'):cover.shape;
         const taiwan=cover.isOfficial===true&&cover.provider==='nintendo-tw';
         // These are user-facing provider defaults, not upstream verification.
-        // Keep explicit community language metadata when a source supplies it.
-        const language=taiwan?'zh-TW':cover.languageVerified?cover.language:cover.provider==='steamgriddb'?'en-US':'unknown';
+        // Keep sourced language metadata; otherwise community artwork defaults to English.
+        const language=taiwan?'zh-TW':cover.languageVerified&&cover.language?cover.language:cover.isOfficial===true?'unknown':'en-US';
         const fields=[['game.artworkSource',cover.sourceLabel||'SteamGridDB'],['game.author',taiwan?t('game.nintendoTaiwan'):cover.author||t('game.authorUnknown')],
           ['game.coverLanguage',t('game.coverLanguage.'+language)],
           ['game.artworkType',t('game.kind.'+(cover.kind||'cover'))],['game.orientation',t('game.'+(['square','portrait','landscape'].includes(orientation)?orientation:'orientationPending'))],
@@ -1505,14 +1505,6 @@
       };
       window._updateGameLive = state => {
         live = {...live, ...state};
-        if (Array.isArray(state.gameList) && JSON.stringify(builtIn) !== JSON.stringify(state.gameList)) {
-          builtIn = state.gameList; el('game-built-in').replaceChildren();
-          builtIn.forEach(game => {
-            const button = document.createElement('button'); button.type = 'button'; button.className = 'game-button';
-            button.textContent = game.title; button.addEventListener('click', () => post('setGame', game.id));
-            el('game-built-in').appendChild(button);
-          });
-        }
         renderGameUI();
       };
       window._gameEvent = event => {

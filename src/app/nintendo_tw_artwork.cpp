@@ -58,7 +58,7 @@ class OfficialSeedArtworkProvider final : public ArtworkProvider {
                     Cover cover;cover.id=Id(source,L"id");cover.url=Text(source,L"url",512);cover.thumb=cover.url;
                     cover.provider=Text(source,L"provider");cover.sourceLabel=Text(source,L"sourceLabel",128);
                     cover.language=Text(source,L"language");cover.region=Text(source,L"region");cover.kind=Text(source,L"kind");
-                    cover.shape=Text(source,L"shape");cover.languageSource=Text(source,L"sourcePage");cover.author=L"Nintendo";
+                    cover.shape=Text(source,L"shape");cover.languageSource=Text(source,L"sourcePage");
                     if(source.HasKey(L"crop")){
                         if(source.GetNamedValue(L"crop").ValueType()!=JsonValueType::Object)continue;
                         const auto crop=source.GetNamedObject(L"crop");ArtworkCrop area;
@@ -82,7 +82,9 @@ class OfficialSeedArtworkProvider final : public ArtworkProvider {
                        !source.HasKey(L"isOfficial")||source.GetNamedValue(L"isOfficial").ValueType()!=JsonValueType::Boolean||
                        !source.GetNamedBoolean(L"isOfficial")||!coverIds.insert(cover.id).second)continue;
                     cover.isOfficial=true;cover.languageVerified=!cover.language.empty();
-                    if(ps)cover.author=L"Sony Interactive Entertainment";
+                    if(tw){cover.author=L"台灣任天堂";cover.language=L"zh-TW";cover.languageVerified=true;}
+                    else if(ps)cover.author=L"Sony Interactive Entertainment";
+                    else cover.author=L"Nintendo";
                     if(game.source.empty())game.source=cover.provider;
                     game.artworkSources.push_back(std::move(cover));
                 }

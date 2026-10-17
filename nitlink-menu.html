@@ -7,11 +7,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title data-i18n="page.settings">NitLink · Settings</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
-  <script src="locales/en-US.js?v=20261017-search-art-no-crop1"></script>
-  <script src="locales/zh-TW.js?v=20261017-search-art-no-crop1"></script>
-  <script src="locales/zh-CN.js?v=20261017-search-art-no-crop1"></script>
-  <script src="locales/de-DE.js?v=20261017-search-art-no-crop1"></script>
-  <script src="assets/menu/preview-host.js?v=20261017-search-art-no-crop1"></script>
+  <script src="locales/en-US.js?v=20261018-game-artwork-metadata2"></script>
+  <script src="locales/zh-TW.js?v=20261018-game-artwork-metadata2"></script>
+  <script src="locales/zh-CN.js?v=20261018-game-artwork-metadata2"></script>
+  <script src="locales/de-DE.js?v=20261018-game-artwork-metadata2"></script>
+  <script src="assets/menu/preview-host.js?v=20261018-game-artwork-metadata2"></script>
   <style>
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400; font-display: swap; src: url('assets/menu/Archivo-400.ttf') format('truetype'); }
     @font-face { font-family: 'Archivo'; font-style: normal; font-weight: 500; font-display: swap; src: url('assets/menu/Archivo-500.ttf') format('truetype'); }
@@ -560,10 +560,6 @@
     .game-discord-text strong { display: block; color: var(--ink); margin-bottom: 3px; }
     .game-discord-text p { color: var(--ink2); }
     .game-discord-time { color: var(--ink3); }
-    .game-library { margin-top: 14px; border-top: 1px solid var(--hair); padding-top: 12px; }
-    .game-library summary { color: var(--ink2); font-size: 12px; cursor: pointer; }
-    .game-library-list { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; margin-top: 10px; }
-    .game-library-list .game-button { text-align: left; overflow-wrap: anywhere; }
     #game-fixture-banner { margin-bottom: 16px; padding: 12px; border: 1px solid #746134; border-radius: 6px; background: #302b20; }
     .game-preview-controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .game-preview-controls label { display: flex; align-items: center; gap: 6px; color: var(--ink2); font-size: 11px; }
@@ -729,7 +725,6 @@
                   <div class="game-results" id="game-results" aria-label="Search results"></div>
                   <div class="game-empty" id="game-search-empty" data-i18n="game.searchIdle"></div>
                   <div class="game-fallback" id="game-search-fallback" hidden><p class="game-note" data-i18n="game.fallbackHelp"></p><div id="game-suggestions"></div><div class="game-actions"><button type="button" class="game-button" id="game-other-name" data-i18n="game.otherName"></button></div></div>
-                  <details class="game-library"><summary data-i18n="game.builtIn"></summary><div class="game-library-list" id="game-built-in"></div></details>
                 </div>
               </article>
             </div>
@@ -1105,8 +1100,8 @@
     </div>
   </aside>
   <div id="audio-tooltip" role="tooltip" hidden></div>
-  <script src="assets/menu/artwork-editor.js?v=20261017-search-art-no-crop1"></script>
-  <script src="assets/menu/menu.js?v=20261017-search-art-no-crop1"></script>
+  <script src="assets/menu/artwork-editor.js?v=20261018-game-artwork-metadata2"></script>
+  <script src="assets/menu/menu.js?v=20261018-game-artwork-metadata2"></script>
 </body>
 
 </html>

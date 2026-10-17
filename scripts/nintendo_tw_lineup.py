@@ -77,10 +77,10 @@ def parse(body, page):
         detail = item.get('pageLinkCustom')
         if isinstance(detail, str) and detail.startswith('/tw/') and '..' not in detail and '\\' not in detail:
             product_page = ORIGIN + detail
-        covers.append({'id': identity, 'url': url, 'thumb': url, 'author': '',
+        covers.append({'id': identity, 'url': url, 'thumb': url, 'author': 'Nintendo Taiwan',
                        'provider': 'nintendo-tw', 'sourceLabel': 'Official Nintendo Taiwan',
-                       'language': '', 'languageVerified': False, 'languageSource': product_page,
-                       'region': 'TW', 'isOfficial': True, 'kind': 'logo', 'shape': 'landscape',
+                       'language': 'zh-TW', 'languageVerified': True, 'languageSource': product_page,
+                       'region': 'TW', 'isOfficial': True, 'kind': 'keyArt', 'shape': 'landscape',
                        'source': 'nintendo-tw', 'dataMode': 'real', 'synthetic': False,
                        'productTitle': title, 'productPage': product_page,
                        'productPlatform': platform, 'productRelease': ''})

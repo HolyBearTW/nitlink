@@ -4,6 +4,7 @@ from unittest.mock import patch
 import json
 from pathlib import Path
 from nintendo_tw_artwork import OFFICIAL, preferred_sources, playstation_url
+import nintendo_tw_lineup
 import preview_game_bridge as bridge
 
 COMMUNITY={'id':1,'url':'https://cdn2.steamgriddb.com/grid/72654158f52bf25f9a8101f78aceaa2f.jpg','language':None}
@@ -65,6 +66,17 @@ class ArtworkPolicyTests(unittest.TestCase):
         self.assertTrue(bridge.TW_LINEUP.image_url(valid))
         self.assertFalse(bridge.TW_LINEUP.image_url(valid.replace('images.ctfassets.net','images.ctfassets.net.evil.test')))
         self.assertFalse(bridge.TW_LINEUP.image_url(valid.replace('w=400&fm=webp','w=800&fm=webp')))
+
+    def test_taiwan_lineup_metadata_matches_official_key_art(self):
+        image='https://images.ctfassets.net/o5v89n4kg6h4/7001000013323143e1afaeac8b11f18660ebc15686256c/ff9b9a2c673b031deefe23e14af7e66c/b34d2cdc3942da8386bfba51c7f46fcf027f5a09901680b1c5a02d46cf585c51.jpg?w=400&fm=webp'
+        payload={'items':[{'region':'taiwan','title':'薩爾達傳說 王國之淚','hardwareCategory':'Nintendo Switch',
+                           'imageHero':{'url':image},'pageLinkCustom':'/tw/zelda/totk/index.html'}], 'total':1}
+        result=nintendo_tw_lineup.parse(json.dumps(payload).encode('utf-8'),0)
+        self.assertEqual(len(result['covers']),1)
+        cover=result['covers'][0]
+        self.assertEqual((cover['author'],cover['language'],cover['languageVerified'],cover['kind'],cover['shape']),
+                         ('Nintendo Taiwan','zh-TW',True,'keyArt','landscape'))
+        self.assertEqual(cover['languageSource'],'https://www.nintendo.com/tw/zelda/totk/index.html')
 
     @patch.object(bridge.TW_LINEUP,'search')
     @patch.object(bridge,'fetch_json')

@@ -275,7 +275,71 @@ void GameResultBridgeTest(WebViewSettings& host, ICoreWebView2* view,
         __gameBridgeEvents.some(event => event.kind === 'image' && event.coverIdSelected === 123 &&
             event.coverShape === 'square' && event.coverIsOfficial === false && event.page === 1)
     )JS") == L"true"; }), "covers and default-image metadata preserve JSON separators and native field types");
+    const auto beforeCoverRequest=messages.size();
     Script(view, LR"JS((() => {
+        document.querySelector('[data-tab="pane-games"]').click();
+        window._updateGameState({id:5303117,key:'sgdb-5303117',name:'The Legend of Zelda: Tears of the Kingdom',
+            displayName:'薩爾達傳說 王國之淚',locale:'zh-TW',artworkPlatform:'switch',coverId:0,
+            manualCover:false,finalImageKey:'',dataMode:'real'});
+        return true;
+    })())JS");
+    uint32_t coverRequest=0;
+    Check(PumpUntil([&] {
+        for(size_t i=beforeCoverRequest;i<messages.size();++i){
+            const auto message=NitLink::ParseSettingsMessage(messages[i]);
+            if(message&&message->action==L"getGameCovers"){coverRequest=message->request;return true;}
+        }
+        return false;
+    }), "current-game state requests its cover gallery through the native bridge");
+    NitLink::Games::Result artworkResult;
+    artworkResult.operation=NitLink::Games::Operation::Covers;artworkResult.request=coverRequest;
+    artworkResult.gameId=5303117;artworkResult.locale=L"zh-TW";artworkResult.shape=L"all";
+    artworkResult.reply.status=L"ok";
+    const auto addCommunity=[&](uint32_t id,std::wstring provider,std::wstring language,bool verified){
+        NitLink::Games::Cover item;item.id=id;item.provider=std::move(provider);item.sourceLabel=L"Community artwork";
+        item.shape=L"square";item.language=std::move(language);item.languageVerified=verified;
+        if(verified)item.languageSource=L"https://artwork.example/source";
+        artworkResult.reply.covers.push_back(std::move(item));
+    };
+    addCommunity(9001,L"steamgriddb",L"",false);
+    addCommunity(9002,L"community-catalogue",L"zh-TW",false);
+    addCommunity(9003,L"community-catalogue",L"zh-CN",true);
+    NitLink::Games::Cover taiwanCover;taiwanCover.id=9004;taiwanCover.provider=L"nintendo-tw";
+    taiwanCover.sourceLabel=L"Official Nintendo Taiwan";taiwanCover.author=L"台灣任天堂";
+    taiwanCover.region=L"TW";taiwanCover.isOfficial=true;taiwanCover.kind=L"keyArt";
+    taiwanCover.shape=L"landscape";taiwanCover.language=L"zh-TW";taiwanCover.languageVerified=true;
+    taiwanCover.languageSource=L"https://www.nintendo.com/tw/zelda/totk/index.html";
+    artworkResult.reply.covers.push_back(taiwanCover);
+    Check(host.PostMessage(NitLink::SerializeGameResult(artworkResult)), "gallery with sourced and default artwork languages is accepted");
+    Check(PumpUntil([&] { return Script(view,L"document.querySelectorAll('#game-gallery .game-cover-info').length === 4") == L"true"; }),
+          "gallery renders community and Nintendo Taiwan cover details controls");
+    const auto openDetails=[&](uint32_t coverId){
+        const auto script=L"document.getElementById('game-cover-details').open&&document.getElementById('game-cover-details').close();"
+            L"document.querySelector('#game-gallery [data-cover-id=\""+std::to_wstring(coverId)+
+            L"\"]').closest('.game-cover-tile').querySelector('.game-cover-info').click(); true";
+        return Script(view,script.c_str());
+    };
+    const auto detailValue=[&](std::wstring_view label){
+        const auto script=L"(()=>{const row=[...document.querySelectorAll('#game-cover-detail-fields dt')].find(term=>term.textContent==='"+
+            std::wstring(label)+L"');return row?.nextElementSibling.textContent||''})()";
+        return Script(view,script.c_str());
+    };
+    openDetails(9001);const auto defaultSgdbLanguage=detailValue(L"語言");
+    openDetails(9002);const auto defaultCommunityLanguage=detailValue(L"語言");
+    openDetails(9003);const auto sourcedCommunityLanguage=detailValue(L"語言");
+    openDetails(9004);
+    const auto taiwanMetadata=detailValue(L"作者")+L"|"+detailValue(L"語言")+L"|"+detailValue(L"素材類型");
+    if(defaultSgdbLanguage!=L"\"英文\""||defaultCommunityLanguage!=L"\"英文\""||
+       sourcedCommunityLanguage!=L"\"簡中\""||taiwanMetadata!=L"\"台灣任天堂\"|\"繁體中文\"|\"官方主視覺\"")
+        std::wcerr<<L"Artwork detail metadata observed: sgdb="<<defaultSgdbLanguage<<L" community="
+            <<defaultCommunityLanguage<<L" sourced="<<sourcedCommunityLanguage<<L" Taiwan="<<taiwanMetadata<<L'\n';
+    Check(defaultSgdbLanguage==L"\"英文\""&&defaultCommunityLanguage==L"\"英文\""&&
+          sourcedCommunityLanguage==L"\"簡中\""&&taiwanMetadata==L"\"台灣任天堂\"|\"繁體中文\"|\"官方主視覺\"",
+          "community artwork defaults to English unless a source verifies its language; Taiwan official metadata stays localized and uses key-art type");
+    Script(view, LR"JS((() => {
+        if(document.getElementById('game-cover-details').open)document.getElementById('game-cover-details').close();
+        window._updateGameState({id:0,key:'',name:'',displayName:'',locale:'zh-TW',artworkPlatform:'unknown',coverId:0,
+            manualCover:false,finalImageKey:'',dataMode:'real'});
         window._gameEvent = window.__originalGameEvent;
         document.getElementById('game-query').value = '';
         document.getElementById('game-query').dispatchEvent(new Event('input'));
@@ -532,6 +596,16 @@ int main(int argc, char** argv) {
         if (!readyViaBridge || messages.empty()) {
             std::wcerr << L"WebView2 packaged-menu startup failure: "
                        << (startupFailure.empty() ? L"ready message timed out" : startupFailure) << L'\n';
+            if (auto* diagnosticView=WebViewSettingsTestAccess::View(host)) {
+                std::wcerr << L"Packaged page diagnostics: " << Script(diagnosticView, LR"JS(JSON.stringify({
+                    readyState:document.readyState, menu:!!document.getElementById('game-search'),
+                    scripts:[...document.scripts].map(script=>({src:script.src,loaded:script.dataset.loaded||''})),
+                    resources:performance.getEntriesByType('resource').filter(item=>/\.js/.test(item.name))
+                        .map(item=>({url:item.name,status:item.responseStatus||0,duration:item.duration}))
+                }))JS") << L'\n';
+            }
+            if(!javascriptExceptions.empty())for(const auto& exception:javascriptExceptions)
+                std::wcerr << L"JavaScript exception: " << exception << L'\n';
         }
         Check(readyViaBridge && !messages.empty(), "packaged menu ready via real bridge");
         Check(NitLink::ParseSettingsMessage(messages.front()).has_value(), "ready payload schema");
@@ -540,6 +614,11 @@ int main(int argc, char** argv) {
               "production settings serializer accepted by WebView2 PostWebMessageAsJson");
         auto* view = WebViewSettingsTestAccess::View(host);
         Check(view != nullptr, "secured WebView available");
+        Check(Script(view, L"document.getElementById('game-built-in') === null && "
+            L"!!document.getElementById('game-query') && !!document.getElementById('game-search') && "
+            L"window.NitLinkLocales['zh-TW']['game.kind.keyArt'] === '官方主視覺' && "
+            L"window.NitLinkLocales['zh-TW']['game.coverLanguage.zh-TW'] === '繁體中文'") == L"true",
+            "built-in selector is removed; search and Taiwan artwork metadata strings remain");
         auto view2 = wil::com_ptr<ICoreWebView2>(view).try_query<ICoreWebView2_2>();
         if (view2) {
             wil::com_ptr<ICoreWebView2Environment> env;

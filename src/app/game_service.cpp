@@ -318,9 +318,8 @@ Reply NintendoTaiwanCovers(std::wstring_view query,uint32_t page,const Cancelled
         cover.id=4200000100u+hash%(0xffffffffu-4200000100u);
         while(!ids.insert(cover.id).second)++cover.id;
         cover.provider=L"nintendo-tw";cover.sourceLabel=L"Official Nintendo Taiwan";cover.region=L"TW";
-        cover.isOfficial=true;cover.kind=L"logo";cover.shape=L"landscape";cover.languageSource=cover.productPage;
-        // A Taiwan listing proves origin, not the language printed in an image.
-        cover.language.clear();cover.languageVerified=false;
+        cover.author=L"台灣任天堂";cover.isOfficial=true;cover.kind=L"keyArt";cover.shape=L"landscape";
+        cover.language=L"zh-TW";cover.languageVerified=true;cover.languageSource=cover.productPage;
         out.covers.push_back(std::move(cover));
     }
     out.status=out.covers.empty()?L"empty":L"ok";

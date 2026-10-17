@@ -49,7 +49,7 @@ inline bool CanReceiveMessage(std::wstring_view source, std::wstring_view curren
 }
 inline const Resource* FindResource(std::wstring_view uri) {
     for (const auto& resource : Resources) if (resource.uri == uri) return &resource;
-    constexpr std::wstring_view revision=L"?v=20261017-search-art-no-crop1";
+    constexpr std::wstring_view revision=L"?v=20261018-game-artwork-metadata2";
     if(uri.ends_with(revision)){
         uri.remove_suffix(revision.size());
         for(const auto& resource:Resources)if(resource.kind==ResourceKind::Script&&resource.uri==uri)return &resource;

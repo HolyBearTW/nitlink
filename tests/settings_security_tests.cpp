@@ -319,7 +319,7 @@ int main() {
     }
     for (const auto& resource : Resources) Expect(FindResource(resource.uri) == &resource, "packaged resource");
     Expect(FindResource(L"https://nitlink.invalid/locales/de-DE.js") != nullptr,"German locale resource is allowlisted");
-    Expect(FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=20261017-search-art-no-crop1")!=nullptr,"fixed script revision maps to packaged editor");
+    Expect(FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=20261018-game-artwork-metadata2")!=nullptr,"fixed script revision maps to packaged editor");
     Expect(!FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=other"),"unapproved revision rejected");
     Expect(ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"crop","x":0.2,"y":0.8,"zoom":1.5}})").has_value(),"bounded artwork recipe bridge");
     Expect(!ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"crop","x":-1,"y":0.8,"zoom":1.5}})"),"negative crop rejected");
