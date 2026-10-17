@@ -60,7 +60,7 @@ private:
 
     // Identity and live signal metadata are independent. Label changes also
     // refresh Discord, preserving the current activity's start time.
-    void UpdateWindowTitle();
+    void UpdateWindowTitle(bool refreshDiscord = true);
     std::wstring GetCurrentGameDisplayName() const;
     std::wstring GetGameArtworkPlatform() const;
     void RefreshGameArtworkContext();

@@ -32,8 +32,10 @@ inline std::wstring FormatHdmiSourceTiming(const HdmiSourceTiming& timing) {
 
 inline std::wstring ComposeHdmiWindowTitle(std::wstring_view identity,
     std::wstring_view signal, std::wstring_view confirmedRange,
-    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown) {
+    HdmiSourceVrrState sourceVrr = HdmiSourceVrrState::Unknown,
+    std::wstring_view gameTitle = {}) {
     std::wstring title = L"NitLink";
+    if (!gameTitle.empty()) title += L" - " + std::wstring(gameTitle);
     if (!identity.empty()) title += L" - " + std::wstring(identity);
     if (!signal.empty()) title += L" - " + std::wstring(signal);
     if (!confirmedRange.empty()) title += L" [" + std::wstring(confirmedRange) + L"]";

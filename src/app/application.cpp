@@ -5256,7 +5256,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         auto* game=EnsureSavedGame(key);if(!game){notice(L"invalidChoice");return true;}
         game->customName=message.text;
         if(!m_config->Save("nitlink.json"))notice(L"saveFailed");else notice(L"nameSaved");
-        if(key==m_config->currentGameId){UpdateDiscordForCurrentGame(true);PushCurrentGameState();}
+        if(key==m_config->currentGameId){UpdateWindowTitle(false);UpdateDiscordForCurrentGame(true);PushCurrentGameState();}
         PushGameLibrary();return true;
     }
     if (action == L"searchGames") {
@@ -5309,6 +5309,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
                     m_gameService->Submit(std::move(image));
                 }
         }
+        UpdateWindowTitle(false);
         UpdateDiscordForCurrentGame(!changed);
         if (!m_config->Save("nitlink.json")) notice(L"saveFailed");
         PushSettingsState();
@@ -5319,6 +5320,7 @@ bool Application::HandleGameMessage(const SettingsMessage& message)
         const bool changed = !m_config->currentGameId.empty();
         m_gameService->Cancel(); m_config->currentGameId.clear(); m_currentGameImage.clear();m_currentGameSourceImage.clear(); m_gameService->PinImage({});
         m_gameCovers.clear(); m_coverImages.clear(); m_coverGameId = 0;
+        UpdateWindowTitle(false);
         UpdateDiscordForCurrentGame(!changed);
         if (!m_config->Save("nitlink.json")) notice(L"saveFailed");
         PushSettingsState();
@@ -5409,6 +5411,7 @@ void Application::ConsumeGameResults()
         };
         for(const auto& game:result.reply.games)rememberFallback(game.id,game.artworkSources);
         if(result.gameId)rememberFallback(result.gameId,result.reply.artworkSources);
+        const auto previousGameTitle=GetCurrentGameDisplayName();
         bool changed = false;
         if(result.operation==Games::Operation::RenderArtwork){
             const auto found=m_config->onlineGames.find(m_config->currentGameId);
@@ -5501,7 +5504,9 @@ void Application::ConsumeGameResults()
             }
         }
         if (changed) {
-            m_config->Save("nitlink.json"); UpdateDiscordForCurrentGame(true); PushCurrentGameState();
+            m_config->Save("nitlink.json");
+            if(previousGameTitle!=GetCurrentGameDisplayName())UpdateWindowTitle(false);
+            UpdateDiscordForCurrentGame(true); PushCurrentGameState();
         }
         if (m_webviewSettings && result.operation != Games::Operation::Resolve)
             m_webviewSettings->PostMessage(SerializeGameResult(result));
@@ -5787,19 +5792,20 @@ void Application::RefreshGameArtworkContext()
     // Saved/manual artwork, current game, quality profiles and timer are retained.
 }
 
-void Application::UpdateWindowTitle()
+void Application::UpdateWindowTitle(bool refreshDiscord)
 {
     if (!m_window) return;
     RefreshGameArtworkContext();
 
     m_lastHdmiDisplayRange = GetConfirmedHdmiRange();
     const auto title = ComposeHdmiWindowTitle(
-        GetEffectiveHdmiSourceLabel(), GetLiveHdmiSignalLabel(), GetConfirmedHdmiRangeLabel(),
-        GetHdmiSourceVrrState());
+        GetEffectiveHdmiSourceLabel(), GetLiveHdmiSignalLabel(),
+        m_lastHdmiDisplayRange==HdmiConfirmedRange::Hdr?GetConfirmedHdmiRangeLabel():L"",
+        GetHdmiSourceVrrState(), GetCurrentGameDisplayName());
     if (title == m_lastHdmiDisplayTitle) return;
     m_lastHdmiDisplayTitle = title;
     m_window->SetTitle(title);
-    UpdateDiscordForCurrentGame(/*preserveStartTime=*/ true);
+    if(refreshDiscord)UpdateDiscordForCurrentGame(/*preserveStartTime=*/ true);
 }
 
 std::wstring Application::GetLiveHdmiSignalLabel() const

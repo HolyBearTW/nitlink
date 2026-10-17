@@ -218,6 +218,20 @@ void TestUnsupportedLocalDecoderRetainsRemoteImage() {
     Check(PeekNamedPipe(pipe.server,nullptr,0,nullptr,&available,nullptr)&&!available,"unsupported local decoding causes no resend or fallback loop");
     rpc.Disconnect();
 }
+void TestGameWindowTitles() {
+    Games::SavedGame game;game.name=L"The Legend of Zelda: Tears of the Kingdom";
+    game.displayNames[L"zh-TW"]=L"薩爾達傳說：王國之淚";game.displayNames[L"zh-CN"]=L"塞尔达传说：王国之泪";
+    Check(game.DisplayName(L"zh-TW")==L"薩爾達傳說：王國之淚"&&game.DisplayName(L"en-US")==game.name,"localized name then original fallback");
+    const auto title=ComposeHdmiWindowTitle(L"Switch 2",L"1920x1080 @ 60Hz",L"HDR",HdmiSourceVrrState::Enabled,game.DisplayName(L"zh-TW"));
+    Check(title==L"NitLink - 薩爾達傳說：王國之淚 - Switch 2 - 1920x1080 @ 60Hz [HDR] [VRR]","exact requested game/source/timing order");
+    game.customName=L"ゼルダの伝説 🎮 熊貓";
+    Check(game.DisplayName(L"zh-TW")==game.customName&&game.DisplayName(L"zh-CN")==game.customName,"custom Unicode title has highest priority");
+    Check(ComposeHdmiWindowTitle(L"Switch 2",{}, {},HdmiSourceVrrState::Unknown,game.customName)==L"NitLink - ゼルダの伝説 🎮 熊貓 - Switch 2","unknown timing/range/VRR omitted without losing Unicode");
+    Check(ComposeHdmiWindowTitle({}, {}, {})==L"NitLink","unknown everything yields bare product name");
+    Check(ComposeHdmiWindowTitle(L"PS5",L"3840x2160 @ 59.94Hz",{},HdmiSourceVrrState::Disabled,L"A game")==L"NitLink - A game - PS5 - 3840x2160 @ 59.94Hz","actual fractional HDMI timing retained and SDR/disabled VRR omitted");
+    const std::wstring longName(512,L'熊');
+    Check(ComposeHdmiWindowTitle({}, {}, {},HdmiSourceVrrState::Unknown,longName)==L"NitLink - "+longName,"window title never truncates the game string");
+}
 int LiveProbe() {
     DiscordRPC rpc;Check(rpc.Connect("1505211372286246944"),"live Discord connected");
     const auto start=std::chrono::system_clock::now();
@@ -246,7 +260,7 @@ int main(int argc,char** argv) {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         if(argc==2&&std::string_view(argv[1])=="--live")return LiveProbe();
         const auto run=[](const char* name,auto test){std::cout<<"Checking "<<name<<std::endl;test();};
-        run("selected URL",TestSelectionAndProxyValidation);
+        run("selected URL",TestSelectionAndProxyValidation);run("window titles",TestGameWindowTitles);
         run("accepted response",TestSuccessfulNullEvent);run("worker recovery",TestMalformedReplyWorkerRecovery);
         run("name rejection",TestNameErrorKeepsImage);run("image retry",TestProxyFailureAndRetry);
         run("invalid images",TestUnresolvedAndInvalidWireImages);run("Taiwan fallback",TestTaiwanFallbackKeepsTimerAndSelection);
