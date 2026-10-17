@@ -586,4 +586,31 @@ if(BUILD_TESTING)
     target_link_libraries(NitLinkGc553ProSourceMetadataTests PRIVATE ole32 oleaut32 strmiids)
     add_test(NAME gc553pro_source_metadata_poller COMMAND NitLinkGc553ProSourceMetadataTests)
     set_tests_properties(gc553pro_source_metadata_poller PROPERTIES TIMEOUT 30)
+
+    # Full labels every registered test; Smoke and Release are focused subsets.
+    get_property(_nitlink_all_tests DIRECTORY PROPERTY TESTS)
+    if(_nitlink_all_tests)
+        set_property(TEST ${_nitlink_all_tests} APPEND PROPERTY LABELS full)
+    endif()
+    set_property(TEST
+        frame_differ_adaptive_pacing
+        audio_native_conversion
+        audio_clock_recovery
+        audio_packet_drift
+        native_input_security
+        discord_reply_json
+        settings_security
+        online_game_selection
+        artwork_platform_policy
+        webview_runtime_security
+        frame_rate_stats
+        present_cap_policy
+        gc553pro_hdr_source
+        gc553pro_raw_timing
+        gc553pro_source_vrr
+        APPEND PROPERTY LABELS smoke)
+    set_property(TEST
+        holybear_release_notes
+        holybear_tag_security
+        APPEND PROPERTY LABELS release)
 endif()
