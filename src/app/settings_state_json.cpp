@@ -149,7 +149,13 @@ std::wstring SerializeGameResult(const Games::Result& result)
          << L",\"image\":" << quoted(result.imageUri) << L",\"dataMode\":\"real\",\"total\":" << result.reply.totalCount
          << L",\"workerCount\":"<<result.reply.workerCount
          << L",\"officialStatus\":"<<quoted(result.reply.officialStatus)
-         << L",\"page\":" << result.reply.page << L",\"hasMore\":" << (result.reply.hasMore ? L"true" : L"false") << L",\"games\":[";
+         << L",\"officialProvider\":"<<quoted(result.reply.officialProvider);
+    if(result.operation==Games::Operation::Image&&!result.coverId&&!result.reply.covers.empty()){
+        const auto& cover=result.reply.covers.front();
+        json<<L",\"coverIdSelected\":"<<cover.id<<L",\"coverProvider\":"<<quoted(cover.provider)
+            <<L",\"coverShape\":"<<quoted(cover.shape)<<L",\"coverIsOfficial\":"<<(cover.isOfficial?L"true":L"false");
+    }
+    json<<L",\"page\":" << result.reply.page << L",\"hasMore\":" << (result.reply.hasMore ? L"true" : L"false") << L",\"games\":[";
     for (size_t i = 0; i < result.reply.games.size(); ++i) {
         if (i) json << L",";
         const auto& g = result.reply.games[i];

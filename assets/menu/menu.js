@@ -1307,7 +1307,7 @@
         post('searchGames', {query: text, request: requested});
         searchTimer = setTimeout(() => {
           if (requested === searchRequest) { searchStatus = 'timeout'; updateStatus(); }
-        }, 15000);
+        }, 30000); // Primary (12s) plus bounded fallback searches (12s), including bridge delivery.
       };
       query.addEventListener('input', () => {
         clearTimeout(debounce); clearTimeout(searchTimer);

@@ -2,23 +2,18 @@
   "version": 1,
   "groups": [
     {
-      "aliases": ["薩爾達", "薩爾達傳說", "塞尔达", "塞尔达传说", "ゼルダ", "Zelda"],
+      "aliases": ["俠盜獵車手", "俠盜獵車手系列", "俠盜獵車手5", "俠盜獵車手 5", "俠盜獵車手V", "俠盜獵車手 V", "俠盜獵車手線上模式", "俠盜獵車手 線上模式", "侠盗猎车手", "侠盗猎车手系列", "侠盗猎车手5", "侠盗猎车手 5", "侠盗猎车手V", "侠盗猎车手 V", "GTA", "Grand Theft Auto"],
       "queries": [
-        "The Legend of Zelda",
-        "Zelda",
-        "Hyrule Warriors",
-        "The Legend of Zelda: Breath of the Wild",
-        "The Legend of Zelda: Tears of the Kingdom"
+        "Grand Theft Auto",
+        "Grand Theft Auto V",
+        "Grand Theft Auto Online"
       ],
       "suggestions": [
-        "The Legend of Zelda: Breath of the Wild",
-        "The Legend of Zelda: Tears of the Kingdom",
-        "Hyrule Warriors",
-        "Hyrule Warriors: Age of Calamity",
-        "Hyrule Warriors: Age of Imprisonment",
-        "The Legend of Zelda: Link's Awakening",
-        "The Legend of Zelda: Ocarina of Time",
-        "The Legend of Zelda: Majora's Mask"
+        "Grand Theft Auto",
+        "Grand Theft Auto V",
+        "Grand Theft Auto IV",
+        "Grand Theft Auto: San Andreas",
+        "Grand Theft Auto Online"
       ]
     }
   ]

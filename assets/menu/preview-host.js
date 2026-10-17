@@ -46,7 +46,7 @@
     if(location.protocol!=='http:'){resolve({status:'offline'});return;}
     const id=++bridgeSequence,script=document.createElement('script');
     const finish=reply=>{clearTimeout(timeout);jobs.delete(id);script.remove();resolve(reply);};
-    const timeout=setTimeout(()=>finish({status:'timeout'}),operation==='covers'?30000:20000);
+    const timeout=setTimeout(()=>finish({status:'timeout'}),['covers','search'].includes(operation)?30000:20000);
     jobs.set(id,{operation,finish});script.onerror=()=>finish({status:'offline'});
     script.src='preview/bridge.js?'+new URLSearchParams({operation,locale:state.locale,platform:artworkPlatform(),bridgeId:String(id),profile:params.get('profile')||'default',...value});document.head.appendChild(script);
   });

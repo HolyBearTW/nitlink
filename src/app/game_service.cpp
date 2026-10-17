@@ -108,7 +108,12 @@ HttpReply Fetch(const wchar_t* host, const std::wstring& path, size_t limit,
     Handle session{WinHttpOpen(L"NitLink-HolyBear-GameSearch/1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC)};
     if (!session.value) { reply.error = GetLastError(); return reply; }
-    WinHttpSetTimeouts(session.value, 3000, 3000, 3000, 4000);
+    // A cold Worker search can spend more than four seconds resolving names.
+    // Keep the existing total deadline, cancellation and non-Worker limits.
+    const int receiveTimeout = std::wstring_view(host) == WorkerHost ? 12000 : 4000;
+    if (!WinHttpSetTimeouts(session.value, 3000, 3000, 3000, receiveTimeout)) {
+        reply.error = GetLastError(); return reply;
+    }
     Handle connection{WinHttpConnect(session.value, host, INTERNET_DEFAULT_HTTPS_PORT, 0)};
     if (!connection.value) { reply.error = GetLastError(); return reply; }
     AsyncRequest request{WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr,
@@ -422,7 +427,10 @@ Reply ParseReply(const HttpReply& http, bool covers) {
         for (const auto& [_, status] : out.lookups)
             if ((out.status == L"empty" || out.status == L"ok") &&
                 (status == L"unavailable" || status == L"error" || status == L"timeout")) {
-                out.status = out.status == L"empty" ? L"upstreamUnavailable" : L"partial"; break;
+                // A healthy Worker response with one failed lookup backend is
+                // an incomplete search, not a Worker outage. Keep true
+                // transport/HTTP failures distinguishable as unavailable.
+                out.status = L"partial"; break;
             }
     } catch (...) { out = {}; }
     return out;
@@ -463,7 +471,7 @@ class WorkerProvider final : public Provider {
             for (uint32_t i = 0; i < std::min<uint32_t>(16, groups.Size()); ++i) {
                 if (groups.GetAt(i).ValueType() != JsonValueType::Object) continue;
                 const auto group = groups.GetAt(i).GetObject();
-                expansions.push_back({strings(group,L"aliases",12),strings(group,L"queries",5),strings(group,L"suggestions",8)});
+                expansions.push_back({strings(group,L"aliases",24),strings(group,L"queries",5),strings(group,L"suggestions",8)});
             }
         } catch (...) { expansions.clear(); }
     }
@@ -516,7 +524,7 @@ public:
         }
         Reply combined;
         combined.queriedTerms = terms; combined.suggestions = suggestions;
-        bool unavailable = false;
+        bool unavailable = false, partial = false;
         std::set<uint32_t> ids;
         std::set<std::wstring> resolved;
         for (auto& item : pending) {
@@ -527,7 +535,8 @@ public:
                     cache[item.path] = {item.reply, Clock::now() + std::chrono::minutes(10)};
                 }
             }
-            unavailable |= item.reply.status != L"ok" && item.reply.status != L"empty";
+            unavailable |= item.reply.status != L"ok" && item.reply.status != L"empty" && item.reply.status != L"partial";
+            partial |= item.reply.status == L"partial";
             combined.lookups[item.term + L" · worker"] = item.reply.status;
             for (const auto& [source, status] : item.reply.lookups) combined.lookups[item.term + L" · " + source] = status;
             for (const auto& term : item.reply.resolvedQueries)
@@ -536,8 +545,8 @@ public:
                 if (ids.insert(game.id).second) combined.games.push_back(game);
         }
         combined.totalCount = combined.games.size();
-        combined.status = !combined.games.empty() ? (unavailable ? L"partial" : L"ok") :
-            unavailable ? L"upstreamUnavailable" : L"empty";
+        combined.status = !combined.games.empty() ? (unavailable || partial ? L"partial" : L"ok") :
+            unavailable ? L"upstreamUnavailable" : partial ? L"partial" : L"empty";
         if (terms.size() == 1 && combined.games.empty()) combined.status = pending.front().reply.status;
         return combined;
     }

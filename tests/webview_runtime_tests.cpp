@@ -1,6 +1,7 @@
 #include "app/WebViewSettings.h"
 #include "app/settings_message.h"
 #include "app/settings_state_json.h"
+#include "app/game_service.h"
 #include "app/hdmi_source.h"
 #include "app/webview_lifecycle.h"
 #include "app/webview_policy.h"
@@ -229,6 +230,58 @@ void OtherEditorLocalesTest(WebViewSettings& host, ICoreWebView2* view,
         Check(action && action->action == L"setManualHdmiSourceCustom",
               "custom editor emits only identity updates, never capture or HDR actions");
     }
+}
+
+void GameResultBridgeTest(WebViewSettings& host, ICoreWebView2* view,
+    std::vector<std::wstring>& messages) {
+    const auto firstMessage = messages.size();
+    uint32_t request = 0;
+    Script(view, LR"JS((() => {
+        window.__gameBridgeEvents = [];
+        window.__originalGameEvent = window._gameEvent;
+        window._gameEvent = event => { __gameBridgeEvents.push(event); __originalGameEvent(event); };
+        document.querySelector('[data-tab="pane-games"]').click();
+        document.getElementById('game-query').value = '薩爾達';
+        document.getElementById('game-search').click();
+        return true;
+    })())JS");
+    Check(PumpUntil([&] {
+        for (size_t i = firstMessage; i < messages.size(); ++i) {
+            const auto message = NitLink::ParseSettingsMessage(messages[i]);
+            if (message && message->action == L"searchGames") { request = message->request; return true; }
+        }
+        return false;
+    }), "game search reaches the native bridge with its request ID");
+    NitLink::Games::Result result;
+    result.operation = NitLink::Games::Operation::Search;
+    result.request = request; result.locale = L"zh-TW";
+    result.reply.status = L"ok";
+    result.reply.games.push_back({5303117, 0, L"The Legend of Zelda: Tears of the Kingdom",
+        L"薩爾達傳說 王國之淚", L"fixture"});
+    Check(host.PostMessage(NitLink::SerializeGameResult(result)), "production search JSON is accepted by WebView2");
+    Check(PumpUntil([&] { return Script(view, LR"JS(
+        document.querySelector('.game-result-title')?.textContent === '薩爾達傳說 王國之淚' &&
+        document.getElementById('game-search-status').getAttribute('aria-busy') === 'false'
+    )JS") == L"true"; }), "successful native search renders the game and clears the timeout watchdog");
+    result.operation = NitLink::Games::Operation::Covers;
+    result.reply.page = 1; result.reply.hasMore = true;
+    Check(host.PostMessage(NitLink::SerializeGameResult(result)), "production covers JSON is accepted by WebView2");
+    result.operation = NitLink::Games::Operation::Image;
+    NitLink::Games::Cover cover; cover.id = 123; cover.provider = L"steamgriddb"; cover.shape = L"square";
+    result.reply.covers.push_back(cover);
+    Check(host.PostMessage(NitLink::SerializeGameResult(result)), "production default-image JSON is accepted by WebView2");
+    Check(PumpUntil([&] { return Script(view, LR"JS(
+        __gameBridgeEvents.some(event => event.kind === 'covers' && event.page === 1 && event.hasMore === true) &&
+        __gameBridgeEvents.some(event => event.kind === 'image' && event.coverIdSelected === 123 &&
+            event.coverShape === 'square' && event.coverIsOfficial === false && event.page === 1)
+    )JS") == L"true"; }), "covers and default-image metadata preserve JSON separators and native field types");
+    Script(view, LR"JS((() => {
+        window._gameEvent = window.__originalGameEvent;
+        document.getElementById('game-query').value = '';
+        document.getElementById('game-query').dispatchEvent(new Event('input'));
+        document.querySelector('[data-tab="pane-video"]').click();
+        return true;
+    })())JS");
 }
 
 void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* view,
@@ -479,6 +532,7 @@ int main(int argc, char** argv) {
         }
         wil::com_ptr<ICoreWebView2Settings> settings;
         Hr(view->get_Settings(&settings));
+        GameResultBridgeTest(host, view, messages);
         BOOL enabled = TRUE;
         Hr(settings->get_AreHostObjectsAllowed(&enabled)); Check(!enabled, "host objects disabled");
         Hr(settings->get_AreDevToolsEnabled(&enabled)); Check(!enabled, "developer tools disabled");
