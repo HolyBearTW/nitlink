@@ -10,10 +10,12 @@
 
 - 新增獨立「遊戲與 Discord」頁面，支援繁中、簡中與英文搜尋、完整結果捲動、真實 API 封面分頁及 Full／Docked 響應式介面。
 - 收藏與最近遊玩保存在原生 Config；各遊戲獨立記住名稱、封面、來源與裁切，啟動直接還原。移除收藏不刪除畫質設定。
-- 優先提供香港任天堂商店圖片，保留 Nintendo Taiwan 精選素材與 SteamGridDB 候選。圖片語言未確認時，不標示為繁中。
+- Switch／Switch 2 優先使用已核實的 Nintendo Taiwan 素材；同款沒有台灣對應時才使用香港任天堂商店備選，保留 SteamGridDB 候選。其他主機不自動套用 Nintendo 規則；PS5／PS4 已加入兩款核實的 PlayStation Taiwan 官方對應。圖片語言未確認時，不標示為繁中。
 - 加入真正輸出正方形圖片的「完整顯示／填滿裁切／原圖」編輯器、拖曳縮放、84／64px 參考預覽與本機快取。
 - 「調整封面」緊接「儲存此遊戲畫質」，兩個搜尋按鈕採用相同樣式；保留既有設定操作。
 - 同一遊戲更換封面、語言或 HDMI 來源保留計時，切換遊戲才重新計時。預覽區分本機圖片與 Discord 實際可用狀態。
+- 修正 Discord 的 `evt: null` 回應解析，使用 nonce 關聯活動請求；公開 HTTPS 封面與代理狀態分開記錄。Switch 封面確認遭代理拒絕時，可改用同款台灣圖片，不更改收藏原圖或計時。
+- 主視窗標題整合動態遊戲庫名稱、有效 HDMI 來源與已確認的來源訊號，保留 Unicode、HDR／VRR 判斷及標題快取。
 
 ### 官方 1.2.4 修正
 
@@ -30,6 +32,9 @@
 - 自動更新檢查預設關閉，啟用後每 24 小時最多一次，不自動下載或安裝；Setup／Portable、GPG／SHA256 流程保留。
 
 ## 測試與驗證
+
+- 本機加工的正方形 PNG 尚無公開 HTTPS 位址，不能直接交給 Discord；目前 Discord 使用原始遠端圖片或已驗證的備援候選。IPC 接受、圖片代理可取得、Discord 客戶端畫面確認是不同狀態。
+- Nintendo Taiwan 與 PlayStation Taiwan 僅加入已核實映射，尚未涵蓋全站遊戲；官方來源不代表圖片包含繁體中文標題。
 
 - 本地驗證涵蓋 x64 Release、完整 CTest、真正 FrameDiffer WARP、原生 WebView2、安全及三語資源。詳細紀錄見[移植盤點](https://github.com/HolyBearTW/nitlink/blob/holybear/game-search-presence/docs/UPSTREAM-1.2.4-PORT-AUDIT.md)，封裝時由流程附加實際結果，不預填成功數字。
 - 歷史 GC553Pro／音訊紀錄來自既有 1.2.4 安裝版，不代表 1.2.4.1 正式產物，也不代表本次 1.2.5 硬體實測。
