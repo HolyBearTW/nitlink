@@ -217,7 +217,7 @@ std::optional<SettingsMessage> ParseSettingsMessage(std::wstring_view json) {
         } else if (action == L"getGameCovers") {
             const auto shape = value->fields.find(L"shape");
             if ((value->fields.size() != 4 && value->fields.size()!=6) || shape == value->fields.end() || !Text(shape->second, 16) ||
-                !OneOf(shape->second.text, {L"square", L"portrait", L"all"}) || !Uint(*value, L"page", 1000, result.page) ||
+                !OneOf(shape->second.text, {L"square", L"portrait", L"landscape", L"all"}) || !Uint(*value, L"page", 1000, result.page) ||
                 !Uint(*value, L"gameId", 0xffffffffu, result.gameId) || !result.gameId ||
                 !Uint(*value, L"request", 0xffffffffu, result.request) || !result.request) return std::nullopt;
             result.shape = shape->second.text;

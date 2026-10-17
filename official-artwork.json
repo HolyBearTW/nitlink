@@ -2,143 +2,62 @@
   "version": 1,
   "games": [
     {
-      "id": 5303117,
-      "name": "The Legend of Zelda: Tears of the Kingdom",
+      "id": 5454475,
+      "name": "Astro Bot",
       "displayNames": {
-        "zh-TW": "薩爾達傳說 王國之淚"
+        "zh-TW": "宇宙機器人"
       },
       "searchTerms": [
-        "薩爾達",
-        "塞尔达",
-        "Zelda"
+        "宇宙機器人",
+        "宇宙机器人",
+        "Astro Bot"
       ],
       "artworkSources": [
         {
-          "id": 4200000002,
-          "provider": "nintendo-tw",
-          "sourceLabel": "Official Nintendo Taiwan",
-          "language": "zh-TW",
+          "id": 4200000010,
+          "provider": "playstation-tw",
+          "sourceLabel": "Official PlayStation Taiwan",
+          "language": "en-US",
           "region": "TW",
           "isOfficial": true,
-          "kind": "boxArt",
-          "shape": "portrait",
-          "crop": {
-            "x": 63,
-            "y": 0,
-            "width": 121,
-            "height": 197
-          },
-          "url": "https://www.nintendo.com/tw/zelda/totk/products/img/soft/img__package.png",
-          "sourcePage": "https://www.nintendo.com/tw/zelda/totk/products/soft.html"
+          "kind": "squareIcon",
+          "shape": "square",
+          "width": 1024,
+          "height": 1024,
+          "url": "https://image.api.playstation.com/vulcan/ap/rnd/202406/0500/8f15268257b878597757fcc5f2c9545840867bc71fc863b1.png",
+          "sourcePage": "https://www.playstation.com/zh-hant-tw/games/astro-bot/",
+          "verification": "Official Taiwan product page image. HTTP 200 image/jpeg, actual JPEG 1024x1024 despite .png URL. Visually verified ASTRO BOT English title; not Traditional Chinese artwork."
         }
       ]
     },
     {
-      "id": 5267007,
-      "name": "Hyrule Warriors: Age of Calamity",
+      "id": 5296432,
+      "name": "God of War Ragnarök",
       "displayNames": {
-        "zh-TW": "ZELDA無雙 災厄啟示錄"
+        "zh-TW": "God of War Ragnarök"
       },
       "searchTerms": [
-        "薩爾達",
-        "塞尔达",
-        "薩爾達無雙",
-        "Zelda",
-        "Hyrule Warriors"
+        "God of War Ragnarok",
+        "God of War Ragnarök",
+        "戰神",
+        "诸神黄昏",
+        "諸神黃昏"
       ],
       "artworkSources": [
         {
-          "id": 4200000001,
-          "provider": "nintendo-tw",
-          "sourceLabel": "Official Nintendo Taiwan",
-          "language": "zh-TW",
-          "region": "TW",
-          "isOfficial": true,
-          "kind": "boxArt",
-          "shape": "portrait",
-          "url": "https://www.nintendo.com/tw/switch/zelda-yakusai/img/product/package.jpg",
-          "sourcePage": "https://www.nintendo.com/tw/switch/zelda-yakusai/products/"
-        },
-        {
-          "id": 4200000004,
-          "provider": "nintendo-hk-eshop",
-          "sourceLabel": "Official Nintendo eShop CDN",
-          "language": "zh-TW",
-          "region": "HK",
-          "isOfficial": true,
-          "kind": "keyArt",
-          "shape": "landscape",
-          "width": 1920,
-          "height": 1080,
-          "url": "https://img-eshop.cdn.nintendo.net/i/0a48ca70f4e17da2a7ebd3b6033cf2a124975d6a697a9cd9e4e1fd8ec6fba9ee.jpg",
-          "sourcePage": "https://img-eshop.cdn.nintendo.net/i/0a48ca70f4e17da2a7ebd3b6033cf2a124975d6a697a9cd9e4e1fd8ec6fba9ee.jpg",
-          "verification": "HTTP 200 image/jpeg; 1920x1080. Image title visually verified as ZELDA無雙 災厄啟示錄; Nintendo eShop CDN, HK candidate supplied by user."
-        }
-      ]
-    },
-    {
-      "id": 5483959,
-      "name": "Hyrule Warriors: Age of Imprisonment",
-      "displayNames": {
-        "zh-TW": "ZELDA無雙 封印戰記"
-      },
-      "searchTerms": [
-        "薩爾達",
-        "塞尔达",
-        "薩爾達無雙",
-        "Zelda",
-        "Hyrule Warriors"
-      ],
-      "artworkSources": [
-        {
-          "id": 4200000003,
-          "provider": "nintendo-tw",
-          "sourceLabel": "Official Nintendo Taiwan",
-          "language": "zh-TW",
-          "region": "TW",
-          "isOfficial": true,
-          "kind": "logo",
-          "shape": "landscape",
-          "url": "https://www.nintendo.com/tw/games/switch2/aagab/assets/img/kv_logo.png",
-          "sourcePage": "https://www.nintendo.com/tw/games/switch2/aagab/"
-        }
-      ]
-    },
-    {
-      "id": 21202,
-      "name": "The Legend of Zelda: Ocarina of Time",
-      "displayNames": {"zh-TW": "薩爾達傳說 時之笛"},
-      "searchTerms": ["薩爾達", "塞尔达", "Zelda", "時之笛", "Ocarina of Time"],
-      "artworkSources": [
-        {
-          "id": 4200000005,
-          "provider": "nintendo-tw",
-          "sourceLabel": "Official Nintendo Taiwan",
-          "language": "zxx",
+          "id": 4200000011,
+          "provider": "playstation-tw",
+          "sourceLabel": "Official PlayStation Taiwan",
+          "language": "en-US",
           "region": "TW",
           "isOfficial": true,
           "kind": "keyArt",
-          "shape": "portrait",
-          "width": 490,
-          "height": 638,
-          "url": "https://www.nintendo.com/tw/character/zelda/history/img/branch-a/04/artwork01.jpg",
-          "sourcePage": "https://www.nintendo.com/tw/character/zelda/history/index.html",
-          "verification": "Official history page data-image; HTTP 200 image/jpeg, 490x638. Visually verified original N64 Link/Ganondorf artwork without title text; not Traditional Chinese box art."
-        },
-        {
-          "id": 4200000006,
-          "provider": "nintendo-tw",
-          "sourceLabel": "Official Nintendo Taiwan",
-          "language": "zxx",
-          "region": "TW",
-          "isOfficial": true,
-          "kind": "keyArt",
-          "shape": "landscape",
-          "width": 665,
-          "height": 521,
-          "url": "https://www.nintendo.com/tw/character/zelda/history/img/branch-a/04/artwork02.jpg",
-          "sourcePage": "https://www.nintendo.com/tw/character/zelda/history/index.html",
-          "verification": "Official history page data-image; HTTP 200 image/jpeg, 665x521. Visually verified original N64 Link/Epona landscape without title text; not Traditional Chinese box art."
+          "shape": "square",
+          "width": 1024,
+          "height": 1024,
+          "url": "https://image.api.playstation.com/vulcan/ap/rnd/202503/2016/b69c06fb108299866057126b0d3a0530bdf96a39d2ce1cb9.png",
+          "sourcePage": "https://www.playstation.com/zh-hant-tw/games/god-of-war-ragnarok/",
+          "verification": "Official Taiwan Ragnarok product page image. HTTP 200 image/jpeg, actual JPEG 1024x1024. Visually verified Kratos/Atreus 20th Anniversary English key art; not original box art or Traditional Chinese artwork."
         }
       ]
     }

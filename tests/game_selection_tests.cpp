@@ -46,6 +46,20 @@ int main() {
           !IsNintendoArtworkUrl(L"https://www.nintendo.com:443/tw/cover.png")&&
           !IsNintendoArtworkUrl(L"https://www.nintendo.com/tw/../cover.png")&&
           !IsNintendoArtworkUrl(L"https://www.nintendo.com/tw/%2e%2e/cover.png"),"official artwork authority and path boundary");
+    Cover taiwanLandscape;taiwanLandscape.provider=L"nintendo-tw";taiwanLandscape.sourceLabel=L"Official Nintendo Taiwan";
+    taiwanLandscape.region=L"TW";taiwanLandscape.isOfficial=true;taiwanLandscape.shape=L"landscape";taiwanLandscape.kind=L"keyArt";
+    Cover taiwanPortrait=taiwanLandscape;taiwanPortrait.shape=L"portrait";
+    Cover taiwanLogo=taiwanLandscape;taiwanLogo.kind=L"logo";
+    Cover hongKongLandscape=taiwanLandscape;hongKongLandscape.provider=L"nintendo-hk-eshop";
+    hongKongLandscape.sourceLabel=L"Official Nintendo eShop CDN";hongKongLandscape.region=L"HK";
+    const std::vector<Cover> searchArt={taiwanPortrait,taiwanLogo,hongKongLandscape,taiwanLandscape};
+    Check(PreferredTaiwanLandscapeArtwork(searchArt)==&searchArt[1]&&
+          PreferredTaiwanLandscapeArtwork({taiwanLandscape})!=nullptr,
+          "search thumbnails prefer verified Nintendo Taiwan landscape artwork, including logo covers");
+    Check(PreferredActivityArtwork(searchArt)==&searchArt[1],
+          "game selection uses the Taiwan landscape logo when no square is available");
+    Check(PreferredTaiwanLandscapeArtwork({taiwanPortrait,hongKongLandscape})==nullptr,
+          "portrait and non-Taiwan art do not replace the existing search thumbnail");
     Check(IsImageResource(L"https://nitlink.invalid/game-images/1.png") &&
           !IsImageResource(L"https://nitlink.invalid/game-images/../secret.png"), "opaque local image resources");
     const std::wstring store=L"https://store.nintendo.com.hk/media/catalog/product/cache/55351146f864384e20b16a2043f3a323/1/1/110.jpg";

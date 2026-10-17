@@ -209,6 +209,7 @@ std::wstring ProductNameKey(std::wstring_view name){
 }
 Reply NintendoStoreCovers(std::wstring_view query,uint32_t page,const Cancelled& cancelled){
     Reply out;out.page=page;
+    out.officialProvider=L"nintendo-hk-store";
     const auto key=std::wstring(query)+L":"+std::to_wstring(page);
     static std::map<std::wstring,std::pair<Clock::time_point,Reply>> cache;
     static std::mutex cacheMutex;
@@ -268,6 +269,59 @@ uint32_t Id(const JsonObject& object, const wchar_t* key) {
     const auto number = value.GetNumber();
     return std::isfinite(number) && number >= 1 && number <= UINT32_MAX && std::floor(number) == number
         ? static_cast<uint32_t>(number) : 0;
+}
+Reply NintendoTaiwanCovers(std::wstring_view query,uint32_t page,const Cancelled& cancelled){
+    Reply out;out.page=page;
+    if(query.size()>256||page>1000){out.status=L"invalid";return out;}
+    const auto key=std::wstring(query)+L":"+std::to_wstring(page);
+    static std::map<std::wstring,std::pair<Clock::time_point,Reply>> cache;
+    static std::mutex cacheMutex;
+    {std::lock_guard lock(cacheMutex);if(const auto found=cache.find(key);found!=cache.end()&&found->second.first>Clock::now())return found->second.second;}
+    std::wstring path;
+    if(query.empty()){
+        path=L"/tw/api/software?sftab=all&size=24";
+        if(page)path+=L"&spage="+std::to_wstring(page+1);
+    }else path=L"/tw/api/search?k="+Encode(query)+L"&directory=software&size=24&p="+std::to_wstring(page+1);
+    const auto http=Fetch(L"www.nintendo.com",path,2*1024*1024,false,cancelled);
+    if(http.error||http.status!=200){out.status=http.status==429?L"rateLimited":http.error==ERROR_WINHTTP_TIMEOUT?L"timeout":L"upstreamUnavailable";return out;}
+    const int length=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,http.body.data(),static_cast<int>(http.body.size()),nullptr,0);
+    if(length<=0){out.status=L"invalid";return out;}
+    std::wstring body(static_cast<size_t>(length),L'\0');
+    if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,http.body.data(),static_cast<int>(http.body.size()),body.data(),length)){out.status=L"invalid";return out;}
+    JsonObject root;
+    if(!JsonObject::TryParse(body,root)||!root.HasKey(L"items")||root.GetNamedValue(L"items").ValueType()!=JsonValueType::Array){out.status=L"invalid";return out;}
+    const auto items=root.GetNamedArray(L"items");if(items.Size()>24){out.status=L"invalid";return out;}
+    if(root.HasKey(L"total")&&root.GetNamedValue(L"total").ValueType()==JsonValueType::Number){const auto total=root.GetNamedNumber(L"total");if(std::isfinite(total)&&total>=0)out.totalCount=static_cast<size_t>(std::min<double>(total,10000000));}
+    out.hasMore=root.GetNamedBoolean(L"more",false)||out.totalCount>(static_cast<size_t>(page)+1)*24;
+    out.officialProvider=L"nintendo-tw";
+    std::set<uint32_t> ids;std::set<std::wstring> urls;
+    for(const auto& value:items){
+        if(cancelled())break;if(value.ValueType()!=JsonValueType::Object)continue;
+        const auto item=value.GetObject();
+        if(Text(item,L"region",16)!=L"taiwan")continue;
+        const auto title=Text(item,L"title");const auto platform=Text(item,L"hardwareCategory",64);
+        if(title.empty()||!(platform.starts_with(L"Nintendo Switch")||platform.starts_with(L"Nintendo Switch 2")))continue;
+        if(!item.HasKey(L"imageHero")||item.GetNamedValue(L"imageHero").ValueType()!=JsonValueType::Object)continue;
+        const auto hero=item.GetNamedObject(L"imageHero");const auto url=Text(hero,L"url",512);
+        if(!IsNintendoTaiwanLineupImageUrl(url)||!urls.insert(url).second)continue;
+        Cover cover;cover.url=url;cover.thumb=url;cover.productTitle=title;cover.productPlatform=platform;
+        cover.productPage=L"https://www.nintendo.com/tw/software/switch";
+        const auto detail=Text(item,L"pageLinkCustom",256);
+        if(detail.starts_with(L"/tw/")&&detail.find(L"..") == detail.npos&&detail.find(L"\\") == detail.npos)
+            cover.productPage=L"https://www.nintendo.com"+detail;
+        uint32_t hash=2166136261u;for(const auto c:url)hash=(hash^static_cast<uint32_t>(c))*16777619u;
+        cover.id=4200000100u+hash%(0xffffffffu-4200000100u);
+        while(!ids.insert(cover.id).second)++cover.id;
+        cover.provider=L"nintendo-tw";cover.sourceLabel=L"Official Nintendo Taiwan";cover.region=L"TW";
+        cover.isOfficial=true;cover.kind=L"logo";cover.shape=L"landscape";cover.languageSource=cover.productPage;
+        // A Taiwan listing proves origin, not the language printed in an image.
+        cover.language.clear();cover.languageVerified=false;
+        out.covers.push_back(std::move(cover));
+    }
+    out.status=out.covers.empty()?L"empty":L"ok";
+    if(!out.totalCount)out.totalCount=out.covers.size();
+    if(!cancelled()&&(out.status==L"ok"||out.status==L"empty")){std::lock_guard lock(cacheMutex);if(cache.size()>=64)cache.erase(cache.begin());cache[key]={Clock::now()+std::chrono::minutes(30),out};}
+    return out;
 }
 Reply ParseReply(const HttpReply& http, bool covers) {
     Reply out;
@@ -488,9 +542,10 @@ public:
         return combined;
     }
     Reply Covers(uint32_t gameId, std::wstring_view shape, std::wstring_view locale, uint32_t page, const Cancelled& cancelled) override {
-        if (!gameId || !IsLocale(locale) || (shape != L"square" && shape != L"portrait" && shape != L"all") || page > 1000) return {};
+        if (!gameId || !IsLocale(locale) || (shape != L"square" && shape != L"portrait" && shape != L"landscape" && shape != L"all") || page > 1000) return {};
         auto reply = Get(L"/games/" + std::to_wstring(gameId) + L"/covers?shape=" + std::wstring(shape) + L"&page=" + std::to_wstring(page), true, cancelled);
         if ((reply.status == L"ok" || reply.status == L"empty") && reply.page != page) return {};
+        if(shape==L"square"||shape==L"portrait"||shape==L"landscape")for(auto& cover:reply.covers)cover.shape=shape;
         std::stable_sort(reply.covers.begin(), reply.covers.end(), [&](const Cover& a, const Cover& b) {
             const auto rank = [&](const Cover& c) { return c.languageVerified ? (c.language == locale ? 0 : 2) : 1; };
             return rank(a) < rank(b);
@@ -531,8 +586,9 @@ std::shared_ptr<Image> DecodeImage(const HttpReply& reply, std::optional<Artwork
     }
     if (FAILED(factory->CreateBitmapScaler(&scaler))) return {};
     const double scale = std::min(1.0, 512.0 / std::max(width, height));
-    if (FAILED(scaler->Initialize(source.Get(), std::max(1u, static_cast<UINT>(width * scale)),
-        std::max(1u, static_cast<UINT>(height * scale)), WICBitmapInterpolationModeFant))) return {};
+    const UINT scaledWidth=std::max(1u,static_cast<UINT>(width*scale));
+    const UINT scaledHeight=std::max(1u,static_cast<UINT>(height*scale));
+    if (FAILED(scaler->Initialize(source.Get(),scaledWidth,scaledHeight,WICBitmapInterpolationModeFant))) return {};
     ComPtr<IWICFormatConverter> converter;
     if (FAILED(factory->CreateFormatConverter(&converter)) || FAILED(converter->Initialize(scaler.Get(),
         GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return {};
@@ -547,6 +603,7 @@ std::shared_ptr<Image> DecodeImage(const HttpReply& reply, std::optional<Artwork
     STATSTG stat{};
     if (FAILED(output->Stat(&stat, STATFLAG_NONAME)) || !stat.cbSize.QuadPart || stat.cbSize.QuadPart > 2 * 1024 * 1024) return {};
     auto image = std::make_shared<Image>();
+    image->width=scaledWidth;image->height=scaledHeight;
     image->png.resize(static_cast<size_t>(stat.cbSize.QuadPart));
     LARGE_INTEGER zero{};
     ULONG read = 0;
@@ -609,7 +666,7 @@ bool SaveFinalImage(std::wstring_view key,const Image& image){
 
 GameService::GameService(std::unique_ptr<Provider> provider)
     : m_provider(provider ? std::move(provider) : std::make_unique<WorkerProvider>()),
-      m_artworkProvider(CreateNintendoTaiwanArtworkProvider()),
+      m_artworkProvider(CreateOfficialArtworkProvider()),
       m_worker([this](std::stop_token stop) { Run(stop); }) {}
 GameService::~GameService() {
     m_worker.request_stop();
@@ -654,13 +711,18 @@ void GameService::PinImage(std::wstring uri,std::wstring source) {
     m_pinnedImage = m_images.contains(uri) ? std::move(uri) : std::wstring{};
     m_pinnedSourceImage=m_images.contains(source)?std::move(source):std::wstring{};
 }
-std::wstring GameService::LoadArtworkImage(std::wstring_view url, const Cancelled& cancelled) {
+std::wstring GameService::LoadArtworkImage(std::wstring_view url, const Cancelled& cancelled,std::wstring* actualShape) {
     if (cancelled() || !IsCoverUrl(url)) return {};
+    const auto recordShape=[&](const std::shared_ptr<const Image>& image){
+        if(!actualShape||!image||!image->width||!image->height)return;
+        *actualShape=image->width==image->height?L"square":image->width>image->height?L"landscape":L"portrait";
+    };
     {
         std::lock_guard lock(m_mutex);
         const auto it = m_imageUrls.find(std::wstring(url));
         if (it != m_imageUrls.end()) {
             const auto uri=it->second;
+            if(const auto image=m_images.find(uri);image!=m_images.end())recordShape(image->second);
             const auto order=std::find_if(m_imageOrder.begin(),m_imageOrder.end(),[&](const auto& item){return item.second==uri;});
             if(order!=m_imageOrder.end()){auto recent=*order;m_imageOrder.erase(order);m_imageOrder.push_back(std::move(recent));}
             return uri;
@@ -671,10 +733,13 @@ std::wstring GameService::LoadArtworkImage(std::wstring_view url, const Cancelle
     const auto path=std::wstring(url.substr(slash));
     const auto cachePath=ImageCachePath(url);
     auto image=ReadImageCache(cachePath);
-    if(!image&&IsNintendoArtworkUrl(url)&&!m_artworkProvider->Allows(url))return {};
+    if(!image&&IsPlayStationArtworkUrl(url)&&!m_artworkProvider->Allows(url))return {};
+    // Nintendo URLs have a strict host/path allowlist in IsNintendoArtworkUrl.
+    // Keep previously saved official art usable without per-game catalogue rows.
     if(!image){image=DecodeImage(Fetch(host.c_str(), path, 8 * 1024 * 1024, true, cancelled),m_artworkProvider->Crop(url));
         if(image&&!cancelled())WriteImageCache(cachePath,*image);}
     if (!image || cancelled()) return {};
+    recordShape(image);
     return StoreImage(std::move(image),url);
 }
 std::wstring GameService::LoadFinalImage(std::wstring_view key,const Cancelled& cancelled){
@@ -719,7 +784,13 @@ void GameService::Run(std::stop_token stop) {
         const Cancelled cancelled = [&, generation] { return stop.stop_requested() || generation != m_generation.load(); };
         Result base;
         base.operation = request.operation; base.request = request.request; base.gameId = request.gameId;
-        base.locale = request.locale; base.query = request.query; base.shape = request.shape; base.generation = generation;
+        base.locale = request.locale; base.query = request.query; base.shape = request.shape; base.coverProvider=request.coverProvider; base.generation = generation;
+        base.platform=request.platform;
+        const auto officialFor=[&](uint32_t id) -> std::optional<Game> {
+            auto game=m_artworkProvider->Lookup(id,request.locale);
+            if(game)game->artworkSources=PreferredOfficialArtwork(std::move(game->artworkSources),request.platform);
+            return game && !game->artworkSources.empty()?game:std::nullopt;
+        };
         try {
             if (FAILED(initialized)) { Publish(base, cancelled); continue; }
             if(request.operation==Operation::RenderArtwork){
@@ -742,10 +813,9 @@ void GameService::Run(std::stop_token stop) {
             if(request.operation==Operation::LibraryImages){
                 for(auto game:request.library){if(cancelled())break;if(!game.id)continue;
                     auto result=base;result.gameId=game.id;result.coverId=game.coverId;
-                    if(const auto official=m_artworkProvider->Lookup(game.id,request.locale))result.reply.games={*official};
-                    if(!game.manualCover)if(const auto official=m_artworkProvider->Lookup(game.id,request.locale);official&&!official->artworkSources.empty()){
-                        SelectArtwork(game,official->artworkSources.front());result.coverId=game.coverId;result.reply.artworkSources=official->artworkSources;
-                    }
+                    if(const auto official=officialFor(game.id))result.reply.games={*official};
+                    if(const auto official=officialFor(game.id);official&&!official->artworkSources.empty())
+                        result.reply.games={*official};
                     if(game.coverUrl.empty())continue;
                     result.imageUri=LoadFinalImage(game.finalImageKey,cancelled);
                     result.sourceImageUri=LoadFinalImage(game.sourceImageKey,cancelled);
@@ -768,46 +838,97 @@ void GameService::Run(std::stop_token stop) {
                 std::set<uint32_t> ids;
                 for(auto& game:base.reply.games){
                     ids.insert(game.id);
-                    if(const auto official=m_artworkProvider->Lookup(game.id,request.locale)){
+                    if(const auto official=officialFor(game.id)){
                         game.artworkSources=official->artworkSources;
-                        if(request.locale==L"zh-TW"){game.displayName=official->displayName;game.displayNameSource=L"nintendo-tw";}
+                        if(request.locale==L"zh-TW"){game.displayName=official->displayName;game.displayNameSource=official->displayNameSource;}
                     }
                 }
-                for(auto& game:m_artworkProvider->Search(request.query,request.locale))if(ids.insert(game.id).second)base.reply.games.push_back(std::move(game));
+                for(auto& game:m_artworkProvider->Search(request.query,request.locale)){
+                    game.artworkSources=PreferredOfficialArtwork(std::move(game.artworkSources),request.platform);
+                    if(!game.artworkSources.empty()&&ids.insert(game.id).second)base.reply.games.push_back(std::move(game));
+                }
                 if(!base.reply.games.empty()&&base.reply.status!=L"ok")base.reply.status=L"partial";
                 base.reply.totalCount=base.reply.games.size();
-                base.reply.lookups[L"nintendo-tw"]=L"local official artwork mapping";
+                base.reply.lookups[L"official-artwork"]=request.platform;
             } else {
                 // Resolve the selected title in the effective locale; exact ID
                 // matching is performed by Application, never by translated text.
                 if (!request.query.empty()) {
                     auto resolved = base; resolved.operation = Operation::Resolve;
                     resolved.reply = m_provider->Search(request.query, request.locale, cancelled);
-                    if(request.locale==L"zh-TW")if(const auto official=m_artworkProvider->Lookup(request.gameId,request.locale))
+                    if(request.locale==L"zh-TW")if(const auto official=officialFor(request.gameId))
                         for(auto& game:resolved.reply.games)if(game.id==request.gameId)game.displayName=official->displayName;
                     Publish(std::move(resolved), cancelled);
                 }
                 if (cancelled()) continue;
+                const auto primary=officialFor(request.gameId);
+                const bool searchNintendoTaiwan=request.platform==L"switch"&&request.coverProvider!=L"community"&&!request.catalogueQuery.empty();
                 Reply store;
-                if(request.coverProvider!=L"community"&&(request.coverProvider==L"nintendo"||!request.catalogueQuery.empty()))
-                    store=NintendoStoreCovers(request.catalogueQuery,request.coverProvider==L"nintendo"?request.page:0,cancelled);
+                if(searchNintendoTaiwan){
+                    store=NintendoTaiwanCovers(request.catalogueQuery,request.page,cancelled);
+                    if(request.coverProvider==L"nintendo"&&(store.status!=L"ok"||store.covers.empty())&&!cancelled()){
+                        auto fallback=NintendoStoreCovers(request.catalogueQuery,request.page,cancelled);
+                        if(!fallback.covers.empty()||store.status!=L"ok")store=std::move(fallback);
+                    }
+                }
+                else store.status=primary?L"ok":L"idle";
                 if(cancelled())continue;
                 if(request.coverProvider==L"nintendo"){
                     base.reply=store;base.reply.artworkSources=std::move(base.reply.covers);base.reply.covers.clear();
+                    if(primary&&request.page==0&&base.reply.artworkSources.empty()){
+                        std::set<std::wstring> known;
+                        for(const auto& cover:base.reply.artworkSources)known.insert(cover.url);
+                        for(const auto& cover:primary->artworkSources)
+                            if((request.shape==L"all"||cover.shape==request.shape)&&known.insert(cover.url).second){base.reply.artworkSources.push_back(cover);++base.reply.totalCount;}
+                    }
                 }else{
                     base.reply = m_provider->Covers(request.gameId, request.shape, request.locale, request.page, cancelled);
-                    if(request.coverProvider==L"all")for(auto& cover:store.covers)
-                        if(ProductNameKey(cover.productTitle)==ProductNameKey(request.catalogueQuery))base.reply.artworkSources.push_back(std::move(cover));
                 }
                 base.reply.officialStatus=store.status;
-                if(request.coverProvider==L"all")if(const auto official=m_artworkProvider->Lookup(request.gameId,request.locale))
-                    for(const auto& cover:official->artworkSources)if(request.shape==L"all"||cover.shape==request.shape)base.reply.artworkSources.push_back(cover);
+                base.reply.officialProvider=searchNintendoTaiwan?store.officialProvider:primary&&!primary->artworkSources.empty()?primary->artworkSources.front().provider:L"";
+                if(request.coverProvider==L"nintendo"&&!base.reply.artworkSources.empty())base.reply.officialProvider=base.reply.artworkSources.front().provider;
+                if(request.coverProvider!=L"community"&&request.coverProvider!=L"nintendo"){
+                    if(const auto official=primary)for(const auto& cover:official->artworkSources)
+                        if((request.shape==L"all"||cover.shape==request.shape)&&std::none_of(base.reply.artworkSources.begin(),base.reply.artworkSources.end(),[&](const Cover& item){return item.url==cover.url;}))base.reply.artworkSources.push_back(cover);
+                    if(searchNintendoTaiwan)for(const auto& cover:store.covers)
+                        if((request.shape==L"all"||cover.shape==request.shape)&&std::none_of(base.reply.artworkSources.begin(),base.reply.artworkSources.end(),[&](const Cover& item){return item.url==cover.url;}))base.reply.artworkSources.push_back(cover);
+                }
+                if(request.coverProvider!=L"nintendo")base.reply.artworkSources=PreferredOfficialArtwork(std::move(base.reply.artworkSources),request.platform);
+                if(!base.reply.artworkSources.empty()&&base.reply.status==L"invalid")base.reply.status=L"ok";
                 if(!base.reply.artworkSources.empty()&&base.reply.status==L"empty")base.reply.status=L"ok";
                 if(!base.reply.artworkSources.empty()&&base.reply.status!=L"ok"&&base.reply.status!=L"empty")base.reply.status=L"partial";
             }
             Publish(base, cancelled);
             if (cancelled()) continue;
             if (request.operation == Operation::Search) {
+                if(request.platform==L"switch"&&!request.query.empty()){
+                    const auto queryResult=NintendoTaiwanCovers(request.query,0,cancelled);
+                    const auto queryKey=ProductNameKey(request.query);
+                    const bool uniqueExactQuery=base.reply.games.size()==1;
+                    std::map<uint32_t,std::wstring> localizedNames;
+                    if(request.locale!=L"zh-TW"&&!queryResult.covers.empty()&&!cancelled()){
+                        // Match the Taiwan catalogue with a locale-independent
+                        // zh-TW Worker title while keeping the visible UI locale.
+                        const auto localized=m_provider->Search(request.query,L"zh-TW",cancelled);
+                        for(const auto& game:localized.games)if(!game.displayName.empty())localizedNames.emplace(game.id,game.displayName);
+                    }
+                    bool changed=false;
+                    for(auto& game:base.reply.games){
+                        const auto gameName=ProductNameKey(game.name);
+                        const auto displayName=ProductNameKey(game.displayName);
+                        const auto localized=localizedNames.find(game.id);
+                        const auto localizedName=localized==localizedNames.end()?std::wstring{}:ProductNameKey(localized->second);
+                        const auto found=std::find_if(queryResult.covers.begin(),queryResult.covers.end(),[&](const Cover& cover){
+                            const auto title=ProductNameKey(cover.productTitle);
+                            return title==gameName||title==displayName||(!localizedName.empty()&&title==localizedName)||(uniqueExactQuery&&title==queryKey);
+                        });
+                        if(found==queryResult.covers.end())continue;
+                        if(std::none_of(game.artworkSources.begin(),game.artworkSources.end(),[&](const Cover& cover){return cover.url==found->url;})){
+                            game.artworkSources.insert(game.artworkSources.begin(),*found);changed=true;
+                        }
+                    }
+                    if(changed)Publish(base,cancelled);
+                }
                 // Text arrives first. Enrich every result, with known official
                 // artwork first; selection/new searches still cancel this work.
                 std::vector<const Game*> queue;
@@ -820,20 +941,52 @@ void GameService::Run(std::stop_token stop) {
                     bool failed=false;
                     const auto tryCandidates=[&](const std::vector<Cover>& candidates){
                         for(size_t i=0;i<std::min<size_t>(3,candidates.size())&&!cancelled();++i){
-                            const auto& cover=candidates[i];
-                            image.imageUri=LoadArtworkImage(cover.thumb.empty()?cover.url:cover.thumb,cancelled);
-                            if(!image.imageUri.empty()){image.reply.covers={cover};return;}
+                            auto cover=candidates[i];std::wstring actualShape;
+                            image.imageUri=LoadArtworkImage(cover.thumb.empty()?cover.url:cover.thumb,cancelled,&actualShape);
+                            if(!image.imageUri.empty()){
+                                if(cover.shape.empty()&&!actualShape.empty())cover.shape=actualShape;
+                                image.reply.covers={std::move(cover)};return;
+                            }
                             failed=true;
                         }
                     };
-                    tryCandidates(game.artworkSources);
-                    if(image.imageUri.empty()&&!cancelled()){
-                        auto covers=m_provider->Covers(game.id,L"square",request.locale,0,cancelled);
-                        if(covers.covers.empty()&&(covers.status==L"ok"||covers.status==L"empty")&&!cancelled())
-                            covers=m_provider->Covers(game.id,L"all",request.locale,0,cancelled);
-                        if(covers.status!=L"ok"&&covers.status!=L"empty"&&covers.status!=L"partial")failed=true;
-                        tryCandidates(covers.covers);
+                    auto officialSources=game.artworkSources;
+                    if(request.platform==L"switch"&&
+                       std::none_of(officialSources.begin(),officialSources.end(),[](const Cover& cover){return cover.provider==L"nintendo-tw"&&cover.shape==L"landscape";})&&
+                       !game.displayName.empty()){
+                        const auto catalog=NintendoTaiwanCovers(game.displayName,0,cancelled);
+                        if(!cancelled()){
+                            const auto displayKey=ProductNameKey(game.displayName),nameKey=ProductNameKey(game.name);
+                            const auto found=std::find_if(catalog.covers.begin(),catalog.covers.end(),[&](const Cover& cover){
+                                const auto title=ProductNameKey(cover.productTitle);
+                                return !title.empty()&&(title==displayKey||title==nameKey);
+                            });
+                            if(found!=catalog.covers.end()&&std::none_of(officialSources.begin(),officialSources.end(),[&](const Cover& cover){return cover.url==found->url;}))
+                                officialSources.insert(officialSources.begin(),*found);
+                        }
                     }
+                    const auto official=PreferredOfficialArtwork(std::move(officialSources),request.platform);
+                    const auto officialFor=[&](std::wstring_view shape,int priority){
+                        std::vector<Cover> covers;
+                        if(shape==L"landscape")if(const auto* taiwan=PreferredTaiwanLandscapeArtwork(official))covers.push_back(*taiwan);
+                        for(const auto& cover:official)if(SearchThumbnailArtworkPriority(cover)==priority&&
+                            std::none_of(covers.begin(),covers.end(),[&](const Cover& item){return item.url==cover.url;}))covers.push_back(cover);
+                        return covers;
+                    };
+                    const auto communityFor=[&](std::wstring_view shape,int priority){
+                        auto reply=m_provider->Covers(game.id,shape,request.locale,0,cancelled);
+                        if(reply.status!=L"ok"&&reply.status!=L"empty"&&reply.status!=L"partial")failed=true;
+                        std::erase_if(reply.covers,[&](const Cover& cover){return SearchThumbnailArtworkPriority(cover)!=priority;});
+                        return reply.covers;
+                    };
+                    // Search result tiles are landscape: Taiwan or other official
+                    // landscape, community landscape, official portrait, then
+                    // community portrait. Activity artwork has its own ranking.
+                    tryCandidates(officialFor(L"landscape",0));
+                    if(image.imageUri.empty()&&!cancelled())tryCandidates(communityFor(L"landscape",1));
+                    if(image.imageUri.empty()&&!cancelled())tryCandidates(officialFor(L"portrait",2));
+                    if(image.imageUri.empty()&&!cancelled())tryCandidates(communityFor(L"portrait",3));
+                    if(!image.reply.covers.empty())image.shape=image.reply.covers.front().shape;
                     image.imageStatus = !image.imageUri.empty()?L"ok":failed?L"failed":L"missing";
                     Publish(std::move(image), cancelled);
                 }
@@ -854,7 +1007,10 @@ void GameService::Run(std::stop_token stop) {
                 for (const auto& cover : candidates) {
                     if (cancelled()) break;
                     auto image = base; image.reply = {}; image.reply.page=request.page;image.operation = Operation::Image; image.coverId = cover.id;
-                    if (Clock::now() < imageDeadline) image.imageUri = LoadArtworkImage(cover.thumb, cancelled);
+                    auto resolvedCover=cover;std::wstring actualShape;
+                    if (Clock::now() < imageDeadline) image.imageUri = LoadArtworkImage(cover.thumb, cancelled,&actualShape);
+                    if(resolvedCover.shape.empty()&&!actualShape.empty())resolvedCover.shape=actualShape;
+                    image.reply.covers={std::move(resolvedCover)};
                     image.imageStatus = image.imageUri.empty() ? L"failed" : L"ok";
                     Publish(std::move(image), cancelled);
                 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <map>
@@ -41,6 +42,21 @@ inline bool ValidText(std::wstring_view text, size_t max = 256) {
     }
     return true;
 }
+// Derived from the native effective source, never from a WebView-supplied URL
+// or from the selected game's title. Unknown/PC/Xbox do not imply Nintendo.
+inline std::wstring ArtworkPlatformForSource(std::string_view manual, std::wstring_view effective) {
+    if (manual=="switch" || manual=="switch2") return L"switch";
+    if (manual=="ps5" || manual=="ps4") return L"playstation";
+    if (!manual.empty() && manual!="auto" && manual!="other") return L"other";
+    std::wstring name;
+    for (auto c:effective) {
+        if(c==L' ' || c==L'\t')continue;
+        name.push_back(c>=L'A'&&c<=L'Z'?c+(L'a'-L'A'):c);
+    }
+    if(name==L"switch" || name==L"switch2" || name==L"nintendoswitch" || name==L"nintendoswitch2")return L"switch";
+    if(name==L"ps5" || name==L"ps5pro" || name==L"ps4" || name==L"playstation5" || name==L"playstation4" || name==L"sonyplaystation5")return L"playstation";
+    return name.empty()?L"unknown":L"other";
+}
 // Exact authority, paths, hex filename and raster extensions. No redirects,
 // credentials, ports, fragments, traversal or arbitrary query parameters.
 inline bool IsSteamGridCoverUrl(std::wstring_view url) {
@@ -65,8 +81,34 @@ inline bool IsNintendoStoreImageUrl(std::wstring_view url){
     if(!std::all_of(url.begin(),url.end(),[](wchar_t c){return (c>=L'a'&&c<=L'z')||(c>=L'A'&&c<=L'Z')||(c>=L'0'&&c<=L'9')||c==L'/'||c==L'_'||c==L'-'||c==L'.';}))return false;
     return url.ends_with(L".jpg")||url.ends_with(L".jpeg")||url.ends_with(L".png")||url.ends_with(L".webp");
 }
+// Nintendo Taiwan's public software directory publishes imageHero assets in
+// this Contentful space. Accept only its three-component asset path and the
+// exact thumbnail transform used by the directory API.
+inline bool IsNintendoTaiwanLineupImageUrl(std::wstring_view url){
+    constexpr std::wstring_view prefix=L"https://images.ctfassets.net/o5v89n4kg6h4/";
+    if(url.size()>512||!url.starts_with(prefix))return false;
+    url.remove_prefix(prefix.size());
+    const auto query=url.find(L'?');
+    if(query==url.npos)return false;
+    const auto params=url.substr(query);
+    if(params!=L"?w=400&fm=webp"&&params!=L"?fm=webp&w=400")return false;
+    const auto path=url.substr(0,query);
+    std::array<std::wstring_view,3> parts{};size_t start=0,index=0;
+    while(start<=path.size()&&index<parts.size()){
+        const auto slash=path.find(L'/',start);const auto end=slash==path.npos?path.size():slash;
+        parts[index++]=path.substr(start,end-start);if(slash==path.npos){start=path.size()+1;break;}start=slash+1;
+    }
+    if(index!=parts.size()||start<=path.size())return false;
+    for(size_t i=0;i<parts.size();++i){
+        const auto part=parts[i];if(part.empty()||part.size()>96||part==L"."||part==L"..")return false;
+        if(!std::all_of(part.begin(),part.end(),[&](wchar_t c){
+            return(c>=L'a'&&c<=L'z')||(c>=L'A'&&c<=L'Z')||(c>=L'0'&&c<=L'9')||c==L'-'||c==L'_'||(i==2&&c==L'.');
+        }))return false;
+    }
+    return parts[2].ends_with(L".jpg")||parts[2].ends_with(L".jpeg")||parts[2].ends_with(L".png")||parts[2].ends_with(L".webp");
+}
 inline bool IsNintendoArtworkUrl(std::wstring_view url) {
-    if(IsNintendoStoreImageUrl(url))return true;
+    if(IsNintendoStoreImageUrl(url)||IsNintendoTaiwanLineupImageUrl(url))return true;
     if(url.size()>512)return false;
     constexpr std::wstring_view eshop=L"https://img-eshop.cdn.nintendo.net/i/";
     if(url.starts_with(eshop)){
@@ -80,7 +122,24 @@ inline bool IsNintendoArtworkUrl(std::wstring_view url) {
     if(!std::all_of(url.begin(),url.end(),[](wchar_t c){return (c>=L'a'&&c<=L'z')||(c>=L'A'&&c<=L'Z')||(c>=L'0'&&c<=L'9')||c==L'/'||c==L'_'||c==L'-'||c==L'.';}))return false;
     return url.ends_with(L".png")||url.ends_with(L".jpg")||url.ends_with(L".webp");
 }
-inline bool IsCoverUrl(std::wstring_view url) { return IsSteamGridCoverUrl(url)||IsNintendoArtworkUrl(url); }
+inline bool IsLegacyNintendoTaiwanArtworkUrl(std::wstring_view url) {
+    constexpr std::wstring_view twOrigin=L"https://www.nintendo.com/tw/";
+    constexpr std::wstring_view twCompatOrigin=L"https://www.nintendo.com.tw/";
+    return (url.starts_with(twOrigin)||url.starts_with(twCompatOrigin))&&IsNintendoArtworkUrl(url);
+}
+inline bool IsNintendoEshopArtworkUrl(std::wstring_view url) {
+    constexpr std::wstring_view origin=L"https://img-eshop.cdn.nintendo.net/i/";
+    return url.starts_with(origin)&&IsNintendoArtworkUrl(url);
+}
+inline bool IsPlayStationArtworkUrl(std::wstring_view url) {
+    constexpr std::wstring_view origin=L"https://image.api.playstation.com/vulcan/";
+    if(url.size()>512 || !url.starts_with(origin))return false;
+    url.remove_prefix(origin.size());
+    if(url.empty() || url.find(L"..")!=url.npos || url.find(L"//")!=url.npos)return false;
+    if(!std::all_of(url.begin(),url.end(),[](wchar_t c){return(c>=L'a'&&c<=L'z')||(c>=L'A'&&c<=L'Z')||(c>=L'0'&&c<=L'9')||c==L'/'||c==L'-'||c==L'_'||c==L'.';}))return false;
+    return url.ends_with(L".png")||url.ends_with(L".jpg")||url.ends_with(L".webp");
+}
+inline bool IsCoverUrl(std::wstring_view url) { return IsSteamGridCoverUrl(url)||IsNintendoArtworkUrl(url)||IsPlayStationArtworkUrl(url); }
 struct ArtworkMetadata {
     std::wstring provider=L"steamgriddb", sourceLabel=L"SteamGridDB", language, region, kind=L"cover";
     bool isOfficial=false;
@@ -99,6 +158,7 @@ struct SavedGame : ArtworkMetadata {
     std::map<std::wstring, std::wstring> displayNames;
     std::wstring coverUrl;
     std::wstring coverThumb;
+    std::wstring coverShape;
     uint32_t coverId = 0;
     bool manualCover = false;
     bool favorite = false;
@@ -119,6 +179,7 @@ inline bool ValidSavedGame(std::string_view key, const SavedGame& game) {
         !ValidText(game.customName) || game.lastUsedUtc > 253402300799ull ||
         game.displayNames.size() > 3 || (!game.coverUrl.empty() && !IsCoverUrl(game.coverUrl)) ||
         (!game.coverThumb.empty() && !IsCoverUrl(game.coverThumb))) return false;
+    if(!game.coverShape.empty()&&game.coverShape!=L"square"&&game.coverShape!=L"portrait"&&game.coverShape!=L"landscape")return false;
     if(!ValidText(game.sourceLabel,128)||(!game.language.empty()&&!IsCoverLanguage(game.language))||
        (!game.region.empty()&&(game.region.size()!=2||!std::all_of(game.region.begin(),game.region.end(),[](wchar_t c){return c>=L'A'&&c<=L'Z';}))))return false;
     if(IsNintendoArtworkUrl(game.coverUrl)){
@@ -126,9 +187,18 @@ inline bool ValidSavedGame(std::string_view key, const SavedGame& game) {
         const bool hk=game.provider==L"nintendo-hk-eshop"&&game.region==L"HK"&&game.sourceLabel==L"Official Nintendo eShop CDN";
         const bool store=game.provider==L"nintendo-hk-store"&&game.region==L"HK"&&game.sourceLabel==L"Official Nintendo Hong Kong Store"&&IsNintendoStoreImageUrl(game.coverUrl);
         if(IsNintendoStoreImageUrl(game.coverUrl)&&(!store||(!game.coverThumb.empty()&&!IsNintendoStoreImageUrl(game.coverThumb))))return false;
+        if(IsNintendoTaiwanLineupImageUrl(game.coverUrl)&&(!tw||(!game.coverThumb.empty()&&!IsNintendoTaiwanLineupImageUrl(game.coverThumb))||
+           (game.kind!=L"logo"&&game.kind!=L"keyArt")||game.coverShape!=L"landscape"))return false;
+        if(tw&&!IsNintendoTaiwanLineupImageUrl(game.coverUrl)&&(!IsLegacyNintendoTaiwanArtworkUrl(game.coverUrl)||(!game.coverThumb.empty()&&!IsLegacyNintendoTaiwanArtworkUrl(game.coverThumb))))return false;
+        if(hk&&(!IsNintendoEshopArtworkUrl(game.coverUrl)||(!game.coverThumb.empty()&&!IsNintendoEshopArtworkUrl(game.coverThumb))))return false;
         if((!tw&&!hk&&!store)||!game.isOfficial||(!game.language.empty()&&!IsCoverLanguage(game.language))||
            (game.kind!=L"boxArt"&&game.kind!=L"logo"&&game.kind!=L"keyArt"&&game.kind!=L"squareIcon"&&!(store&&game.kind==L"cover"))||
            (!game.coverThumb.empty()&&!IsNintendoArtworkUrl(game.coverThumb)))return false;
+    }else if(IsPlayStationArtworkUrl(game.coverUrl)){
+        if(game.provider!=L"playstation-tw" || game.sourceLabel!=L"Official PlayStation Taiwan" ||
+           game.region!=L"TW" || !game.isOfficial ||
+           (game.kind!=L"squareIcon"&&game.kind!=L"boxArt"&&game.kind!=L"keyArt"&&game.kind!=L"logo") ||
+           (!game.coverThumb.empty()&&!IsPlayStationArtworkUrl(game.coverThumb)))return false;
     }else if(game.provider!=L"steamgriddb"||game.isOfficial||(game.kind!=L"cover"&&game.kind!=L"boxArt"))return false;
     for (const auto& [locale, name] : game.displayNames)
         if (!IsLocale(locale) || !ValidText(name)) return false;

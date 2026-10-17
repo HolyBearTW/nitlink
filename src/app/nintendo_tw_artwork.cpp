@@ -10,7 +10,7 @@
 namespace NitLink::Games {
 namespace {
 using namespace winrt::Windows::Data::Json;
-class NintendoTaiwanArtworkProvider final : public ArtworkProvider {
+class OfficialSeedArtworkProvider final : public ArtworkProvider {
     struct Entry { Game game; std::map<std::wstring,std::wstring> names; std::vector<std::wstring> terms; };
     std::map<uint32_t,Entry> entries;
     bool loaded=false;
@@ -39,11 +39,11 @@ class NintendoTaiwanArtworkProvider final : public ArtworkProvider {
             std::set<uint32_t> coverIds;
             for(const auto& value:games){
                 if(value.ValueType()!=JsonValueType::Object)continue;const auto object=value.GetObject();
-                Entry entry;auto& game=entry.game;game.id=Id(object,L"id");game.name=Text(object,L"name");game.source=L"nintendo-tw";
+                Entry entry;auto& game=entry.game;game.id=Id(object,L"id");game.name=Text(object,L"name");
                 if(!game.id||game.name.empty()||entries.contains(game.id))continue;
                 if(object.HasKey(L"displayNames")&&object.GetNamedValue(L"displayNames").ValueType()==JsonValueType::Object){
                     const auto names=object.GetNamedObject(L"displayNames");
-                    for(const auto* locale:{L"zh-TW",L"zh-CN",L"en-US"}){const auto name=Text(names,locale);if(!name.empty())entry.names[locale]=name;}
+                    for(const auto* locale:{L"zh-TW",L"zh-CN",L"en-US",L"de-DE"}){const auto name=Text(names,locale);if(!name.empty())entry.names[locale]=name;}
                 }
                 if(object.HasKey(L"searchTerms")&&object.GetNamedValue(L"searchTerms").ValueType()==JsonValueType::Array){
                     const auto terms=object.GetNamedArray(L"searchTerms");
@@ -70,14 +70,21 @@ class NintendoTaiwanArtworkProvider final : public ArtworkProvider {
                     }
                     const bool tw=cover.provider==L"nintendo-tw"&&cover.sourceLabel==L"Official Nintendo Taiwan"&&cover.region==L"TW";
                     const bool hk=cover.provider==L"nintendo-hk-eshop"&&cover.sourceLabel==L"Official Nintendo eShop CDN"&&cover.region==L"HK";
-                    if(!cover.id||cover.id<4200000000u||!IsNintendoArtworkUrl(cover.url)||(!tw&&!hk)||
+                    const bool ps=cover.provider==L"playstation-tw"&&cover.sourceLabel==L"Official PlayStation Taiwan"&&cover.region==L"TW";
+                    const bool imageSource=ps?IsPlayStationArtworkUrl(cover.url):IsNintendoArtworkUrl(cover.url);
+                    const bool sourcePage=ps?cover.languageSource.starts_with(L"https://www.playstation.com/zh-hant-tw/games/"):
+                        cover.languageSource.starts_with(L"https://www.nintendo.com/tw/")||cover.languageSource.starts_with(L"https://www.nintendo.com.tw/")||cover.languageSource.starts_with(L"https://img-eshop.cdn.nintendo.net/i/");
+                    if(!cover.id||cover.id<4200000000u||!imageSource||(!tw&&!hk&&!ps)||
                        (!cover.language.empty()&&!IsCoverLanguage(cover.language))||
                        (cover.kind!=L"boxArt"&&cover.kind!=L"logo"&&cover.kind!=L"keyArt"&&cover.kind!=L"squareIcon")||
                        (cover.shape!=L"square"&&cover.shape!=L"portrait"&&cover.shape!=L"landscape")||
-                       (!cover.languageSource.starts_with(L"https://www.nintendo.com/tw/")&&!cover.languageSource.starts_with(L"https://www.nintendo.com.tw/")&&!cover.languageSource.starts_with(L"https://img-eshop.cdn.nintendo.net/i/"))||
+                       !sourcePage||
                        !source.HasKey(L"isOfficial")||source.GetNamedValue(L"isOfficial").ValueType()!=JsonValueType::Boolean||
                        !source.GetNamedBoolean(L"isOfficial")||!coverIds.insert(cover.id).second)continue;
-                    cover.isOfficial=true;cover.languageVerified=!cover.language.empty();game.artworkSources.push_back(std::move(cover));
+                    cover.isOfficial=true;cover.languageVerified=!cover.language.empty();
+                    if(ps)cover.author=L"Sony Interactive Entertainment";
+                    if(game.source.empty())game.source=cover.provider;
+                    game.artworkSources.push_back(std::move(cover));
                 }
                 if(!game.artworkSources.empty())entries.emplace(game.id,std::move(entry));
             }
@@ -88,7 +95,7 @@ class NintendoTaiwanArtworkProvider final : public ArtworkProvider {
     }
     static Game Localized(const Entry& entry,std::wstring_view locale){
         auto game=entry.game;const auto name=entry.names.find(std::wstring(locale));
-        game.displayName=name!=entry.names.end()?name->second:game.name;game.displayNameSource=L"nintendo-tw";return game;
+        game.displayName=name!=entry.names.end()?name->second:game.name;game.displayNameSource=game.source;return game;
     }
 public:
     std::optional<ArtworkCrop> Crop(std::wstring_view url) override{
@@ -112,5 +119,6 @@ public:
     }
 };
 }
-std::unique_ptr<ArtworkProvider> CreateNintendoTaiwanArtworkProvider(){return std::make_unique<NintendoTaiwanArtworkProvider>();}
+std::unique_ptr<ArtworkProvider> CreateOfficialArtworkProvider(){return std::make_unique<OfficialSeedArtworkProvider>();}
+std::unique_ptr<ArtworkProvider> CreateNintendoTaiwanArtworkProvider(){return CreateOfficialArtworkProvider();}
 }

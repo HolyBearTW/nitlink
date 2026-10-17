@@ -302,6 +302,12 @@ if(BUILD_TESTING)
     add_test(NAME online_game_selection COMMAND NitLinkGameSelectionTests)
     set_tests_properties(online_game_selection PROPERTIES TIMEOUT 15)
 
+    add_executable(NitLinkArtworkPolicyTests tests/artwork_policy_tests.cpp src/app/config.cpp src/app/nintendo_tw_artwork.cpp)
+    target_include_directories(NitLinkArtworkPolicyTests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(NitLinkArtworkPolicyTests PRIVATE windowsapp ole32)
+    add_dependencies(NitLinkArtworkPolicyTests NitLinkRuntimeResources)
+    add_test(NAME artwork_platform_policy COMMAND NitLinkArtworkPolicyTests)
+
     option(NITLINK_TEST_WEBVIEW_RUNTIME "Run the isolated, software-rendered WebView2 host test" ON)
     if(NITLINK_TEST_WEBVIEW_RUNTIME)
         add_executable(NitLinkWebViewRuntimeTests

@@ -16,9 +16,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from PIL import Image
-from nintendo_tw_artwork import OFFICIAL, nintendo_url
-from artwork_processing import render_artwork,generated_image
+from nintendo_tw_artwork import OFFICIAL, nintendo_url, legacy_taiwan_url, eshop_url, playstation_url, preferred_sources
 import nintendo_hk_store as HK_STORE
+import nintendo_tw_lineup as TW_LINEUP
+from artwork_processing import render_artwork,generated_image
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 API = 'https://holybear-game-api.nitlink.workers.dev'
@@ -84,7 +85,7 @@ def expansion(query):
             return terms, suggestions
         data = json.loads(raw)
         for group in data.get('groups',[])[:16]:
-            aliases = group.get('aliases',[])[:12]
+            aliases = group.get('aliases',[])[:24]
             if any(text(alias) and alias.casefold() == query.casefold() for alias in aliases):
                 terms += [term for term in group.get('queries',[])[:5] if text(term) and term]
                 suggestions += [term for term in group.get('suggestions',[])[:8] if text(term) and term]
@@ -92,7 +93,7 @@ def expansion(query):
         pass
     return list(dict.fromkeys(terms))[:6], list(dict.fromkeys(suggestions))[:8]
 
-def search(query, locale):
+def search(query, locale, platform='unknown'):
     terms, suggestions = expansion(query)
     primary = fetch_json('/games/search?' + urllib.parse.urlencode({'q':query,'lang':locale}))
     # Worker v5 already expands series queries. Preserve its complete response;
@@ -103,11 +104,13 @@ def search(query, locale):
         replies = [primary] + list(POOL.map(lambda term: fetch_json('/games/search?' + urllib.parse.urlencode({'q':term,'lang':locale})),terms[1:]))
     games, lookups, resolved, seen = [], {}, [], set()
     unavailable = False
+    partial = False
     for term, reply in zip(terms,replies):
         raw_lookups = reply.get('lookups',{})
         valid_lookups = {key:value for key,value in raw_lookups.items() if text(key,64) and text(value,64)} if isinstance(raw_lookups,dict) else {}
         lookups[term] = valid_lookups or {'worker':reply['status']}
-        unavailable |= reply['status'] != 'ok' or any(value in ('unavailable','error','timeout') for value in valid_lookups.values())
+        unavailable |= reply['status'] != 'ok'
+        partial |= any(value in ('unavailable','error','timeout') for value in valid_lookups.values())
         resolved += [name for name in reply.get('resolvedQueries',[])[:12] if text(name)]
         for game in reply['data']:
             if not isinstance(game,dict) or not number(game.get('id')) or game['id'] in seen or not text(game.get('name')) or not game['name']:
@@ -116,18 +119,58 @@ def search(query, locale):
             display = game.get('displayName')
             games.append({'id':game['id'],'name':game['name'],'displayName':display if text(display) and display else game['name'],
                           'source':game.get('source') if text(game.get('source'),64) else 'steamgriddb','dataMode':'real'})
-    status = 'partial' if games and unavailable else 'ok' if games else 'upstreamUnavailable' if unavailable else 'empty'
+    status = 'partial' if partial or (games and unavailable) else 'ok' if games else 'upstreamUnavailable' if unavailable else 'empty'
     if not games and all(reply['status'] != 'ok' for reply in replies):
         status = replies[0]['status']
-    worker_count=len(games);games=OFFICIAL.merge(games,query,locale)
+    worker_count=len(games);games=OFFICIAL.merge(games,query,locale,platform)
     if games and status not in ('ok','partial'):status='partial'
+    if platform=='switch' and games:
+        sources=TW_LINEUP.search(query,0)['covers']
+        normalize=lambda value: re.sub(r'[\W_]+','',value.casefold()) if isinstance(value,str) else ''
+        unique_exact_query=len(games)==1
+        localized_names={}
+        if locale!='zh-TW' and sources:
+            # Taiwan's catalogue uses Traditional Chinese product names. Resolve
+            # the same Worker results in zh-TW so UI locale cannot hide a match.
+            localized=fetch_json('/games/search?'+urllib.parse.urlencode({'q':query,'lang':'zh-TW'}))
+            result_ids={game['id'] for game in games}
+            for item in localized.get('data',[]):
+                if isinstance(item,dict) and number(item.get('id')) and item['id'] in result_ids and text(item.get('displayName')):
+                    localized_names[item['id']]=item['displayName']
+        changed=False
+        for game in games:
+            names=[game.get('name',''),game.get('displayName','')]
+            if localized_names.get(game['id']):names.append(localized_names[game['id']])
+            if unique_exact_query:names.append(query)
+            for cover in TW_LINEUP.matching(sources,*names):
+                artwork=game.setdefault('artworkSources',[])
+                if not any(existing.get('url')==cover['url'] for existing in artwork):
+                    artwork.insert(0,cover);changed=True
+                break
+        if changed:status=status if status in ('ok','partial') else 'partial'
     return {'status':status,'games':games,'workerCount':worker_count,'lookups':lookups,'queriedTerms':terms,
             'resolvedQueries':list(dict.fromkeys(resolved))[:24], 'suggestions':suggestions,'total':len(games),'dataMode':'real'}
 
-def covers(game_id, shape, locale, page, provider='all', official_query=''):
-    store=HK_STORE.search(official_query,page if provider=='nintendo' else 0) if provider!='community' and (official_query or provider=='nintendo') else {'status':'idle','covers':[]}
+def covers(game_id, shape, locale, page, provider='all', official_query='', platform='unknown'):
+    primary=OFFICIAL.candidates(game_id,platform) if provider!='community' else []
+    catalog=TW_LINEUP.search(official_query,page) if platform=='switch' and provider!='community' and official_query else None
     if provider=='nintendo':
-        return {**store,'artworkSources':store.get('covers',[]),'covers':[],'dataMode':'real','officialStatus':store['status']}
+        if catalog is None:catalog={'status':'idle','covers':[],'total':0,'page':page,'hasMore':False,'officialProvider':''}
+        if platform=='switch' and (catalog['status']!='ok' or not catalog['covers']):
+            fallback=HK_STORE.search(official_query,page)
+            if fallback['covers'] or catalog['status']!='ok':catalog=fallback
+            catalog.setdefault('officialProvider','nintendo-hk-store')
+        candidates=[cover for cover in catalog.get('covers',[]) if shape=='all' or cover.get('shape')==shape]
+        seen={cover.get('url') for cover in candidates}
+        if page==0 and not candidates:
+            for cover in preferred_sources(primary,platform):
+                if (shape=='all' or cover.get('shape')==shape) and cover.get('url') not in seen:
+                    candidates.append(cover);seen.add(cover.get('url'))
+        provider_name=(candidates[0].get('provider','') if candidates else '') or catalog.get('officialProvider') or (primary[0]['provider'] if primary else '')
+        status=catalog.get('status','idle')
+        if candidates and status in ('empty','idle'):status='ok'
+        return {'status':status,'page':page,'hasMore':catalog.get('hasMore',False),'total':catalog.get('total',len(candidates))+max(0,len(candidates)-len(catalog.get('covers',[]))),
+                'artworkSources':candidates,'covers':[],'dataMode':'real','officialStatus':catalog.get('status','idle'),'officialProvider':provider_name}
     reply = fetch_json(f'/games/{game_id}/covers?shape={shape}&page={page}')
     rows, seen = [], set()
     for cover in reply['data']:
@@ -145,15 +188,20 @@ def covers(game_id, shape, locale, page, provider='all', official_query=''):
                      'provider':'steamgriddb','sourceLabel':'SteamGridDB','isOfficial':False,'kind':'cover','region':''})
     rows.sort(key=lambda cover: 0 if cover['languageVerified'] and cover['language']==locale else 2 if cover['languageVerified'] else 1)
     status = reply['status'] if reply['status']!='ok' else 'ok' if rows else 'invalid' if reply['data'] else 'empty'
-    official=[cover for cover in OFFICIAL.candidates(game_id) if shape=='all' or cover['shape']==shape] if provider!='community' else []
-    if provider=='all':official=HK_STORE.matching(store.get('covers',[]),official_query)+official
+    official=preferred_sources(primary,platform)
+    if provider=='all' and catalog:
+        official.extend(cover for cover in catalog.get('covers',[]) if (shape=='all' or cover['shape']==shape) and not any(existing['url']==cover['url'] for existing in official))
+        official=preferred_sources(official,platform)
+    official=[cover for cover in official if shape=='all' or cover['shape']==shape]
     if official and status=='empty':status='ok'
     elif official and status!='ok':status='partial'
+    official_status=catalog.get('status','idle') if catalog else 'ok' if primary else 'idle'
+    official_provider=(official[0].get('provider','') if official else '') or (catalog or {}).get('officialProvider','') or (primary[0]['provider'] if primary else '')
     return {'status':status,'covers':rows,'artworkSources':official,'total':reply.get('total',len(rows)),
-            'page':reply.get('page',page),'hasMore':reply.get('hasMore',False),'dataMode':'real','officialStatus':store['status']}
+            'page':reply.get('page',page),'hasMore':reply.get('hasMore',False),'dataMode':'real','officialStatus':official_status,'officialProvider':official_provider}
 
 def image(url):
-    if not text(url,512) or not (URL_RE.fullmatch(url) or OFFICIAL.allows(url) or HK_STORE.image_url(url)):
+    if not text(url,512) or not (URL_RE.fullmatch(url) or OFFICIAL.allows(url) or nintendo_url(url) or HK_STORE.image_url(url) or TW_LINEUP.image_url(url)):
         return {'status':'invalid','image':''}
     key = hashlib.sha256(('v3:'+url).encode('ascii')).hexdigest()
     IMAGES.mkdir(parents=True, exist_ok=True)
@@ -225,14 +273,17 @@ def dispatch(params):
             except (ValueError,OSError):return {'status':'failed'}
         if operation=='search':
             query=params.get('query',[''])[0].strip()
-            return search(query,locale) if text(query) and query else {'status':'invalid','games':[]}
+            platform=params.get('platform',['unknown'])[0]
+            return search(query,locale,platform) if text(query) and query and platform in ('switch','playstation','unknown','other') else {'status':'invalid','games':[]}
         if operation=='covers':
             id_text=params.get('gameId',[''])[0]; shape=params.get('shape',[''])[0]; page=params.get('page',['0'])[0]
-            if not re.fullmatch(r'[1-9]\d{0,9}',id_text) or not number(int(id_text)) or shape not in ('square','portrait','all') or not re.fullmatch(r'\d{1,4}',page) or int(page)>1000:
+            if not re.fullmatch(r'[1-9]\d{0,9}',id_text) or not number(int(id_text)) or shape not in ('square','portrait','landscape','all') or not re.fullmatch(r'\d{1,4}',page) or int(page)>1000:
                 return {'status':'invalid','covers':[]}
             provider=params.get('provider',['all'])[0];official_query=params.get('officialQuery',[''])[0]
-            if provider not in ('all','nintendo','community') or not text(official_query):return {'status':'invalid','covers':[]}
-            return covers(int(id_text),shape,locale,int(page),provider,official_query)
+            if provider not in ('all','nintendo','community') or (provider=='nintendo' and not text(official_query)):return {'status':'invalid','covers':[]}
+            platform=params.get('platform',['unknown'])[0]
+            if platform not in ('switch','playstation','unknown','other'):return {'status':'invalid'}
+            return covers(int(id_text),shape,locale,int(page),provider,official_query,platform)
         if operation=='image':
             return image(params.get('url',[''])[0])
         return {'status':'invalid'}
@@ -272,10 +323,10 @@ def library(params):
             if not isinstance(names,dict) or len(names)>3 or any(locale not in ('zh-TW','zh-CN','en-US') or not text(name) for locale,name in names.items()):return {'status':'invalid'}
             for field in ('coverUrl','coverThumb'):
                 url=record.get(field,'')
-                allowed=not url or (text(url,512) and (URL_RE.fullmatch(url) or OFFICIAL.allows(url) or HK_STORE.image_url(url))) or (mode=='fixture' and re.fullmatch(r'preview/fixtures/[a-z0-9-]+\.(?:jpg|png|webp|svg)',url))
+                allowed=not url or (text(url,512) and (URL_RE.fullmatch(url) or OFFICIAL.allows(url) or nintendo_url(url) or HK_STORE.image_url(url) or TW_LINEUP.image_url(url))) or (mode=='fixture' and re.fullmatch(r'preview/fixtures/[a-z0-9-]+\.(?:jpg|png|webp|svg)',url))
                 if not allowed:return {'status':'invalid'}
             provider=record.get('provider','steamgriddb');is_official=record.get('isOfficial',False)
-            if provider not in (('steamgriddb','nintendo-tw','nintendo-hk-eshop','nintendo-hk-store','fixture') if mode=='fixture' else ('steamgriddb','nintendo-tw','nintendo-hk-eshop','nintendo-hk-store')) or type(is_official)!=bool:return {'status':'invalid'}
+            if provider not in (('steamgriddb','nintendo-tw','nintendo-hk-eshop','nintendo-hk-store','playstation-tw','fixture') if mode=='fixture' else ('steamgriddb','nintendo-tw','nintendo-hk-eshop','nintendo-hk-store','playstation-tw')) or type(is_official)!=bool:return {'status':'invalid'}
             if provider in ('nintendo-tw','nintendo-hk-eshop'):
                 expected=('TW','Official Nintendo Taiwan') if provider=='nintendo-tw' else ('HK','Official Nintendo eShop CDN')
                 if not is_official or record.get('language') not in ('zh-TW','zh-CN','en-US','ja-JP','zxx','') or (record.get('region'),record.get('sourceLabel'))!=expected or record.get('kind') not in ('boxArt','logo','keyArt','squareIcon'):return {'status':'invalid'}

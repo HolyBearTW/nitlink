@@ -370,6 +370,7 @@ bool Config::Load(const std::string& path)
                 if (Games::IsLocale(locale) && Games::ValidText(text)) game.displayNames[locale] = text;
             } else if (field == "cover_url" && (text.empty() || Games::IsCoverUrl(text))) game.coverUrl = text;
             else if (field == "cover_thumb" && (text.empty() || Games::IsCoverUrl(text))) game.coverThumb = text;
+            else if (field == "cover_shape" && (text.empty() || text==L"square" || text==L"portrait" || text==L"landscape")) game.coverShape=text;
             else if (field == "cover_id") game.coverId = Games::ParseId(val);
             else if (field == "cover_provider") game.provider = text;
             else if (field == "cover_source_label") game.sourceLabel = text;
@@ -795,6 +796,7 @@ bool Config::Save(const std::string& path)
             file << prefix << "display_" << ConfigUtf8(locale) << " = " << ConfigUtf8(name) << "\n";
         file << prefix << "cover_url = " << ConfigUtf8(game.coverUrl) << "\n";
         file << prefix << "cover_thumb = " << ConfigUtf8(game.coverThumb) << "\n";
+        file << prefix << "cover_shape = " << ConfigUtf8(game.coverShape) << "\n";
         file << prefix << "cover_id = " << game.coverId << "\n";
         file << prefix << "cover_provider = " << ConfigUtf8(game.provider) << "\n";
         file << prefix << "cover_source_label = " << ConfigUtf8(game.sourceLabel) << "\n";

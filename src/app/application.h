@@ -61,6 +61,8 @@ private:
     // Identity and live signal metadata are independent. Label changes also
     // refresh Discord, preserving the current activity's start time.
     void UpdateWindowTitle();
+    std::wstring GetGameArtworkPlatform() const;
+    void RefreshGameArtworkContext();
     std::wstring GetEffectiveHdmiSourceLabel() const;
     std::wstring GetLiveHdmiSignalLabel() const;
     std::wstring GetDiscordSignalLabel() const;
@@ -279,6 +281,7 @@ private:
     std::wstring m_lastDiscordPreviewStatus;
     std::unique_ptr<Games::GameService> m_gameService;
     std::map<uint32_t, Games::Game> m_searchGames;
+    std::wstring m_gameArtworkPlatform;
     std::map<uint32_t, Games::Cover> m_searchDefaultCovers;
     std::map<uint32_t, Games::Cover> m_gameCovers;
     std::map<uint32_t, std::wstring> m_coverImages;

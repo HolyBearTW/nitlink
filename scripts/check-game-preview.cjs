@@ -17,6 +17,8 @@ const {installExactDocument}=require('./preview-browser.cjs');
   await page.waitForSelector('.game-result',{timeout:10000}).catch(async error=>{console.log('Fixture startup:',await page.evaluate(()=>({url:location.href,ready:document.readyState,mode:window.NitLinkPreview,query:document.querySelector('#game-query')?.value,status:document.querySelector('#game-search-status')?.textContent,pane:document.querySelector('#pane-games')?.dataset.active,count:document.querySelectorAll('.game-result').length,banner:document.querySelector('#game-fixture-banner')?.hidden})));throw error;});
   await page.locator('.game-result').first().click();
   await page.waitForFunction(()=>document.getElementById('game-current-title').textContent.includes('曠野之息'));
+  assert.equal(await page.locator('#game-shape-all').getAttribute('aria-pressed'),'true','all cover shapes are selected by default');
+  assert.equal(await page.locator('#game-gallery').getAttribute('data-shape'),'all','default cover request displays every orientation');
   await page.locator('#game-cover-retry').click();
   await page.waitForSelector('.game-cover');
   await page.waitForFunction(()=>document.querySelector('#game-gallery img')?.complete);
@@ -30,6 +32,7 @@ const {installExactDocument}=require('./preview-browser.cjs');
   for (const locale of ['zh-TW','zh-CN','en-US']) {
     await page.selectOption('#game-preview-language',locale);
     await page.waitForFunction(locale=>document.documentElement.lang===locale,locale);
+    assert.equal(await page.locator('#game-query').getAttribute('placeholder'),await page.evaluate(()=>window.NitLinkLocales[document.documentElement.lang]['game.searchPlaceholder']),`${locale} game search placeholder`);
     for(const layout of ['full','left','right']) {
       await page.selectOption('#game-preview-layout',layout);
       await page.waitForTimeout(100);

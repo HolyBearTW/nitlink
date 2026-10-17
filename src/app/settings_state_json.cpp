@@ -116,7 +116,7 @@ std::wstring SerializeArtworkMetadataProperties(const Games::ArtworkMetadata& ar
 }
 std::wstring SerializeArtworkEditProperties(const Games::SavedGame& game){
     std::wostringstream out;out.imbue(std::locale::classic());
-    out<<L"\"artworkMode\":\""<<game.artworkMode<<L"\",\"finalImageKey\":\""<<game.finalImageKey<<L"\",\"sourceImageKey\":\""<<game.sourceImageKey
+    out<<L"\"coverShape\":\""<<game.coverShape<<L"\",\"artworkMode\":\""<<game.artworkMode<<L"\",\"finalImageKey\":\""<<game.finalImageKey<<L"\",\"sourceImageKey\":\""<<game.sourceImageKey
         <<L"\",\"cropX\":"<<game.cropX<<L",\"cropY\":"<<game.cropY<<L",\"artworkZoom\":"<<game.artworkZoom
         <<L",\"discordArtworkState\":\""<<(game.artworkMode==L"original"?L"unverified":L"localOnly")<<L"\"";
     return out.str();
