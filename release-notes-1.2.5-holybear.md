@@ -2,59 +2,56 @@
 
 **非官方社群整合版（Unofficial Community Edition）。**
 
-保留 HolyBear 的 HDMI／VRR、FPS／Present Cap、低延遲音訊與更新功能，選擇性移植官方 NitLink v1.2.4 修正；並非 nitlink-dev 官方發行版。
+保留 HolyBear Edition 的擷取、畫面、音訊與設定功能，並選擇性整合 NitLink v1.2.4 的修正；這不是 nitlink-dev 官方發行版。
 
 ## 本次更新
 
-### 遊戲、我的遊戲庫與 Discord
+### 遊戲與 Discord
 
-- 新增獨立「遊戲與 Discord」頁面，支援繁中、簡中與英文搜尋、完整結果捲動、真實 API 封面分頁及 Full／Docked 響應式介面。
-- 收藏與最近遊玩保存在原生 Config；各遊戲獨立記住名稱、封面、來源與裁切，啟動直接還原。移除收藏不刪除畫質設定。
-- Switch／Switch 2 優先使用已核實的 Nintendo Taiwan 素材；同款沒有台灣對應時才使用香港任天堂商店備選，保留 SteamGridDB 候選。其他主機不自動套用 Nintendo 規則；PS5／PS4 已加入兩款核實的 PlayStation Taiwan 官方對應。圖片語言未確認時，不標示為繁中。
-- 加入真正輸出正方形圖片的「完整顯示／填滿裁切／原圖」編輯器、拖曳縮放、84／64px 參考預覽與本機快取。
-- 「調整封面」緊接「儲存此遊戲畫質」，兩個搜尋按鈕採用相同樣式；保留既有設定操作。
-- 同一遊戲更換封面、語言或 HDMI 來源保留計時，切換遊戲才重新計時。預覽區分本機圖片與 Discord 實際可用狀態。
-- 修正 Discord 的 `evt: null` 回應解析，使用 nonce 關聯活動請求；公開 HTTPS 封面與代理狀態分開記錄。Switch 封面確認遭代理拒絕時，可改用同款台灣圖片，不更改收藏原圖或計時。
-- 主視窗標題整合動態遊戲庫名稱、有效 HDMI 來源與已確認的來源訊號，保留 Unicode、HDR／VRR 判斷及標題快取。
+- 新增「遊戲與 Discord」頁面，可以依介面語言搜尋遊戲、收藏遊戲，並快速切換最近遊玩的作品。
+- 收藏會保存在本機。重開 NitLink 後，遊戲名稱、封面和畫質設定都會保留；移除收藏不會刪除該遊戲的畫質設定。
+- 封面會等候本頁圖片載入後再自動挑選：有合適官方圖片時優先使用，否則選擇方形圖片。英文、簡中或德文介面不會自動套用台灣封面；仍可自行選取。
+- 封面圖庫會把官方圖片、方形圖片和其他圖片分開排列。圖片資訊可按開查看；台灣任天堂素材會標示「台灣任天堂」與「繁體中文」，社群圖片會以英文標示語言。
+- Discord 活動預覽會跟隨目前選定的遊戲封面與 Discord 可取得的圖片。只更換封面、語言或 HDMI 來源時，遊玩時間會繼續累計。
+- 遊戲名稱會依介面語言顯示，支援繁中、簡中、英文和德文；自訂名稱仍會優先顯示。
+- 主視窗標題會顯示目前遊戲、訊號來源與已確認的訊號資訊，切換遊戲或訊號時同步更新。
 
-### 官方 1.2.4 修正
+### 畫面與擷取修正
 
-- 自適應學習重複影格雜訊，改善部分 30 FPS 內容經 60 Hz 擷取時被視為 60 個不同影格；保留 tile rescue 與平滑。
-- Elgato 4K X 卡端 tone mapping 跟隨實際協商的 P010／SDR，涵蓋開啟、回退與重開，不對 GC553Pro 套用 Elgato 命令。
-- F1 關閉後縮零並非同步隱藏 WebView drawing surface，觸發 composition refresh；保留 Full Wide／Left／Right 與安全恢復。
-- 修復 About 貢獻者行內文字被分隔的問題；保留原有姓名、帳號、圖示與連結。
+- 改善重複影格判斷，降低部分 30 FPS 遊戲被顯示成 60 FPS 的情況。
+- 修正 Elgato 4K X 在不同擷取格式下的 HDR 色彩處理，讓 HDR 與 SDR 輸出依實際使用的格式選擇處理方式。
+- 修正關閉 F1 設定畫面後偶爾殘留在遊戲畫面上的問題，並保留 Full、Docked Left、Docked Right 和 Full Wide 使用方式。
+- 關閉 F1 設定後即可返回遊戲；再次開啟時仍會使用原本的設定與安全檢查。
 
-### 保留既有整合
+### 保留的 HolyBear Edition 功能
 
-- 保留 GC553Pro HDR10／P010／NV12、HDMI Timing／VRR、手動來源、No Signal 與訊號重新同步。
-- 保留 Content FPS 主顯示、Tab 輔助資訊、非整數更新率與 Present Cap 排程；自動模式無法取得更新率時仍採 30 Hz fallback。
-- CN_115 WASAPI、漂移補償、格式轉換、獨占／焦點回退不變；預設維持 FIFO 12 ms／Render 10 ms。
-- 自動更新檢查預設關閉，啟用後每 24 小時最多一次，不自動下載或安裝；Setup／Portable、GPG／SHA256 流程保留。
+- 保留 GC553Pro 的 HDMI 來源、訊號同步、HDR、VRR、No Signal 畫面及手動來源名稱。
+- 保留 FPS 顯示與畫面更新限制；自動模式無法取得更新率時仍使用 30 Hz fallback。
+- 保留低延遲音訊、裝置切換回復與音訊診斷，預設音訊緩衝仍為 FIFO 12 ms、Render 10 ms。
+- 保留更新檢查、Portable ZIP、Setup、檔案校驗及發布簽章流程。
 
 ## 測試與驗證
 
-- 本機加工的正方形 PNG 尚無公開 HTTPS 位址，不能直接交給 Discord；目前 Discord 使用原始遠端圖片或已驗證的備援候選。IPC 接受、圖片代理可取得、Discord 客戶端畫面確認是不同狀態。
-- Nintendo Taiwan 與 PlayStation Taiwan 僅加入已核實映射，尚未涵蓋全站遊戲；官方來源不代表圖片包含繁體中文標題。
-
-- 本地驗證涵蓋 x64 Release、完整 CTest、真正 FrameDiffer WARP、原生 WebView2、安全及三語資源。詳細紀錄見[移植盤點](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/game-search-presence/docs/UPSTREAM-1.2.4-PORT-AUDIT.md)，封裝時由流程附加實際結果，不預填成功數字。
-- 歷史 GC553Pro／音訊紀錄來自既有 1.2.4 安裝版，不代表 1.2.4.1 正式產物，也不代表本次 1.2.5 硬體實測。
-- 本次沒有自動發布、建立 Tag 或產生正式 GPG 分離式簽章；腳本測試與非發布封裝不等於正式簽章。
+- 正式封裝會附上該次實際建置與測試結果；這份更新日誌不預填測試數字。
+- NitLink 不會把本機圖片交給 Discord，也不會自動上傳使用者圖片。自訂裁切圖可在 NitLink 預覽；沒有公開圖片來源時，不會顯示成 Discord 已套用。
+- Discord 活動能送出，不代表 Discord 桌面程式一定顯示了封面；GC553Pro／Switch 2 等硬體仍須實際測試。
+- 歷史硬體紀錄使用既有 1.2.4 安裝版，不代表 1.2.4.1 正式產物，也不代表本次 1.2.5 實機驗收。
 
 ## 已知限制
 
-- 4K X 的 4K120 HDR→NV12 色彩、P010 HDR，以及 GC553Pro HDR／SDR／VRR／訊號切換仍須硬體實測。
-- F1 controller／bounds 自動化不等於每一種 GPU／桌面合成環境均沒有殘影。
-- Discord IPC 接受網址不等於客戶端成功繪製。新增香港圖及加工圖仍須明確標示可用狀態；加工圖片沒有自動上傳，不傳本機路徑給 Discord。
-- 瀏覽器 Host 的硬體／原生 Config 橋接是模擬，真實搜尋／圖片來自 API 或官方來源，不用 Fixture 代替硬體證據。
-- Content FPS 是影格內容變化估計，不是遊戲引擎 FPS。沒有提供 Steam Frame Generation；EXE／Setup 沒有 Windows Authenticode 發行者簽章。
+- 本次沒有新增 PS5 官方封面搜尋；目前的 PS5 封面範圍不變。
+- Nintendo Taiwan 的圖片只會在有對應素材時出現；圖片來源為官方網站，不代表每張圖都含繁體中文標題。
+- Discord 主要封面顯示仍受 Discord 圖片代理與桌面程式實際讀取結果影響。NitLink 會顯示目前能確認的圖片狀態，不把本機預覽當成 Discord 已顯示。
+- GC553Pro、Switch 2、HDR／VRR、音訊切換及 Discord 桌面圖片仍待使用者實機驗收。
+- Content FPS 顯示的是畫面內容變化速度，不是遊戲內部 FPS。本版本沒有提供 Steam Frame Generation。
 
 ## 來源、授權與致謝
 
-- 原始專案：[nitlink-dev/nitlink](https://github.com/nitlink-dev/nitlink)，固定來源 [v1.2.4](https://github.com/nitlink-dev/nitlink/tree/0a093cc8e41fd04ffe13196122dc1a03dc9a0d6a)。
-- 保留 [#23](https://github.com/nitlink-dev/nitlink/pull/23)、[#25](https://github.com/nitlink-dev/nitlink/pull/25)、[#31](https://github.com/nitlink-dev/nitlink/pull/31) 的 HDMI／VRR、手動來源／Discord 與 FPS／Present Cap 修改。
-- 低延遲音訊與簡中：[CN_115（@CN115）](https://github.com/CN115/nitlink-lowlatency/tree/v0.1.2)。整合：[聖小熊（@HolyBearTW）](https://github.com/HolyBearTW)，保留 Nathan K.（@n810K）等既有貢獻者致謝。
-- [MIT 授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSE)、[第三方授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSES.md)、[致謝](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/ACKNOWLEDGMENTS.md)與[來源紀錄](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/HOLYBEAR-SOURCES.json)完整保留。圖片來源與署名保留在詳情，不把加工圖標為官方原生素材。
+- 原始專案：[nitlink-dev/nitlink](https://github.com/nitlink-dev/nitlink)，本次上游修正來源為 [v1.2.4](https://github.com/nitlink-dev/nitlink/tree/0a093cc8e41fd04ffe13196122dc1a03dc9a0d6a)。
+- 保留 [#23](https://github.com/nitlink-dev/nitlink/pull/23)、[#25](https://github.com/nitlink-dev/nitlink/pull/25)、[#31](https://github.com/nitlink-dev/nitlink/pull/31) 的 HDMI／VRR、手動來源與 FPS 顯示修改。
+- 低延遲音訊與簡中：[CN_115（@CN115）](https://github.com/CN115/nitlink-lowlatency/tree/v0.1.2)。整合與維護：[聖小熊（@HolyBearTW）](https://github.com/HolyBearTW)，並保留 Nathan K.（@n810K）等既有貢獻者資訊。
+- [MIT 授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSE)、[第三方授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSES.md)、[致謝](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/ACKNOWLEDGMENTS.md)與[來源紀錄](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/HOLYBEAR-SOURCES.json)均保留。圖片來源與署名可在封面資訊中查看。
 
 ## English Summary
 
-This unofficial update adds multilingual game search, a persistent library, Nintendo HK/TW artwork and square-cover editing. It selectively ports upstream 1.2.4 adaptive duplicate detection, negotiated-format 4K X tone mapping and F1 composition refresh. HolyBear audio defaults remain 12/10 ms. Hardware and Discord client rendering still require validation. This local integration task does not publish a release or sign official artifacts.
+This unofficial update adds a multilingual game library, localized titles, cover selection and Discord activity preview improvements. It also includes selected upstream v1.2.4 fixes while preserving HolyBear capture, FPS and audio features. Discord client artwork and capture hardware still require hands-on validation. No release was created by this change.
