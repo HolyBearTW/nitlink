@@ -38,7 +38,11 @@ if ($files.Count -ne $checksums.Count + 1) { throw 'ZIP file set does not match 
 & "$PSScriptRoot/validate-package.ps1" -Path $fresh -HolyBear
 $buildInfo = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $fresh 'BUILD.txt') -Raw)
 if ($buildInfo.commit -ne $ExpectedCommit -or $buildInfo.tag -ne $ExpectedTag -or
-    $buildInfo.version -ne $info.Version -or $buildInfo.source_repository -ne 'HolyBearTW/nitlink') { throw 'BUILD.txt source mismatch.' }
+    $buildInfo.version -ne $info.Version -or -not (Test-HolyBearRepositoryName $buildInfo.source_repository)) { throw 'BUILD.txt source mismatch.' }
+if ($env:GITHUB_ACTIONS -ceq 'true') {
+    Assert-HolyBearRepositoryIdentity
+    if ($buildInfo.source_repository -cne $env:GITHUB_REPOSITORY) { throw 'BUILD.txt repository differs from the verified Actions repository.' }
+}
 if ($RequireTag -and $buildInfo.tag_source_verified -ne 'true') { throw 'Package was not built from the required source tag.' }
 $source = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'HOLYBEAR-SOURCES.json') -Raw | ConvertFrom-Json
 if ($buildInfo.upstream_commit -ne $source.upstream.commit -or $buildInfo.pr31_commit -ne $source.pr31.commit -or

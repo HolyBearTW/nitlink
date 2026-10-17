@@ -2,6 +2,41 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $HolyBearRoot = Split-Path $PSScriptRoot -Parent
+$script:HolyBearRepositoryIds = @{ Repository = '1376078644'; Owner = '50009618'; OwnerName = 'HolyBearTW' }
+$script:HolyBearRepositoryNames = @('HolyBearTW/nitlink', 'HolyBearTW/nitlink-holybear-edition')
+
+function Test-HolyBearRepositoryName([string]$Name) {
+    return $script:HolyBearRepositoryNames -ccontains $Name
+}
+
+function Test-HolyBearRepositoryIdentity {
+    return $env:GITHUB_ACTIONS -ceq 'true' -and
+        $env:GITHUB_REPOSITORY_ID -ceq $script:HolyBearRepositoryIds.Repository -and
+        $env:GITHUB_REPOSITORY_OWNER_ID -ceq $script:HolyBearRepositoryIds.Owner -and
+        $env:GITHUB_REPOSITORY_OWNER -ceq $script:HolyBearRepositoryIds.OwnerName -and
+        (Test-HolyBearRepositoryName $env:GITHUB_REPOSITORY)
+}
+
+function Assert-HolyBearRepositoryIdentity {
+    if (-not (Test-HolyBearRepositoryIdentity)) {
+        throw 'GitHub Actions repository identity is not the authorized HolyBear repository.'
+    }
+}
+
+function Get-HolyBearRepositoryName {
+    if ($env:GITHUB_ACTIONS -ceq 'true') {
+        Assert-HolyBearRepositoryIdentity
+        return $env:GITHUB_REPOSITORY
+    }
+    $origin = (& git -C $HolyBearRoot remote get-url origin 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $origin) { throw 'Cannot establish the local HolyBear repository origin.' }
+    $origin = $origin.Trim()
+    if ($origin -match '^https://github\.com/(HolyBearTW/nitlink(?:-holybear-edition)?)(?:\.git)?$' -or
+        $origin -match '^git@github\.com:(HolyBearTW/nitlink(?:-holybear-edition)?)(?:\.git)?$') {
+        if (Test-HolyBearRepositoryName $Matches[1]) { return $Matches[1] }
+    }
+    throw 'Local origin is not one of the verified HolyBear repositories.'
+}
 
 function Get-HolyBearVersion {
     $value = (Get-Content -LiteralPath (Join-Path $HolyBearRoot 'VERSION') -Raw).Trim()

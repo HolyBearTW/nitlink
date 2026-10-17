@@ -1,11 +1,11 @@
 param([Parameter(Mandatory)][string]$Tag, [Parameter(Mandatory)][string]$Assets)
 . "$PSScriptRoot/holy-bear-common.ps1"
 . "$PSScriptRoot/holy-bear-release-notes.ps1"
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/nitlink' -or
-    $env:GITHUB_EVENT_NAME -ne 'push' -or $env:GITHUB_REF -ne "refs/tags/$Tag") {
-    throw 'Publication is restricted to a tag-push Actions run in HolyBearTW/nitlink.'
+Assert-HolyBearRepositoryIdentity
+if ($env:GITHUB_EVENT_NAME -cne 'push' -or $env:GITHUB_REF -cne "refs/tags/$Tag") {
+    throw 'Publication is restricted to a matching tag-push Actions run.'
 }
-$repo = 'HolyBearTW/nitlink'
+$repo = Get-HolyBearRepositoryName
 $info = Get-HolyBearVersion
 $commit = Get-HolyBearCommit
 Assert-HolyBearSignedTag $Tag $commit

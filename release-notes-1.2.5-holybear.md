@@ -36,7 +36,7 @@
 - 本機加工的正方形 PNG 尚無公開 HTTPS 位址，不能直接交給 Discord；目前 Discord 使用原始遠端圖片或已驗證的備援候選。IPC 接受、圖片代理可取得、Discord 客戶端畫面確認是不同狀態。
 - Nintendo Taiwan 與 PlayStation Taiwan 僅加入已核實映射，尚未涵蓋全站遊戲；官方來源不代表圖片包含繁體中文標題。
 
-- 本地驗證涵蓋 x64 Release、完整 CTest、真正 FrameDiffer WARP、原生 WebView2、安全及三語資源。詳細紀錄見[移植盤點](https://github.com/HolyBearTW/nitlink/blob/holybear/game-search-presence/docs/UPSTREAM-1.2.4-PORT-AUDIT.md)，封裝時由流程附加實際結果，不預填成功數字。
+- 本地驗證涵蓋 x64 Release、完整 CTest、真正 FrameDiffer WARP、原生 WebView2、安全及三語資源。詳細紀錄見[移植盤點](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/game-search-presence/docs/UPSTREAM-1.2.4-PORT-AUDIT.md)，封裝時由流程附加實際結果，不預填成功數字。
 - 歷史 GC553Pro／音訊紀錄來自既有 1.2.4 安裝版，不代表 1.2.4.1 正式產物，也不代表本次 1.2.5 硬體實測。
 - 本次沒有自動發布、建立 Tag 或產生正式 GPG 分離式簽章；腳本測試與非發布封裝不等於正式簽章。
 
@@ -53,7 +53,7 @@
 - 原始專案：[nitlink-dev/nitlink](https://github.com/nitlink-dev/nitlink)，固定來源 [v1.2.4](https://github.com/nitlink-dev/nitlink/tree/0a093cc8e41fd04ffe13196122dc1a03dc9a0d6a)。
 - 保留 [#23](https://github.com/nitlink-dev/nitlink/pull/23)、[#25](https://github.com/nitlink-dev/nitlink/pull/25)、[#31](https://github.com/nitlink-dev/nitlink/pull/31) 的 HDMI／VRR、手動來源／Discord 與 FPS／Present Cap 修改。
 - 低延遲音訊與簡中：[CN_115（@CN115）](https://github.com/CN115/nitlink-lowlatency/tree/v0.1.2)。整合：[聖小熊（@HolyBearTW）](https://github.com/HolyBearTW)，保留 Nathan K.（@n810K）等既有貢獻者致謝。
-- [MIT 授權](https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSE)、[第三方授權](https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSES.md)、[致謝](https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/ACKNOWLEDGMENTS.md)與[來源紀錄](https://github.com/HolyBearTW/nitlink/blob/holybear/game-search-presence/HOLYBEAR-SOURCES.json)完整保留。圖片來源與署名保留在詳情，不把加工圖標為官方原生素材。
+- [MIT 授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSE)、[第三方授權](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSES.md)、[致謝](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/ACKNOWLEDGMENTS.md)與[來源紀錄](https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/HOLYBEAR-SOURCES.json)完整保留。圖片來源與署名保留在詳情，不把加工圖標為官方原生素材。
 
 ## English Summary
 

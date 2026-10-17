@@ -1,6 +1,6 @@
 # HolyBear Edition releases
 
-This is the independent `holybear/integrated` branch in `HolyBearTW/nitlink`.
+This is the independent `holybear/integrated` branch in `HolyBearTW/nitlink-holybear-edition`.
 It preserves the validated main + #31 + #23 + selected CN_115 v0.1.2 source
 snapshot. It does not merge the entire audio fork or duplicate #25's manual
 HDMI identity implementation. No upstream PR branch is changed by this flow.
@@ -14,7 +14,7 @@ Keep original source attribution in HOLYBEAR-SOURCES.json and docs/cn115.
 
 ### Release note writing style
 
-Use the maintainer-edited [1.2.4.1 Release](https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear)
+Use the maintainer-edited [1.2.4.1 Release](https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear)
 as the writing/style reference for future versions:
 
 - Write primarily in Traditional Chinese, with a short English Summary.
@@ -60,6 +60,10 @@ Tags matching `v*-holybear*` trigger a fresh build from the tag's commit and
 automatic **official Latest Release** publication (`prerelease=false`). Future
 versions, including four numeric components, need corresponding source version
 updates; a mismatched tag or a commit outside the integration branch is rejected.
+The workflow and release tools require repository ID `1376078644`, owner ID
+`50009618`, owner `HolyBearTW`, and the exact current name `HolyBearTW/nitlink`
+or `HolyBearTW/nitlink-holybear-edition`; these values identify the same
+repository across the planned rename and reject forks.
 Formal sources must be annotated OpenPGP-signed tags authorized by
 `HOLYBEAR-TAG-SIGNING.json`. `Assert-HolyBearSignedTag` checks the exact VERSION,
 direct built Commit, reviewed integration ancestry, cryptographic signature,
@@ -137,7 +141,7 @@ Validation tags are not supported. Remove duplicate Repository GPG Secrets
 before this test so missing Environment Secrets cannot resolve from another scope.
 
 Only the Environment-protected signing/publication stage has contents:write; it uses GITHUB_TOKEN and is
-restricted to HolyBearTW/nitlink. It verifies downloaded CI artifacts, refuses
+restricted to the verified HolyBear repository identity. It verifies downloaded CI artifacts, refuses
 an existing Release, creates a draft with all assets, verifies the uploaded
 draft bytes and all signatures, then publishes it as an official Latest Release.
 It checks the public downloads and /releases/latest afterward. Failures stop the job. Existing

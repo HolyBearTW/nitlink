@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
             L"v1.2.4.1.1-holybear", L"v65536.2.4-holybear", L"v1.2.4.-holybear", L"v1.2.4-holybear/evil"})
         check(!ParseVersion(bad), "invalid/other edition version");
     auto response = [](std::string tag) {
-        return HttpReply{200, 0, "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":false,\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/" + tag + "\",\"assets\":[],\"body\":null}"};
+        return HttpReply{200, 0, "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":false,\"html_url\":\"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/" + tag + "\",\"assets\":[],\"body\":null}"};
     };
     std::string currentTag = "v";
     for (auto c : Version) currentTag.push_back(static_cast<char>(c));
@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
         "published 1.2.4 recognizes new revision tag");
     const auto revision = ClassifyReply(response("v1.2.4.1-holybear"), L"1.2.4-holybear");
     check(revision.tag == L"v1.2.4.1-holybear" &&
-        std::wstring(ReleasePrefix) + revision.tag == L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear" &&
+        std::wstring(ReleasePrefix) + revision.tag == L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear" &&
         IsReleaseUrl(std::wstring(ReleasePrefix) + revision.tag), "revision update retains the exact official v-tag URL");
     const std::pair<const char*, const char*> invalidRevisionFields[] = {
         {"\"draft\":false", "\"draft\":true"},
@@ -55,11 +55,11 @@ int main(int argc, char** argv) {
         {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"1.2.4.1-holybear\""},
         {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"v1.2.4.1-holybear-beta\""},
         {"\"tag_name\":\"v1.2.4.1-holybear\"", "\"tag_name\":\"v1.2.4.2-holybear\""},
-        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":false"},
-        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":42"},
-        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink/releases/tag/1.2.4.1-holybear"},
-        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear?redirect=evil"},
-        {"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear", "https://github.com/CN115/nitlink/releases/tag/v1.2.4.1-holybear"}
+        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":false"},
+        {"\"html_url\":\"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear\"", "\"html_url\":42"},
+        {"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/1.2.4.1-holybear"},
+        {"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear", "https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear?redirect=evil"},
+        {"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear", "https://github.com/CN115/nitlink/releases/tag/v1.2.4.1-holybear"}
     };
     for (const auto& [field, replacement] : invalidRevisionFields) {
         auto reply = response("v1.2.4.1-holybear");
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     check(ClassifyReply({404, 0, "{}"}).status == UpdateStatus::NotFound, "404 means no release endpoint found");
     for (auto code : {500u, 502u, 503u, 599u})
         check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ServerUnavailable, "5xx server unavailable");
-    for (auto code : {400u, 401u, 418u, 302u})
+    for (auto code : {301u, 302u, 400u, 401u, 418u})
         check(ClassifyReply({code, 0, "{}"}).status == UpdateStatus::ApiUnavailable, "other HTTP response nonfatal");
     check(ParseRateLimitRemaining("0") == 0, "rate limit header parses zero");
     check(ParseRateLimitRemaining(" 28\r\n") == 28, "rate limit header trims HTTP whitespace");
@@ -104,9 +104,14 @@ int main(int argc, char** argv) {
     check(AutoCheckDue(true, false, 186400, 100000), "exact 24 hours");
     check(!AutoCheckDue(false, false, 300000, 100000), "disabled even when overdue");
     check(!AutoCheckDue(true, false, 1, UINT64_MAX), "clock rollback and no unsigned underflow");
-    check(IsReleaseUrl(L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.2-holybear"), "validated release destination");
-    for (auto bad : {L"https://github.com/nitlink-dev/nitlink/releases/tag/v1.2.5-holybear", L"https://github.com/CN115/nitlink/releases/tag/v1.2.5-holybear",
-            L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear?redirect=evil", L"https://github.com@evil/nitlink", L"file:///run.exe"})
+    check(ReleaseApiPath == L"/repos/HolyBearTW/nitlink-holybear-edition/releases/latest", "fixed canonical Releases API endpoint");
+    check(IsReleaseUrl(L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.2-holybear"), "validated release destination");
+    for (auto bad : {L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
+            L"https://github.com/nitlink-dev/nitlink/releases/tag/v1.2.5-holybear", L"https://github.com/CN115/nitlink/releases/tag/v1.2.5-holybear",
+            L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear?redirect=evil",
+            L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear#fragment",
+            L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear/extra",
+            L"https://github.com@evil/nitlink", L"file:///run.exe"})
         check(!IsReleaseUrl(bad), "unsafe release link rejected");
     std::atomic<unsigned> requests{0}; std::atomic<bool> release{false};
     UpdateChecker worker([&](std::stop_token stop) {

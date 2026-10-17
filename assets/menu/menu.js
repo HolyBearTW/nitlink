@@ -166,7 +166,7 @@
       status.hidden = key === 'never';
       const link = document.getElementById('holy-bear-release-link');
       const validTag = /^v\d+\.\d+\.\d+(?:\.\d+)?-holybear$/.test(latestTag);
-      const expectedUrl = validTag ? 'https://github.com/HolyBearTW/nitlink/releases/tag/' + latestTag : '';
+      const expectedUrl = validTag ? 'https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/' + latestTag : '';
       const showRelease = s.hasNewer === true && key === 'available' && typeof s.url === 'string' && s.url === expectedUrl;
       link.hidden = !showRelease;
       if (showRelease) link.href = expectedUrl;

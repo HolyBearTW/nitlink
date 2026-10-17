@@ -1,6 +1,7 @@
 param([Parameter(Mandatory)][string]$Assets)
 . "$PSScriptRoot/holy-bear-common.ps1"
-if ($env:GITHUB_ACTIONS -ne 'true' -or $env:GITHUB_REPOSITORY -ne 'HolyBearTW/nitlink' -or -not $env:RUNNER_TEMP) {
+Assert-HolyBearRepositoryIdentity
+if (-not $env:RUNNER_TEMP) {
     throw 'Installer execution tests are restricted to the disposable HolyBear Actions runner.'
 }
 $info = Get-HolyBearVersion

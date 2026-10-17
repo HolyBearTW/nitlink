@@ -33,7 +33,7 @@ Assert-Notes (([regex]::Matches($notes, '(?m)^```').Count % 2) -eq 0) 'balanced 
 
 $commit = '0123456789abcdef0123456789abcdef01234567'
 $otherCommit = 'abcdef0123456789abcdef0123456789abcdef01'
-$actions = 'https://github.com/HolyBearTW/nitlink/actions/runs/123456789'
+$actions = 'https://github.com/HolyBearTW/nitlink-holybear-edition/actions/runs/123456789'
 $passed = [pscustomobject]@{tests = 7; passed = 7; failures = 0; skipped = 0; knownFailure = $null}
 $baseline = [pscustomobject]@{tests = 7; passed = 6; failures = 1; skipped = 0; knownFailure = 'FAIL restarted host reloads the packaged menu'}
 $preview = Get-HolyBearReleaseNotes -Notes $notes -Title $info.Title -Commit $commit -Tag $info.Tag -Summary $passed -ActionsUrl $actions

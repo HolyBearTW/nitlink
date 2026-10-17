@@ -50,7 +50,7 @@ NitLink::WebViewCoreSettingsState RuntimeNativeStateFixture() {
     state.holyBearUpdate.hasNewer = true;
     state.holyBearUpdate.unread = true;
     state.holyBearUpdate.url =
-        L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear";
+        L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear";
     state.manualHdmiSource = L"switch2";
     state.effectiveHdmiSource = L"Switch 2";
     for (const auto& [value, label] : NitLink::kManualHdmiSources) {
@@ -675,7 +675,7 @@ int main(int argc, char** argv) {
             const std::wstring state = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"holyBearUpdate\":{\"current\":\"1.2.4-holybear\",\"latest\":\"v1.2.5-holybear\","
                 L"\"lastCheckUtc\":1791730000,\"automatic\":false,\"busy\":false,\"status\":\"available\","
-                L"\"hasNewer\":true,\"unread\":true,\"url\":\"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear\"}}}";
+                L"\"hasNewer\":true,\"unread\":true,\"url\":\"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear\"}}}";
             host.PostMessage(state);
             Check(PumpUntil([&] { return Script(view, L"document.getElementById('holy-bear-update-status').textContent === window.NitLinkLocales[document.documentElement.lang]['update.available'].replace('{version}', '1.2.5-holybear') && document.getElementById('holy-bear-release-link').href.endsWith('/v1.2.5-holybear') && !document.getElementById('holy-bear-update-badge').hidden && !document.getElementById('holy-bear-latest-version') && document.getElementById('holy-bear-last-check').closest('.about-update') !== null") == L"true"; }),
                   "HolyBear update notification localizes without network or HTML injection");

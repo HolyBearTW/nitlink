@@ -20,7 +20,11 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'HolyBearTW/nitlink'
+    if: >-
+      github.repository_id == '1376078644' &&
+      github.repository_owner_id == '50009618' &&
+      github.repository_owner == 'HolyBearTW' &&
+      (github.repository == 'HolyBearTW/nitlink' || github.repository == 'HolyBearTW/nitlink-holybear-edition')
     runs-on: windows-2022
     timeout-minutes: 30
     outputs:
@@ -40,6 +44,7 @@ jobs:
           SIGNING_VALIDATION: ${{ inputs.signing_validation }}
         run: |
           . ./scripts/holy-bear-common.ps1
+          Assert-HolyBearRepositoryIdentity
           $info = Get-HolyBearVersion
           $manual = $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch'
           if ($manual -and $env:GITHUB_REF -cne 'refs/heads/holybear/integrated') {
@@ -102,7 +107,13 @@ jobs:
 
   sign:
     name: Protected signing, verification and optional publication
-    if: github.repository == 'HolyBearTW/nitlink' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.build.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/holybear/integrated' && needs.build.outputs.validate == 'true'))
+    if: >-
+      github.repository_id == '1376078644' &&
+      github.repository_owner_id == '50009618' &&
+      github.repository_owner == 'HolyBearTW' &&
+      (github.repository == 'HolyBearTW/nitlink' || github.repository == 'HolyBearTW/nitlink-holybear-edition') &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.build.outputs.release == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/holybear/integrated' && needs.build.outputs.validate == 'true'))
     needs: build
     environment: release
     runs-on: windows-2022
@@ -121,6 +132,7 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
         run: |
           . ./scripts/holy-bear-common.ps1
+          Assert-HolyBearRepositoryIdentity
           if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -ceq "refs/tags/$($env:RELEASE_TAG)") {
             Assert-HolyBearSignedTag $env:RELEASE_TAG (Get-HolyBearCommit)
           } elseif ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -or $env:GITHUB_REF -cne 'refs/heads/holybear/integrated') {

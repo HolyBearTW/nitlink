@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tag_verifier", ROOT / "scripts/verify-holybear-tag.py")
 verifier = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verifier)
+repository_spec = importlib.util.spec_from_file_location("holybear_repository", ROOT / "scripts/holybear_repository.py")
+repository_identity = importlib.util.module_from_spec(repository_spec)
+repository_spec.loader.exec_module(repository_identity)
 TAG = "v" + (ROOT / "VERSION").read_text(encoding="utf-8-sig").strip()
 
 
@@ -51,7 +54,7 @@ class TagSecurityTests(unittest.TestCase):
         for name in ("VERSION", "CMakeLists.txt", "README-HOLYBEAR.txt", "src/app.rc", "src/app/holybear_version.h",
                      "src/overlay/overlay.cpp", "nitlink-menu.html", "assets/menu/menu.js",
                      "scripts/holy-bear-common.ps1", "scripts/verify-holybear-tag.py", "scripts/release-signing.py",
-                     "scripts/publish-holybear.ps1", "scripts/holy-bear-release-notes.ps1"):
+                     "scripts/holybear_repository.py", "scripts/publish-holybear.ps1", "scripts/holy-bear-release-notes.ps1"):
             destination = cls.base / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
@@ -112,14 +115,19 @@ class TagSecurityTests(unittest.TestCase):
         end = next((i for i in range(start, len(lines)) if lines[i] and not lines[i].startswith("          ")), len(lines))
         return "\n".join(line[10:] for line in lines[start:end])
 
-    def guard(self, source, event="push", ref="refs/tags/" + TAG, validation="false"):
+    def guard(self, source, event="push", ref="refs/tags/" + TAG, validation="false", environment=None):
         script = self.repo / "fixture-source-guard.ps1"
         marker = self.repo / "guard-passed.txt"
         marker.unlink(missing_ok=True)
         (self.repo / "mock-output.txt").write_text("", encoding="utf-8")
         script.write_text("$ErrorActionPreference='Stop'\n" + source + "\nSet-Content -LiteralPath 'guard-passed.txt' -Value 'passed'\n", encoding="utf-8")
-        env = dict(self.env, GITHUB_EVENT_NAME=event, GITHUB_REF=ref, SIGNING_VALIDATION=validation,
-                   RELEASE_TAG=TAG, GITHUB_OUTPUT=str(self.repo / "mock-output.txt"), GITHUB_PATH=str(self.repo / "mock-path.txt"))
+        env = dict(self.env, GITHUB_ACTIONS="true", GITHUB_REPOSITORY_ID="1376078644",
+                   GITHUB_REPOSITORY_OWNER_ID="50009618", GITHUB_REPOSITORY_OWNER="HolyBearTW",
+                   GITHUB_REPOSITORY="HolyBearTW/nitlink", GITHUB_EVENT_NAME=event, GITHUB_REF=ref,
+                   SIGNING_VALIDATION=validation, RELEASE_TAG=TAG,
+                   GITHUB_OUTPUT=str(self.repo / "mock-output.txt"), GITHUB_PATH=str(self.repo / "mock-path.txt"))
+        if environment:
+            env.update(environment)
         result = self.run_tool(["pwsh", "-NoProfile", "-File", str(script)], cwd=self.repo, env=env, check=False)
         return result, marker.exists()
 
@@ -258,13 +266,67 @@ class TagSecurityTests(unittest.TestCase):
         self.git("tag", "-a", "-m", "Unsigned", TAG)
         source = ("function gh { throw 'A GitHub call must never be reached.' }\n"
                   "& ./scripts/publish-holybear.ps1 -Tag '" + TAG + "' -Assets '.'")
-        env = dict(self.env, GITHUB_ACTIONS="true", GITHUB_REPOSITORY="HolyBearTW/nitlink")
+        env = dict(self.env, GITHUB_ACTIONS="true", GITHUB_REPOSITORY_ID="1376078644",
+                   GITHUB_REPOSITORY_OWNER_ID="50009618", GITHUB_REPOSITORY_OWNER="HolyBearTW",
+                   GITHUB_REPOSITORY="HolyBearTW/nitlink")
         with patch.dict(self.env, env):
             result, passed = self.guard(source)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(passed)
         self.assertIn("Formal source tag GPG verification failed", result.stderr.decode(errors="replace"))
         self.assertNotIn("A GitHub call must never be reached", result.stderr.decode(errors="replace"))
+
+    def test_repository_identity_requires_ids_owner_and_allowed_current_name(self):
+        identity = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY_ID": "1376078644",
+            "GITHUB_REPOSITORY_OWNER_ID": "50009618",
+            "GITHUB_REPOSITORY_OWNER": "HolyBearTW",
+        }
+        workflow = (ROOT / ".github/workflows/holy-bear-release.yml").read_text(encoding="utf-8")
+        signing_script = (ROOT / "scripts/release-signing.py").read_text(encoding="utf-8")
+        tag_script = (ROOT / "scripts/verify-holybear-tag.py").read_text(encoding="utf-8")
+        publisher_script = (ROOT / "scripts/publish-holybear.ps1").read_text(encoding="utf-8")
+        package_script = (ROOT / "scripts/package-holybear.ps1").read_text(encoding="utf-8")
+        verify_package_script = (ROOT / "scripts/verify-holybear-package.ps1").read_text(encoding="utf-8")
+        installer_script = (ROOT / "scripts/test-installer.ps1").read_text(encoding="utf-8")
+        for required in ("github.repository_id == '1376078644'", "github.repository_owner_id == '50009618'",
+                         "github.repository_owner == 'HolyBearTW'", "github.repository == 'HolyBearTW/nitlink'",
+                         "github.repository == 'HolyBearTW/nitlink-holybear-edition'"):
+            self.assertIn(required, workflow)
+        self.assertIn("is_authorized_actions_repository(os.environ)", signing_script)
+        self.assertIn("is_authorized_actions_repository(os.environ)", tag_script)
+        self.assertIn("Assert-HolyBearRepositoryIdentity", publisher_script)
+        self.assertIn("Get-HolyBearRepositoryName", publisher_script)
+        self.assertIn('"source_repository=$repo"', package_script)
+        self.assertIn("Test-HolyBearRepositoryName $buildInfo.source_repository", verify_package_script)
+        self.assertIn("$buildInfo.source_repository -cne $env:GITHUB_REPOSITORY", verify_package_script)
+        self.assertIn("Assert-HolyBearRepositoryIdentity", installer_script)
+        source = (". ./scripts/holy-bear-common.ps1\nAssert-HolyBearRepositoryIdentity\n"
+                  "if ((Get-HolyBearRepositoryName) -cne $env:GITHUB_REPOSITORY) { throw 'Verified current repository name changed.' }")
+        for repository in ("HolyBearTW/nitlink", "HolyBearTW/nitlink-holybear-edition"):
+            context = dict(identity, GITHUB_REPOSITORY=repository)
+            self.assertTrue(repository_identity.is_authorized_actions_repository(context))
+            result, passed = self.guard(source, environment=context)
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            self.assertTrue(passed)
+        rejected = [
+            ("GITHUB_REPOSITORY_ID", "999"),
+            ("GITHUB_REPOSITORY_OWNER_ID", "999"),
+            ("GITHUB_REPOSITORY_OWNER", "OtherOwner"),
+            ("GITHUB_REPOSITORY", "OtherOwner/nitlink"),
+            ("GITHUB_REPOSITORY", "HolyBearTW/nitlink-fork"),
+            ("GITHUB_REPOSITORY", "holybearTW/nitlink"),
+            ("GITHUB_ACTIONS", "false"),
+        ]
+        for key, value in rejected:
+            with self.subTest(field=key, value=value):
+                context = dict(identity, GITHUB_REPOSITORY="HolyBearTW/nitlink")
+                context[key] = value
+                self.assertFalse(repository_identity.is_authorized_actions_repository(context))
+                result, passed = self.guard(source, environment=context)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(passed)
 
 
 if __name__ == "__main__":

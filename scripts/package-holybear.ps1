@@ -34,7 +34,8 @@ Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/MSVC-RUNTIME.txt') -De
 Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/NSIS.txt') -Destination (Join-Path $stage 'licenses')
 Copy-Item -LiteralPath (Join-Path $HolyBearRoot 'licenses/HOLYBEAR-RELEASE-PUBLIC-KEY.asc') -Destination (Join-Path $stage 'licenses')
 $notes = Get-Content -LiteralPath $info.Notes -Raw
-$actionsUrl = if ($env:GITHUB_ACTIONS -eq 'true') { "https://github.com/HolyBearTW/nitlink/actions/runs/$env:GITHUB_RUN_ID" } else { '' }
+$repo = Get-HolyBearRepositoryName
+$actionsUrl = if ($env:GITHUB_ACTIONS -eq 'true') { "https://github.com/$repo/actions/runs/$env:GITHUB_RUN_ID" } else { '' }
 $notes = Get-HolyBearReleaseNotes -Notes $notes -Title $info.Title -Commit $commit -Tag $Tag -Summary $summary -TagSourceVerified $RequireTag.IsPresent -ActionsUrl $actionsUrl
 Set-Content -LiteralPath (Join-Path $stage 'RELEASE-NOTES.md') -Value $notes -Encoding utf8
 Copy-Item -LiteralPath (Join-Path $stage 'RELEASE-NOTES.md') -Destination $output
@@ -42,7 +43,7 @@ $sources = Get-Content -LiteralPath (Join-Path $HolyBearRoot 'HOLYBEAR-SOURCES.j
 $identity = @(
     "version=$($info.Version)", "variant=$($info.Title)", "commit=$commit", "tag=$Tag",
     "tag_source_verified=$($RequireTag.IsPresent.ToString().ToLowerInvariant())",
-    'source_repository=HolyBearTW/nitlink', "upstream_version=$($sources.upstream.version)",
+    "source_repository=$repo", "upstream_version=$($sources.upstream.version)",
     "upstream_commit=$($sources.upstream.commit)", "pr31_commit=$($sources.pr31.commit)",
     "pr23_commit=$($sources.pr23.commit)", "audio_version=$($sources.audio.tag)",
     "audio_commit=$($sources.audio.commit)", "audio_author=$($sources.audio.author)",

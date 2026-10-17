@@ -4977,11 +4977,14 @@ void Application::PushSettingsState(bool refreshCaptureDevices, uint32_t audioRe
     coreState.locale = Localization::Instance().LocaleName();
     const std::wstring latest(m_config->holyBearUpdateLatestTag.begin(), m_config->holyBearUpdateLatestTag.end());
     const auto latestVersion = HolyBear::ParseVersion(latest);
-    const bool newer = latestVersion && *latestVersion > *HolyBear::ParseVersion(HolyBear::Version);
-    const auto status = m_updateStatus == HolyBear::UpdateStatus::Never && latestVersion
+    const std::wstring latestReleaseUrl = latestVersion && latest.starts_with(L"v")
+        ? std::wstring(HolyBear::ReleasePrefix) + latest : L"";
+    const bool latestReleaseUrlValid = HolyBear::IsReleaseUrl(latestReleaseUrl);
+    const bool newer = latestReleaseUrlValid && *latestVersion > *HolyBear::ParseVersion(HolyBear::Version);
+    const auto status = m_updateStatus == HolyBear::UpdateStatus::Never && latestReleaseUrlValid
         ? (newer ? HolyBear::UpdateStatus::Available : HolyBear::UpdateStatus::Current) : m_updateStatus;
     coreState.holyBearUpdate.current = HolyBear::Version;
-    coreState.holyBearUpdate.latest = latestVersion ? latest : L"";
+    coreState.holyBearUpdate.latest = latestReleaseUrlValid ? latest : L"";
     coreState.holyBearUpdate.lastCheckUtc = m_config->holyBearUpdateLastCheckUtc;
     coreState.holyBearUpdate.automatic = m_config->holyBearAutoUpdateCheck;
     coreState.holyBearUpdate.busy = m_updateChecker && m_updateChecker->Busy();
@@ -4989,7 +4992,7 @@ void Application::PushSettingsState(bool refreshCaptureDevices, uint32_t audioRe
     coreState.holyBearUpdate.hasNewer = newer;
     coreState.holyBearUpdate.unread = newer &&
         m_config->holyBearUpdateSeenTag != m_config->holyBearUpdateLatestTag;
-    coreState.holyBearUpdate.url = newer ? std::wstring(HolyBear::ReleasePrefix) + latest : L"";
+    coreState.holyBearUpdate.url = newer ? latestReleaseUrl : L"";
     coreState.manualHdmiSource = Utf8ToWide(
         std::string(NormalizeManualHdmiSource(m_config->manualHdmiSource)));
     coreState.manualHdmiSourceCustom = Utf8ToWide(m_config->manualHdmiSourceCustom);

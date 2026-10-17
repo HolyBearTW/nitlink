@@ -5,7 +5,8 @@
 #include <optional>
 namespace NitLink::HolyBear {
 inline constexpr std::wstring_view Version = L"1.2.5-holybear";
-inline constexpr std::wstring_view ReleasePrefix = L"https://github.com/HolyBearTW/nitlink/releases/tag/";
+inline constexpr std::wstring_view ReleaseApiPath = L"/repos/HolyBearTW/nitlink-holybear-edition/releases/latest";
+inline constexpr std::wstring_view ReleasePrefix = L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/";
 using NumericVersion = std::array<uint16_t, 4>;
 inline std::optional<NumericVersion> ParseVersion(std::wstring_view value) {
     if (value.starts_with(L"v")) value.remove_prefix(1);

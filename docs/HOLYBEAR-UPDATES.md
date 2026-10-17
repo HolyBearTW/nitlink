@@ -26,7 +26,7 @@ JSON implementation. The capture/Present loop only polls a completion flag;
 it never waits for the network. Only this unauthenticated HTTPS GET is allowed:
 
 ```text
-https://api.github.com/repos/HolyBearTW/nitlink/releases/latest
+https://api.github.com/repos/HolyBearTW/nitlink-holybear-edition/releases/latest
 ```
 
 The request sends a generic NitLink-HolyBear user agent and GitHub JSON Accept
@@ -44,7 +44,7 @@ outages, and malformed JSON or release fields are rejected as unverifiable
 version information. No token or account data is sent, and no response body or
 release text is inserted into HTML.
 
-Only a typed, non-draft, `prerelease=false` release from HolyBearTW/nitlink with
+Only a typed, non-draft, `prerelease=false` release from HolyBearTW/nitlink-holybear-edition with
 a valid `tag_name` and matching GitHub release URL is accepted. Version order
 compares three/four numeric components, with missing revision zero, followed by
 the exact `-holybear` edition suffix. `1.2.4.2-holybear > 1.2.4.1-holybear` and

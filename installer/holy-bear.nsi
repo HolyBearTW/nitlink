@@ -154,7 +154,7 @@ Section "$(CoreName)" Core
   WriteRegStr HKCU "${UNINSTALLKEY}" "Publisher" "NitLink Contributors / HolyBearTW"
   WriteRegStr HKCU "${UNINSTALLKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALLKEY}" "DisplayIcon" "$INSTDIR\NitLink.exe"
-  WriteRegStr HKCU "${UNINSTALLKEY}" "URLInfoAbout" "https://github.com/HolyBearTW/nitlink"
+  WriteRegStr HKCU "${UNINSTALLKEY}" "URLInfoAbout" "https://github.com/HolyBearTW/nitlink-holybear-edition"
   WriteRegStr HKCU "${UNINSTALLKEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKCU "${UNINSTALLKEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   WriteRegDWORD HKCU "${UNINSTALLKEY}" "NoModify" 1

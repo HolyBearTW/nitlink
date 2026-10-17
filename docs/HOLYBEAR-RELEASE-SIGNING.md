@@ -1,7 +1,7 @@
 # HolyBear release signatures
 
 Official GitHub Releases of this **Unofficial Community Edition** are published
-only in [HolyBearTW/nitlink](https://github.com/HolyBearTW/nitlink/releases).
+only in [HolyBearTW/nitlink-holybear-edition](https://github.com/HolyBearTW/nitlink-holybear-edition/releases).
 `prerelease=false` is GitHub release metadata; the `-holybear` suffix identifies
 the edition, rather than an opt-in to GitHub pre-release updates.
 
@@ -102,7 +102,7 @@ not replace authentication of the downloaded ZIP and installer.
 
 ## Maintainer secrets and failure policy
 
-Set these Actions Secrets in HolyBearTW/nitlink's **`release` Environment**:
+Set these Actions Secrets in HolyBearTW/nitlink-holybear-edition's **`release` Environment**:
 
 | Secret | Required value |
 | --- | --- |
@@ -160,8 +160,8 @@ three duplicate Repository-level GPG Secrets and confirm all three names exist
 in the Environment. Missing Environment Secrets must stop signing.
 
 ```powershell
-gh secret list --repo HolyBearTW/nitlink --env release
-gh workflow run holy-bear-release.yml --repo HolyBearTW/nitlink `
+gh secret list --repo HolyBearTW/nitlink-holybear-edition --env release
+gh workflow run holy-bear-release.yml --repo HolyBearTW/nitlink-holybear-edition `
   --ref holybear/integrated -f signing_validation=true
 ```
 

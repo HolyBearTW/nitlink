@@ -30,7 +30,7 @@ restart audio. Buffer targets and diagnostics are not measured end-to-end latenc
 
 F1 About includes Software Updates. Automatic checks are OFF by default.
 Enable them to allow one background GitHub check per 24 hours, or check manually.
-Only HolyBearTW/nitlink's formal Releases are queried; no token, personal settings,
+Only HolyBearTW/nitlink-holybear-edition's formal Releases are queried; no token, personal settings,
 device IDs or game information is sent. View/Download opens the release webpage;
 there is no automatic download or installation. See docs/HOLYBEAR-UPDATES.md.
 
@@ -49,4 +49,4 @@ Read RELEASE-NOTES.md for test results and hardware limitations.
 Read LICENSE, LICENSES.md, ACKNOWLEDGMENTS.md and docs/cn115 for attribution.
 Original NitLink: https://github.com/nitlink-dev/nitlink
 Audio and Simplified Chinese by CN_115: https://github.com/CN115/nitlink-lowlatency
-HolyBear Edition releases/support: https://github.com/HolyBearTW/nitlink
+HolyBear Edition releases/support: https://github.com/HolyBearTW/nitlink-holybear-edition

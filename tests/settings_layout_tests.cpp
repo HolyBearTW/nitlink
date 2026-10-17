@@ -303,7 +303,7 @@ void CaptureLayouts(WebViewSettings& host, HWND window, const std::filesystem::p
     Capture(view, folder / L"about-docked-zh-TW-contributors-only.png");
     captureAbout(L"about-docked-en-US-available.png", L"Right", L"en-US", L"available",
         L"v1.2.5-holybear", true,
-        L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
+        L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear",
         1920, 1080, WebViewSettings::Dock::Right);
     captureAbout(L"about-docked-zh-TW-api-unavailable.png", L"Right", L"zh-TW", L"apiUnavailable",
         L"v1.2.4-holybear", false, L"", 1920, 1080, WebViewSettings::Dock::Right);
@@ -766,17 +766,18 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
             "missing, negative and out-of-range times never display an epoch or invalid date");
     }
 
-    const std::wstring validUrl = L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear";
+    const std::wstring validUrl = L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear";
     PushAboutUpdate(host, L"Right", L"zh-TW", L"available", L"v1.2.5-holybear",
         true, true, false, true, validUrl.c_str());
     Check(Script(view, LR"JS((() => {
         const link = document.querySelector('#holy-bear-release-link'), status = document.querySelector('#holy-bear-update-status');
         return status.textContent === window.NitLinkLocales['zh-TW']['update.available'].replace('{version}', '1.2.5-holybear') &&
-            !link.hidden && link.href === 'https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear' &&
+            !link.hidden && link.href === 'https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear' &&
             document.querySelector('#holy-bear-update-badge').hidden === false;
     })())JS") == L"true", "newer release shows a localized message, verified link and unread state");
-    for (const auto& badUrl : {L"https://github.com/nitlink-dev/nitlink/releases/tag/v1.2.5-holybear",
-            L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear?next=evil"}) {
+    for (const auto& badUrl : {L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
+            L"https://github.com/nitlink-dev/nitlink/releases/tag/v1.2.5-holybear",
+            L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear?next=evil"}) {
         PushAboutUpdate(host, L"Right", L"zh-TW", L"available", L"v1.2.5-holybear",
             true, true, false, true, badUrl);
         Check(Script(view, L"document.querySelector('#holy-bear-release-link').hidden") == L"true",
@@ -841,9 +842,9 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
             !!document.querySelector('#about-contributors-body a[href="https://github.com/CN115"]') &&
             !!document.querySelector('#about-contributors-body a[href="https://github.com/Noka123"]') &&
             !!document.querySelector('#about-details-body a[href="https://github.com/nitlink-dev/nitlink"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSE"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSES.md"]') &&
-            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/ACKNOWLEDGMENTS.md"]');
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSE"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/LICENSES.md"]') &&
+            !!document.querySelector('#about-details-body a[href="https://github.com/HolyBearTW/nitlink-holybear-edition/blob/holybear/integrated/ACKNOWLEDGMENTS.md"]');
     })())JS") == L"true", "separate sections preserve technical text, all license links and original contributor names and handles");
     Check(Script(view, LR"JS((() => {
         const main = document.querySelector('main');
@@ -875,7 +876,7 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
         Resize(host, window, size.first, size.second, dock);
         for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN", L"de-DE"}) {
           PushAboutUpdate(host, side, locale, L"available", L"v1.2.4.1-holybear",
-              true, true, false, false, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.4.1-holybear");
+              true, true, false, false, L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.4.1-holybear");
           Script(view, L"document.querySelectorAll('.about-details').forEach(details => details.open = true)");
           Check(Script(view, LR"JS((() => {
               const pane = document.querySelector('#pane-about'), main = document.querySelector('main');
@@ -911,7 +912,7 @@ void TestAbout(WebViewSettings& host, HWND window, std::vector<std::wstring>& me
     Resize(host, window, 1920, 1080, WebViewSettings::Dock::Full);
     for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN", L"de-DE"}) {
         PushAboutUpdate(host, L"Full", locale, L"available", L"v1.2.5-holybear",
-            true, false, false, false, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear",
+            true, false, false, false, L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear",
             1791691200, NitLink::HolyBear::Version);
         const auto numeric = NitLink::HolyBear::Version.substr(0, NitLink::HolyBear::Version.size() - 9);
         Check(Script(view, L"document.getElementById('holy-bear-product-title').textContent === 'NitLink " +

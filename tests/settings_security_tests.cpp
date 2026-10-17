@@ -302,8 +302,9 @@ int main() {
     Expect(!ParseSettingsMessage(LR"({"action":"checkHolyBearUpdate","value":"https://evil"})"), "caller cannot supply URL");
     Expect(CanOpenExternal(MenuUri, L"https://github.com/CN115", true), "contributor profile link");
     Expect(CanOpenExternal(MenuUri, L"https://github.com/Noka123", true), "German contributor profile link");
-    Expect(CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", true), "validated HolyBear release link");
-    Expect(!CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", false), "no automatic release popup");
+    Expect(CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear", true), "validated HolyBear release link");
+    Expect(!CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink-holybear-edition/releases/tag/v1.2.5-holybear", false), "no automatic release popup");
+    Expect(!CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", true), "old repository release link rejected after canonical rename");
     for (auto bad : {L"https://nitlink.invalid/nitlink.json", L"https://nitlink.invalid/src/main.cpp",
          L"https://nitlink.invalid/locales/../../nitlink.json", L"https://fonts.googleapis.com/",
          L"https://nitlink.invalid/assets/menu/menu.js?x", L"file:///C:/secret.txt"})

@@ -148,6 +148,9 @@ def main():
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
     args = parser.parse_args()
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        require(signing.is_authorized_actions_repository(os.environ),
+                "Tag verification is restricted to the authorized HolyBear Actions repository.")
     print("Verified approved OpenPGP source tag: " + json.dumps(verify_tag(args.repository, args.tag, args.commit), sort_keys=True))
 
 

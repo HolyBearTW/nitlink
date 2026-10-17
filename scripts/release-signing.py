@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from holybear_repository import is_authorized_actions_repository
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRET_NAMES = ("HOLYBEAR_GPG_PRIVATE_KEY", "HOLYBEAR_GPG_PASSPHRASE", "HOLYBEAR_GPG_FINGERPRINT")
@@ -200,8 +201,7 @@ def main():
     verify_hashes(assets, names)
     private = passphrase = None
     if args.mode == "sign":
-        require(os.environ.get("GITHUB_ACTIONS") == "true" and
-                os.environ.get("GITHUB_REPOSITORY") == "HolyBearTW/nitlink" and
+        require(is_authorized_actions_repository(os.environ) and
                 os.environ.get("HOLYBEAR_SIGNING_ENVIRONMENT") == "release",
                 "Signing requires the protected HolyBear release Environment.")
         event, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF", "")

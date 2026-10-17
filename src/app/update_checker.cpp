@@ -149,7 +149,7 @@ HttpReply FetchRelease(std::stop_token stop) {
     HttpHandle connection{WinHttpConnect(session.value, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0)};
     if (!connection.value) { reply.error = GetLastError(); return reply; }
     AsyncRequest request{WinHttpOpenRequest(connection.value, L"GET",
-        L"/repos/HolyBearTW/nitlink/releases/latest", nullptr, WINHTTP_NO_REFERER,
+        ReleaseApiPath.data(), nullptr, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE), progress};
     if (!request.value) { reply.error = GetLastError(); return reply; }
     DWORD disabled = WINHTTP_DISABLE_REDIRECTS;
