@@ -8,6 +8,10 @@
 
 #include <iostream>
 #include <random>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <regex>
 
 namespace NitLink {
 struct LocalizationTestAccess {
@@ -22,9 +26,33 @@ int failures = 0;
 void Expect(bool value, const char* label) {
     if (!value) { std::cerr << "FAIL " << label << '\n'; ++failures; }
 }
+
+void CheckPackagedScripts() {
+    wchar_t executable[32768]{};
+    const auto length=GetModuleFileNameW(nullptr,executable,32768);
+    Expect(length>0&&length<32768,"test executable path is bounded");
+    if(!length||length>=32768)return;
+    std::ifstream input(std::filesystem::path(executable).parent_path()/L"nitlink-menu.html",std::ios::binary);
+    const std::string html{std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
+    Expect(!html.empty(),"the actual packaged settings HTML is available");
+    const std::regex scripts(R"html(<script\b[^>]*\bsrc="([^"]+)")html");
+    size_t count=0;
+    for(auto it=std::sregex_iterator(html.begin(),html.end(),scripts);it!=std::sregex_iterator();++it){
+        std::wstring uri=L"https://nitlink.invalid/";
+        for(const unsigned char c:(*it)[1].str())uri.push_back(static_cast<wchar_t>(c));
+        const auto* resource=NitLink::WebViewPolicy::FindResource(uri);
+        Expect(resource&&resource->kind==NitLink::WebViewPolicy::ResourceKind::Script,
+            "every actual HTML script URL matches the exact native allowlist (F1 Ready contract)");
+        ++count;
+    }
+    Expect(count>=7,"all four locales, preview guard, menu and artwork editor are checked");
+    Expect(!NitLink::WebViewPolicy::FindResource(L"https://nitlink.invalid/assets/menu/menu.js?v=unexpected"),
+        "unknown resource revisions remain denied");
+}
 }
 
 int main() {
+    CheckPackagedScripts();
     using NitLink::ParseSettingsMessage;
     for (const auto valid : {L"1", L"42", L"4294967295"}) {
         const auto request = ParseSettingsMessage(

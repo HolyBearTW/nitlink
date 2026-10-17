@@ -311,6 +311,7 @@ if(BUILD_TESTING)
     )
     target_include_directories(NitLinkSettingsSecurityTests PRIVATE
         ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party/webview2/include)
+    add_dependencies(NitLinkSettingsSecurityTests NitLinkRuntimeResources)
     add_test(NAME settings_security COMMAND NitLinkSettingsSecurityTests)
 
     add_executable(NitLinkGameSelectionTests tests/game_selection_tests.cpp
