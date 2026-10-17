@@ -55,7 +55,7 @@ foreach ($file in $files) {
 if ($BuildDirectory) {
     $buildPath = [IO.Path]::GetFullPath((Join-Path $HolyBearRoot $BuildDirectory))
     $matches = @('NitLink.exe', 'nitlink-menu.html', 'assets/menu/menu.js', 'locales/en-US.js',
-        'locales/zh-TW.js', 'locales/zh-CN.js', 'assets/menu/Archivo-400.ttf',
+        'locales/zh-TW.js', 'locales/zh-CN.js', 'locales/de-DE.js', 'assets/menu/Archivo-400.ttf',
         'assets/menu/Archivo-500.ttf', 'assets/menu/Archivo-600.ttf', 'third_party/nis/NIS_Scaler.h')
     foreach ($relative in $matches) {
         if ((Get-FileHash -LiteralPath (Join-Path $buildPath $relative)).Hash -ne

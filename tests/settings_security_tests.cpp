@@ -9,6 +9,14 @@
 #include <iostream>
 #include <random>
 
+namespace NitLink {
+struct LocalizationTestAccess {
+    static std::wstring ResolveSystemLocale(const std::wstring& locale) {
+        return Localization::ResolveSystemLocale(locale);
+    }
+};
+}
+
 namespace {
 int failures = 0;
 void Expect(bool value, const char* label) {
@@ -54,6 +62,11 @@ int main() {
                 kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED),
                "only browser and main renderer exits require host restart");
     auto& localization = NitLink::Localization::Instance();
+    for (const auto* locale : {L"de", L"de-DE", L"de-AT", L"de-CH"})
+        Expect(NitLink::LocalizationTestAccess::ResolveSystemLocale(locale) == L"de-DE",
+               "German system locales resolve to de-DE");
+    Expect(NitLink::LocalizationTestAccess::ResolveSystemLocale(L"fr-FR") == L"en-US",
+           "unsupported system locales retain English fallback");
     for (const auto* key : {L"toast.configFolderNotWritable", L"toast.configLoadFailed",
          L"toast.configLoadFailedBackup", L"toast.configRecoveryRequired", L"toast.configRecoveryCopy", L"toast.configSaveFailed",
          L"toast.settingsProfile", L"toast.settingsRuntime", L"toast.settingsStartFailed",
@@ -66,16 +79,27 @@ int main() {
         const auto chinese = localization.Get(key);
         localization.SetPreference("zh-CN");
         const auto simplified = localization.Get(key);
-        Expect(english != key && chinese != key && simplified != key &&
-               english != chinese && english != simplified,
+        localization.SetPreference("de-DE");
+        const auto german = localization.Get(key);
+        Expect(english != key && chinese != key && simplified != key && german != key &&
+               english != chinese && english != simplified && english != german,
                "all native locale tables define each settings/config warning");
     }
     localization.SetPreference("zh-CN");
     Expect(localization.PreferenceName() == "zh-CN" && localization.LocaleName() == L"zh-CN" &&
            std::wstring(localization.UiFontFamily()) == L"Microsoft YaHei UI",
            "Simplified Chinese selects native locale and font");
-    Expect(localization.Format(L"toast.p010SelectionFallback",
-           {{L"width", L"1920"}, {L"height", L"1080"}, {L"fps", L"60"}}).find(L"1920×1080 @ 60") != std::wstring::npos,
+    localization.SetPreference("de-DE");
+    Expect(localization.Preference() == NitLink::LanguagePreference::German &&
+           localization.PreferenceName() == "de-DE" && localization.LocaleName() == L"de-DE" &&
+           std::wstring(localization.UiFontFamily()) == L"Segoe UI",
+           "German preference selects the German native table");
+    localization.SetPreference("zh-CN");
+    const auto simplifiedPlaceholder = localization.Format(L"toast.p010SelectionFallback",
+           {{L"width", L"1920"}, {L"height", L"1080"}, {L"fps", L"60"}});
+    if(simplifiedPlaceholder.find(L"1920×1080 @ 60")==std::wstring::npos)
+        std::wcerr<<L"Simplified Chinese placeholder output: "<<simplifiedPlaceholder<<L'\n';
+    Expect(simplifiedPlaceholder.find(L"1920×1080 @ 60") != std::wstring::npos,
            "Simplified Chinese native placeholders are substituted");
     localization.SetPreference("system");
     using namespace NitLink::WebViewPolicy;
@@ -132,7 +156,7 @@ int main() {
     for (auto valid : {
         LR"({"action":"setLanguage","value":"system"})", LR"({"action":"setLanguage","value":"en-US"})",
         LR"({"action":"setLanguage","value":"zh-CN"})",
-        LR"({"action":"setLanguage","value":"zh-TW"})", LR"({"action":"setNoSignalMode","value":"image"})",
+        LR"({"action":"setLanguage","value":"zh-TW"})", LR"({"action":"setLanguage","value":"de-DE"})", LR"({"action":"setNoSignalMode","value":"image"})",
         LR"({"action":"setNoSignalMode","value":"default"})", LR"({"action":"setNoSignalFit","value":"contain"})",
         LR"({"action":"setNoSignalFit","value":"cover"})", LR"({"action":"setNoSignalFit","value":"stretch"})",
         LR"({"action":"setGame","value":"spider-man-2"})", LR"({"action":"setGame","value":""})"})
@@ -266,6 +290,7 @@ int main() {
         Expect(!CanReceiveMessage(MenuUri, bad), "untrusted current document");
     }
     for (const auto& resource : Resources) Expect(FindResource(resource.uri) == &resource, "packaged resource");
+    Expect(FindResource(L"https://nitlink.invalid/locales/de-DE.js") != nullptr,"German locale resource is allowlisted");
     Expect(FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=20261017-search-art-no-crop1")!=nullptr,"fixed script revision maps to packaged editor");
     Expect(!FindResource(L"https://nitlink.invalid/assets/menu/artwork-editor.js?v=other"),"unapproved revision rejected");
     Expect(ParseSettingsMessage(LR"({"action":"renderGameArtwork","value":{"gameId":5267007,"coverId":4200000001,"mode":"crop","x":0.2,"y":0.8,"zoom":1.5}})").has_value(),"bounded artwork recipe bridge");
@@ -276,6 +301,7 @@ int main() {
     Expect(!ParseSettingsMessage(LR"({"action":"setHolyBearAutoUpdateCheck","value":"true"})"), "update option requires boolean");
     Expect(!ParseSettingsMessage(LR"({"action":"checkHolyBearUpdate","value":"https://evil"})"), "caller cannot supply URL");
     Expect(CanOpenExternal(MenuUri, L"https://github.com/CN115", true), "contributor profile link");
+    Expect(CanOpenExternal(MenuUri, L"https://github.com/Noka123", true), "German contributor profile link");
     Expect(CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", true), "validated HolyBear release link");
     Expect(!CanOpenExternal(MenuUri, L"https://github.com/HolyBearTW/nitlink/releases/tag/v1.2.5-holybear", false), "no automatic release popup");
     for (auto bad : {L"https://nitlink.invalid/nitlink.json", L"https://nitlink.invalid/src/main.cpp",

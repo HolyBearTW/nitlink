@@ -419,7 +419,7 @@ bool Config::Load(const std::string& path)
         if (key == "window_width")    windowWidth  = ParseU32(val, windowWidth, 320, 16384);
         if (key == "window_height")   windowHeight = ParseU32(val, windowHeight, 240, 16384);
         if (key == "language") {
-            if (val == "system" || val == "en-US" || val == "zh-TW" || val == "zh-CN") language = val;
+            if (val == "system" || val == "en-US" || val == "zh-TW" || val == "zh-CN" || val == "de-DE") language = val;
         }
         if (key == "manual_hdmi_source")
             manualHdmiSource = NormalizeManualHdmiSource(val);
@@ -636,7 +636,7 @@ bool Config::Save(const std::string& path)
     file << "# NitLink Configuration\n";
     file << "# https://github.com/nitlink-dev/nitlink\n\n";
 
-    file << "# Interface language: system | en-US | zh-TW | zh-CN\n";
+    file << "# Interface language: system | en-US | zh-TW | zh-CN | de-DE\n";
     file << "language = " << language << "\n\n";
     file << "# HolyBear: optional GitHub release check; never downloads/installs updates\n";
     file << "holybear_auto_update_check = " << (holyBearAutoUpdateCheck ? "true" : "false") << "\n";

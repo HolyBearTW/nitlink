@@ -27,6 +27,7 @@ inline constexpr Resource Resources[] = {
     {L"https://nitlink.invalid/locales/en-US.js", L"locales/en-US.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/locales/zh-CN.js", L"locales/zh-CN.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/locales/zh-TW.js", L"locales/zh-TW.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
+    {L"https://nitlink.invalid/locales/de-DE.js", L"locales/de-DE.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/assets/menu/menu.js", L"assets/menu/menu.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/assets/menu/artwork-editor.js", L"assets/menu/artwork-editor.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
     {L"https://nitlink.invalid/assets/menu/preview-host.js", L"assets/menu/preview-host.js", L"text/javascript; charset=utf-8", ResourceKind::Script},
@@ -60,7 +61,7 @@ inline bool CanOpenExternal(std::wstring_view current, std::wstring_view target,
         (target == L"https://tally.so/r/EkZjNr" ||
          target == L"https://ko-fi.com/klosed89" ||
          target == L"https://github.com/HolyBearTW" || target == L"https://github.com/CN115" ||
-         target == L"https://github.com/n810K" ||
+         target == L"https://github.com/n810K" || target == L"https://github.com/Noka123" ||
          target == L"https://github.com/nitlink-dev/nitlink" ||
          target == L"https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSE" ||
          target == L"https://github.com/HolyBearTW/nitlink/blob/holybear/integrated/LICENSES.md" ||

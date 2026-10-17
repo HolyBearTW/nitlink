@@ -115,7 +115,7 @@ void TestLocalizedWirePresence() {
         {L"　 ", {}, {}, V::Unknown, {}, false},
     };
     const std::pair<const char*, std::wstring_view> languages[] = {
-        {"en-US", L"Source: "}, {"zh-TW", L"來源："}, {"zh-CN", L"来源："}
+        {"en-US", L"Source: "}, {"zh-TW", L"來源："}, {"zh-CN", L"来源："}, {"de-DE", L"Quelle: "}
     };
     const auto started = std::chrono::system_clock::time_point{std::chrono::seconds(1700000000)};
     unsigned frames = 0;

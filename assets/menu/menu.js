@@ -13,6 +13,7 @@
         const tag = locale.toLowerCase();
         if (['zh-cn', 'zh-sg', 'zh-hans'].includes(tag) || tag.startsWith('zh-hans-')) return 'zh-CN';
         if (['zh-tw', 'zh-hant-tw'].includes(tag)) return 'zh-TW';
+        if (tag === 'de' || tag.startsWith('de-')) return 'de-DE';
       }
       return 'en-US';
     };
@@ -21,7 +22,7 @@
       if (hasWebViewHost()) return 'system';
       try {
         const saved = window.localStorage.getItem(standaloneLanguageKey);
-        return ['system', 'en-US', 'zh-TW', 'zh-CN'].includes(saved) ? saved : 'system';
+        return ['system', 'en-US', 'zh-TW', 'zh-CN', 'de-DE'].includes(saved) ? saved : 'system';
       } catch (_) {
         return 'system';
       }
@@ -86,7 +87,7 @@
       const h1 = document.querySelector('.topbar h1');
       if (h1 && titleKey) h1.textContent = t(titleKey);
       const language = document.getElementById('language-select');
-      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW' && language.value !== 'zh-CN') {
+      if (language && language.value !== 'system' && language.value !== 'en-US' && language.value !== 'zh-TW' && language.value !== 'zh-CN' && language.value !== 'de-DE') {
         language.value = 'system';
       }
       renderHolyBearUpdate();
@@ -254,7 +255,8 @@
       const profiles = {
         HolyBearTW: 'assets/menu/contributors/holybear.png',
         CN115: 'assets/menu/contributors/cn115.jpg',
-        n810K: 'assets/menu/contributors/n810k.png'
+        n810K: 'assets/menu/contributors/n810k.png',
+        Noka123: null
       };
       const title = document.getElementById('contributor-preview-title');
       const handle = document.getElementById('contributor-preview-handle');
@@ -311,9 +313,11 @@
         handle.textContent = `@${username}`;
         open.href = link.href;
         fallback.textContent = username.slice(0, 2).toUpperCase();
-        fallback.hidden = true;
-        avatar.hidden = false;
-        avatar.src = profiles[username];
+        const avatarPath = profiles[username];
+        fallback.hidden = !!avatarPath;
+        avatar.hidden = !avatarPath;
+        if (avatarPath) avatar.src = avatarPath;
+        else avatar.removeAttribute('src');
         card.hidden = false;
         position();
       };

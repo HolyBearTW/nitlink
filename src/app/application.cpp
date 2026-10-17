@@ -1225,10 +1225,11 @@ bool Application::Initialize(HINSTANCE hInstance, int nCmdShow)
         }
         if (action == L"setLanguage" && m_config) {
             const std::wstring requested = message->text;
-            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW" || requested == L"zh-CN") {
+            if (requested == L"system" || requested == L"en-US" || requested == L"zh-TW" || requested == L"zh-CN" || requested == L"de-DE") {
                 m_config->language = requested == L"en-US" ? "en-US"
                     : requested == L"zh-TW" ? "zh-TW"
-                    : requested == L"zh-CN" ? "zh-CN" : "system";
+                    : requested == L"zh-CN" ? "zh-CN"
+                    : requested == L"de-DE" ? "de-DE" : "system";
                 Localization::Instance().SetPreference(m_config->language);
                 if (m_overlay && !m_overlay->RefreshTextFormats()) {
                     AppLog(L"setLanguage: failed to refresh overlay text formats");

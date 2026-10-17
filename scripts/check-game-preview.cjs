@@ -29,8 +29,8 @@ const {installExactDocument}=require('./preview-browser.cjs');
   assert.match(await page.locator('#game-cover-mode').textContent(),/手動/);
   assert.equal(Math.round((await page.locator('#game-discord-art').boundingBox()).width),84,'Discord activity artwork remains 84px wide');
   await page.screenshot({path:path.join(output,'full-zh-TW.png')});
-  const geometry = [];
-  for (const locale of ['zh-TW','zh-CN','en-US']) {
+  const geometry = [], locales = ['zh-TW','zh-CN','en-US','de-DE'];
+  for (const locale of locales) {
     await page.selectOption('#game-preview-language',locale);
     await page.waitForFunction(locale=>document.documentElement.lang===locale,locale);
     assert.equal(await page.locator('#game-query').getAttribute('placeholder'),await page.evaluate(()=>window.NitLinkLocales[document.documentElement.lang]['game.searchPlaceholder']),`${locale} game search placeholder`);
@@ -48,6 +48,32 @@ const {installExactDocument}=require('./preview-browser.cjs');
       assert.equal(result.clipped.length,0,`${locale}/${layout} navigation clipped`);
       geometry.push({locale,layout,...result});
       if(locale==='zh-TW' && layout==='right') await page.locator('.app').screenshot({path:path.join(output,'docked-zh-TW.png')});
+    }
+  }
+  const aboutGeometry = [];
+  for (const locale of locales) {
+    await page.selectOption('#game-preview-language',locale);
+    for (const layout of ['full','left','right']) {
+      await page.selectOption('#game-preview-layout',layout);
+      await page.locator('[data-tab="pane-about"]').click();
+      const result = await page.evaluate(()=>{
+        const strings=window.NitLinkLocales[document.documentElement.lang],pane=document.querySelector('#pane-about'),main=document.querySelector('main');
+        return {side:document.documentElement.dataset.side,technical:document.querySelector('#about-details-summary').textContent,
+          contributors:document.querySelector('#about-contributors-summary').textContent,
+          noka:document.querySelector('[data-i18n="about.noka123Contribution"]').textContent,
+          expected:{technical:strings['about.technicalInformation'],contributors:strings['about.contributors'],noka:strings['about.noka123Contribution']},
+          overflow:pane.scrollWidth>pane.clientWidth||main.scrollWidth>main.clientWidth||document.documentElement.scrollWidth>innerWidth};
+      });
+      assert.equal(result.side,layout,`${locale}/${layout} About layout applied`);
+      assert.equal(result.technical,result.expected.technical,`${locale}/${layout} technical label localized`);
+      assert.equal(result.contributors,result.expected.contributors,`${locale}/${layout} contributors label localized`);
+      assert.equal(result.noka,result.expected.noka,`${locale}/${layout} German contributor credit localized`);
+      assert.equal(result.overflow,false,`${locale}/${layout} About has no horizontal overflow`);
+      aboutGeometry.push({locale,layout,...result});
+      await page.locator('[data-tab="pane-shortcuts"]').click();
+      const shortcut=await page.locator('#pane-shortcuts [data-i18n="shortcut.ctrlArrows"]').textContent();
+      assert.equal(shortcut,await page.evaluate(()=>window.NitLinkLocales[document.documentElement.lang]['shortcut.ctrlArrows']),`${locale} Ctrl/Strg shortcut label`);
+      await page.locator('[data-tab="pane-games"]').click();
     }
   }
   await page.selectOption('#game-preview-layout','full');
@@ -113,7 +139,7 @@ const {installExactDocument}=require('./preview-browser.cjs');
   await filePage.waitForSelector('.game-result');
   assert.equal(await filePage.locator('#game-fixture-banner').isVisible(),true);
   assert.equal(errors.filter(e=>!e.includes('ERR_FILE_NOT_FOUND')&&!e.includes('Failed to load resource')).length,0,errors.join('\n'));
-  fs.writeFileSync(path.join(output,'browser-checks.json'),JSON.stringify({geometry,checks:['game and cover selection','automatic/manual covers','three languages','Full/left/right layouts','failure and empty scenarios','latest query wins','persistent manual fixture choice','existing panes/source format controls','native bridge precedence','direct file entry'],errors,start},null,2));
+  fs.writeFileSync(path.join(output,'browser-checks.json'),JSON.stringify({geometry,aboutGeometry,checks:['game and cover selection','84px Discord artwork','four-language About and shortcut labels','automatic/manual covers','four languages','Full/left/right layouts','failure and empty scenarios','latest query wins','persistent manual fixture choice','existing panes/source format controls','native bridge precedence','direct file entry'],errors,start},null,2));
   console.log('Browser preview checks passed:',geometry.length,'language/layout combinations. Evidence:',output);
   } finally { await browser.close(); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

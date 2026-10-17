@@ -39,7 +39,7 @@
     .filter(cover=>activityArtworkPriority(cover)<4).sort((a,b)=>activityArtworkPriority(a)-activityArtworkPriority(b))[0];
   const savedActivityPriority=record=>activityArtworkPriority({...record,shape:record.coverShape||''});
   state.holyBearUpdate={current:document.querySelector('meta[name="nitlink-version"]')?.content||'',status:'never',automatic:false};
-  if(!['zh-TW','zh-CN','en-US'].includes(state.locale))state.locale=state.languagePreference='zh-TW';
+  if(!['zh-TW','zh-CN','en-US','de-DE'].includes(state.locale))state.locale=state.languagePreference='zh-TW';
   window.NitLinkPreview={mode};
   const emit=message=>listeners.forEach(listener=>listener({data:message}));
   const api=(operation,value={})=>new Promise(resolve=>{

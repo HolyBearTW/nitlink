@@ -14,6 +14,7 @@ enum class LanguagePreference {
     English,
     TraditionalChinese,
     SimplifiedChinese,
+    German,
 };
 
 class Localization {
@@ -47,8 +48,11 @@ private:
 
     static LanguagePreference ParsePreference(const std::string& value);
     static std::wstring DetectSystemLocale();
+    static std::wstring ResolveSystemLocale(const std::wstring& locale);
+    friend struct LocalizationTestAccess;
     static bool IsTraditionalChineseLocale(const std::wstring& locale);
     static bool IsSimplifiedChineseLocale(const std::wstring& locale);
+    static bool IsGermanLocale(const std::wstring& locale);
 
     LanguagePreference m_preference = LanguagePreference::System;
     std::string m_preferenceName = "system";

@@ -69,6 +69,8 @@ project authorship or maintainership.
 - **Traditional Chinese (zh-TW):** [HolyBear（聖小熊）](https://github.com/HolyBearTW)
   (`@HolyBearTW`) — translation and localization review with real-device
   validation.
+- **German (de-DE):** [Noka123](https://github.com/Noka123) — interface translation
+  contributed in [upstream PR #35](https://github.com/nitlink-dev/nitlink/pull/35).
 
 ## About contributor cards
 

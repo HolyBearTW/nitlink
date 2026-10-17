@@ -9,8 +9,8 @@ async function installExactDocument(target){
     const policy=body.toString('utf8').match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
     await route.fulfill({status:200,contentType:'text/html; charset=utf-8',headers:{'Content-Security-Policy':policy,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'},body});
   });
-  const scripts=['locales/en-US.js','locales/zh-TW.js','locales/zh-CN.js','assets/menu/menu.js','assets/menu/preview-host.js','assets/menu/artwork-editor.js'];
-  await target.route(/^http:\/\/(?:127\.0\.0\.1|localhost):8765\/(?:locales\/(?:en-US|zh-TW|zh-CN)\.js|assets\/menu\/(?:menu|preview-host|artwork-editor)\.js)(?:\?v=20261015-artwork3)?$/,async route=>{
+  const scripts=['locales/en-US.js','locales/zh-TW.js','locales/zh-CN.js','locales/de-DE.js','assets/menu/menu.js','assets/menu/preview-host.js','assets/menu/artwork-editor.js'];
+  await target.route(/^http:\/\/(?:127\.0\.0\.1|localhost):8765\/(?:locales\/(?:en-US|zh-TW|zh-CN|de-DE)\.js|assets\/menu\/(?:menu|preview-host|artwork-editor)\.js)(?:\?v=[A-Za-z0-9._-]{1,64})?$/,async route=>{
     const resource=new URL(route.request().url()).pathname.slice(1);if(!scripts.includes(resource)){await route.abort();return;}
     await route.fulfill({status:200,contentType:'text/javascript; charset=utf-8',headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'},body:fs.readFileSync(path.join(root,resource))});
   });

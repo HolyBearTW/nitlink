@@ -131,7 +131,7 @@ void OtherEditorLocalesTest(WebViewSettings& host, ICoreWebView2* view,
         host.PostMessage(state.str());
     };
     const auto firstMessage = messages.size();
-    for (const auto locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+    for (const auto locale : {L"en-US", L"zh-TW", L"zh-CN", L"de-DE"}) {
         pushOther(locale, L"Steam Deck");
         const auto ready = std::wstring(L"document.documentElement.lang === '") + locale +
             L"' && document.getElementById('meta-hdmi-source').textContent === 'Steam Deck'";
@@ -298,19 +298,37 @@ void ManualSourcePickerTest(WebViewSettings& host, HWND window, ICoreWebView2* v
     Check(PumpUntil([&] { return messages.size() == beforeOpen + 1; }) &&
           NitLink::ParseSettingsMessage(messages.back())->action == L"getDeviceList",
           "original source menu keeps its explicit device refresh on opening");
-    Check(Script(view, LR"JS((() => {
+    const auto manualLayout=Script(view, LR"JS((() => {
         const source = document.getElementById('source-popover');
         source.querySelector('.source-format-details').open = true;
         const picker = document.getElementById('hdmi-source-picker');
         const resolution = source.querySelector('.source-format-details > .source-popover-select-row');
-        return source.dataset.open === 'true' && picker.previousElementSibling.textContent === window.NitLinkLocales['zh-TW']['game.hdmiSection'] &&
+        const strings=window.NitLinkLocales[document.documentElement.lang];
+        return JSON.stringify({locale:document.documentElement.lang,open:source.dataset.open==='true',
+            headingMatches:picker.previousElementSibling.textContent===strings['game.hdmiSection'],
+            pickerBottom:picker.getBoundingClientRect().bottom,resolutionTop:resolution.getBoundingClientRect().top,
+            resolutionFollows:picker.getBoundingClientRect().bottom<=resolution.getBoundingClientRect().top,
+            resolutionMatches:resolution.querySelector('label').textContent===strings['source.resolution'],
+            formatRows:source.querySelectorAll('.source-format-details > .source-popover-select-row').length,
+            autoMatches:document.querySelector('#hdmi-source-trigger option[value=auto]').textContent===strings['value.auto'],
+            otherMatches:document.querySelector('#hdmi-source-trigger option[value=other]').textContent===strings['hdmiSource.otherOption'],
+            selected:document.getElementById('hdmi-source-trigger').selectedOptions[0]?.value});
+    })())JS");
+    const bool manualLayoutPass=Script(view, LR"JS((() => {
+        const source = document.getElementById('source-popover');
+        const strings = window.NitLinkLocales[document.documentElement.lang];
+        const picker = document.getElementById('hdmi-source-picker');
+        const resolution = source.querySelector('.source-format-details > .source-popover-select-row');
+        return source.dataset.open === 'true' && picker.previousElementSibling.textContent === strings['game.hdmiSection'] &&
             picker.getBoundingClientRect().bottom <= resolution.getBoundingClientRect().top &&
-            resolution.querySelector('label').textContent === window.NitLinkLocales['zh-TW']['source.resolution'] &&
+            resolution.querySelector('label').textContent === strings['source.resolution'] &&
             source.querySelectorAll('.source-format-details > .source-popover-select-row').length === 3 &&
-            document.querySelector('#hdmi-source-trigger option[value=auto]').textContent === '自動' &&
-            document.querySelector('#hdmi-source-trigger option[value=other]').textContent === '其他…' &&
+            document.querySelector('#hdmi-source-trigger option[value=auto]').textContent === strings['value.auto'] &&
+            document.querySelector('#hdmi-source-trigger option[value=other]').textContent === strings['hdmiSource.otherOption'] &&
             document.getElementById('hdmi-source-trigger').selectedOptions[0].value === 'switch2';
-    })())JS") == L"true", "HDMI identity precedes the separate expandable resolution, framerate and format region");
+    })())JS") == L"true";
+    if(!manualLayoutPass)std::wcerr<<L"Manual source picker observations: "<<manualLayout<<L'\n';
+    Check(manualLayoutPass, "HDMI identity precedes the separate expandable resolution, framerate and format region");
     Check(Script(view, LR"JS((() => {
         const manual = document.getElementById('hdmi-source-trigger');
         const resolution = document.querySelector('#source-popover .source-format-details > .source-popover-select-row select');
@@ -653,7 +671,7 @@ int main(int argc, char** argv) {
         Check(Script(view, L"!window.__injected && __violations.some(x=>x.startsWith('script-src')) && __violations.includes('frame-src') && __violations.includes('connect-src') && __violations.includes('worker-src')") == L"true",
               "CSP blocks inline injection, frames, connections and workers");
         host.PostMessage(LR"({"state":{"locale":"zh-CN","languagePreference":"zh-CN"}})");
-        for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN"}) {
+        for (const auto* locale : {L"en-US", L"zh-TW", L"zh-CN", L"de-DE"}) {
             const std::wstring state = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"holyBearUpdate\":{\"current\":\"1.2.4-holybear\",\"latest\":\"v1.2.5-holybear\","
                 L"\"lastCheckUtc\":1791730000,\"automatic\":false,\"busy\":false,\"status\":\"available\","
@@ -668,7 +686,7 @@ int main(int argc, char** argv) {
         host.PostMessage(LR"({"state":{"locale":"zh-TW","languagePreference":"zh-TW","audioVolume":0.75}})");
         Check(PumpUntil([&] { return Script(view, L"document.documentElement.lang") == L"\"zh-TW\""; }),
               "native state reaches trusted page");
-        for (const auto* locale : {L"en-US", L"zh-TW"}) {
+        for (const auto* locale : {L"en-US", L"zh-TW", L"de-DE"}) {
             const std::wstring prefix = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"negotiatedWidth\":1920,\"negotiatedHeight\":1080,";
             host.PostMessage((prefix + L"\"negotiatedFps\":120,\"negotiatedFpsNumerator\":120,"
@@ -859,11 +877,11 @@ int main(int argc, char** argv) {
                 L"document.readyState === 'complete' && !!document.querySelector('h1') && "
                 L"!!document.getElementById('pane-about') && "
                 L"!!(window.NitLinkLocales && window.NitLinkLocales['en-US'] && "
-                L"window.NitLinkLocales['zh-TW'] && window.NitLinkLocales['zh-CN']) && "
+                L"window.NitLinkLocales['zh-TW'] && window.NitLinkLocales['zh-CN'] && window.NitLinkLocales['de-DE']) && "
                 L"!!(window.chrome && window.chrome.webview && window.chrome.webview.postMessage)") == L"true";
         }), "restarted packaged DOM, locale resources and JavaScript bridge finish loading");
         const std::wstring readyLocale = Script(recovered, L"document.documentElement.lang");
-        Check(readyLocale == L"\"en-US\"" || readyLocale == L"\"zh-TW\"" || readyLocale == L"\"zh-CN\"",
+        Check(readyLocale == L"\"en-US\"" || readyLocale == L"\"zh-TW\"" || readyLocale == L"\"zh-CN\"" || readyLocale == L"\"de-DE\"",
               "restarted menu begins in a supported system locale");
         bool restartedReadyMessage = false;
         for (size_t i = messagesBeforeCrash; i < messages.size(); ++i) {
@@ -878,7 +896,7 @@ int main(int argc, char** argv) {
         // The application responds to every ready message with its persisted
         // state. Mirror that native response here and verify all supported
         // preferences are applied to the recovered document.
-        for (const auto* locale : {L"zh-TW", L"en-US", L"zh-CN"}) {
+        for (const auto* locale : {L"zh-TW", L"en-US", L"zh-CN", L"de-DE"}) {
             const std::wstring state = std::wstring(L"{\"state\":{\"locale\":\"") + locale +
                 L"\",\"languagePreference\":\"" + locale + L"\"}}";
             host.PostMessage(state);
@@ -889,7 +907,8 @@ int main(int argc, char** argv) {
             Check(PumpUntil([&] { return Script(recovered, localizedProbe.c_str()) == L"true"; }),
                   locale == std::wstring_view(L"zh-TW") ? "restart bridge applies Traditional Chinese" :
                   locale == std::wstring_view(L"en-US") ? "restart bridge applies English" :
-                                                           "restart bridge applies Simplified Chinese");
+                  locale == std::wstring_view(L"zh-CN") ? "restart bridge applies Simplified Chinese" :
+                                                           "restart bridge applies German");
         }
         wil::com_ptr<ICoreWebView2Settings> recoveredSettings;
         Hr(recovered->get_Settings(&recoveredSettings));

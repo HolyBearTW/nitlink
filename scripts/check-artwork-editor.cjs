@@ -53,7 +53,7 @@ const record=()=>saved().records['sgdb-5267007'];
   await page.waitForFunction(()=>document.querySelector('#game-current-art img')?.naturalWidth===512);
   assert.equal(record().finalImageKey,cropped);assert.equal(record().artworkMode,'crop');
   const afterSwitch=saved().currentStartUnix;
-  for(const locale of ['en-US','zh-CN','zh-TW']){
+  for(const locale of ['en-US','zh-CN','zh-TW','de-DE']){
    await page.selectOption('#game-preview-language',locale);await page.locator('#game-adjust-cover').click();await page.waitForFunction(()=>!document.getElementById('game-editor-save').disabled);
    assert.equal(await page.locator('#game-artwork-editor').evaluate(dialog=>dialog.scrollWidth>dialog.clientWidth),false);
    assert(!(await page.locator('#game-artwork-editor').textContent()).includes('game.edit.'));

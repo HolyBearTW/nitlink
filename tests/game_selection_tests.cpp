@@ -46,6 +46,8 @@ int main() {
           !IsNintendoArtworkUrl(L"https://www.nintendo.com:443/tw/cover.png")&&
           !IsNintendoArtworkUrl(L"https://www.nintendo.com/tw/../cover.png")&&
           !IsNintendoArtworkUrl(L"https://www.nintendo.com/tw/%2e%2e/cover.png"),"official artwork authority and path boundary");
+    Check(IsLocale(L"de-DE") && IsCoverLanguage(L"de-DE") && !IsLocale(L"fr-FR"),
+          "German search, cover, and saved-title locale is accepted");
     Cover taiwanLandscape;taiwanLandscape.provider=L"nintendo-tw";taiwanLandscape.sourceLabel=L"Official Nintendo Taiwan";
     taiwanLandscape.region=L"TW";taiwanLandscape.isOfficial=true;taiwanLandscape.shape=L"landscape";taiwanLandscape.kind=L"keyArt";
     Cover taiwanPortrait=taiwanLandscape;taiwanPortrait.shape=L"portrait";
@@ -72,6 +74,10 @@ int main() {
     storeGame.coverUrl=storeGame.coverThumb=store;storeGame.provider=L"nintendo-hk-store";storeGame.region=L"HK";
     storeGame.sourceLabel=L"Official Nintendo Hong Kong Store";storeGame.isOfficial=true;
     Check(ValidSavedGame("sgdb-35744",storeGame),"store provenance survives native config validation");
+    SavedGame localizedGame;localizedGame.id=35744;localizedGame.name=L"Breath of the Wild";
+    localizedGame.displayNames={{L"en-US",L"Breath of the Wild"},{L"zh-TW",L"曠野之息"},
+        {L"zh-CN",L"旷野之息"},{L"de-DE",L"Breath of the Wild"}};
+    Check(ValidSavedGame("sgdb-35744",localizedGame),"saved games retain all four display locales");
     storeGame.provider=L"nintendo-tw";storeGame.region=L"TW";storeGame.sourceLabel=L"Official Nintendo Taiwan";
     Check(!ValidSavedGame("sgdb-35744",storeGame),"store image cannot impersonate Taiwan provenance");
     Check(ParseSettingsMessage(LR"({"action":"getGameCovers","value":{"gameId":35744,"shape":"all","page":1,"request":9,"provider":"nintendo","officialQuery":""}})").has_value(),"generic official catalogue browse schema");

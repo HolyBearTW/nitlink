@@ -5,7 +5,7 @@ if ((Get-Item -LiteralPath $packageRoot).Attributes -band [IO.FileAttributes]::R
     throw 'Package root cannot be a reparse point.'
 }
 $required = @(
-    'NitLink.exe', 'nitlink-menu.html', 'locales/en-US.js', 'locales/zh-TW.js',
+    'NitLink.exe', 'nitlink-menu.html', 'locales/en-US.js', 'locales/zh-TW.js', 'locales/de-DE.js',
     'assets/menu/menu.js', 'assets/menu/artwork-editor.js', 'assets/menu/preview-host.js', 'assets/nitlink.svg', 'game-search-expansions.json', 'official-artwork.json', 'unavailable-artwork.json',
     'assets/menu/Archivo-400.ttf', 'assets/menu/Archivo-500.ttf',
     'assets/menu/Archivo-600.ttf', 'assets/menu/Archivo-OFL.txt', 'assets/menu/kofi-cup.png',

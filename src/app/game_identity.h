@@ -26,7 +26,7 @@ inline uint32_t DynamicId(std::string_view id) {
 }
 inline std::string GameKey(uint32_t id) { return "sgdb-" + std::to_string(id); }
 inline bool IsLocale(std::wstring_view locale) {
-    return locale == L"zh-TW" || locale == L"zh-CN" || locale == L"en-US";
+    return locale == L"zh-TW" || locale == L"zh-CN" || locale == L"en-US" || locale == L"de-DE";
 }
 inline bool IsCoverLanguage(std::wstring_view language) {
     return IsLocale(language) || language == L"ja-JP" || language == L"zxx";
@@ -177,7 +177,7 @@ inline bool ValidSavedGame(std::string_view key, const SavedGame& game) {
         std::all_of(key.begin(),key.end(),[](char c){return (c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_';});
     if ((!builtin && (!game.id || DynamicId(key) != game.id)) || game.name.empty() || !ValidText(game.name) ||
         !ValidText(game.customName) || game.lastUsedUtc > 253402300799ull ||
-        game.displayNames.size() > 3 || (!game.coverUrl.empty() && !IsCoverUrl(game.coverUrl)) ||
+        game.displayNames.size() > 4 || (!game.coverUrl.empty() && !IsCoverUrl(game.coverUrl)) ||
         (!game.coverThumb.empty() && !IsCoverUrl(game.coverThumb))) return false;
     if(!game.coverShape.empty()&&game.coverShape!=L"square"&&game.coverShape!=L"portrait"&&game.coverShape!=L"landscape")return false;
     if(!ValidText(game.sourceLabel,128)||(!game.language.empty()&&!IsCoverLanguage(game.language))||
